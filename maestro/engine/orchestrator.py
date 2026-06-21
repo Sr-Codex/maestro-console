@@ -64,15 +64,17 @@ ProgressFn = Callable[[StepProgress], None]
 
 
 class Orchestrator:
-    def __init__(self, ask: Ask, *, store=None, max_retries: int = 2):
+    def __init__(self, ask: Ask, *, store=None, logbook=None, max_retries: int = 2):
         self._ask = ask
         self._store = store
+        self._logbook = logbook
         self._max_retries = max_retries
 
     async def delegate(self, agent_id: str, task: str, *, task_id: str | None = None) -> Envelope:
         async def ask1(prompt: str) -> str:
             return await self._ask(agent_id, prompt)
 
+        t0 = time.monotonic()
         env = await request_envelope(
             ask1,
             task,
@@ -81,6 +83,11 @@ class Orchestrator:
             task_id=task_id,
             max_retries=self._max_retries,
         )
+        if self._logbook is not None:
+            tid = (task_id or env.message_id)[:8]
+            state = str(env.state) if env.state else "?"
+            # observabilidade (escopo 5): task_id, agente, estado, duração
+            self._logbook.append(f"{tid} {agent_id} -> {state} ({time.monotonic() - t0:.1f}s)")
         if self._store is not None:
             self._store.log_envelope(
                 message_id=env.message_id,

@@ -17,13 +17,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"maestro console {__version__}")
         return 0
     if argv and argv[0] == "tui":
-        from .bootstrap import build_controller
+        from .bootstrap import build_controller, log_path
         from .tui.app import run
+        from .visibility.tmux import TmuxObserver, tmux_available
 
         controller, store = build_controller()
+        observer = TmuxObserver()
+        if tmux_available():
+            observer.start(log_path())  # log no tmux (não-TUI como dados)
+            print("observabilidade: tmux attach -t maestro-observe")
         try:
             run(controller)
         finally:
+            observer.stop()
             store.close()
         return 0
     print(

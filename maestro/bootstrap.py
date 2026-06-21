@@ -12,6 +12,7 @@ import shutil
 from pathlib import Path
 
 from .engine.adapters.base import load_profiles
+from .engine.logbook import Logbook
 from .engine.orchestrator import Orchestrator, make_agent_ask
 from .engine.registry import Registry
 from .engine.session import SessionManager
@@ -25,6 +26,11 @@ def default_home() -> Path:
     return Path(env) if env else Path.home() / ".local" / "share" / "maestro-console"
 
 
+def log_path(home: str | Path | None = None) -> Path:
+    base = Path(home) if home is not None else default_home()
+    return base / "logs" / "handoffs.log"
+
+
 def build_controller(*, home: str | Path | None = None, timeout: float = 180.0):
     """Retorna (TUIController, Store). Lembre de fechar o Store ao sair."""
     base = Path(home) if home is not None else default_home()
@@ -33,11 +39,14 @@ def build_controller(*, home: str | Path | None = None, timeout: float = 180.0):
     registry = Registry(store)
     sm = SessionManager(store)
     ws = Workspace(base / "workspaces")
+    logbook = Logbook(log_path(base))
 
     profiles = load_profiles()
     agents = {n: p for n, p in profiles.items() if shutil.which(p.cmd[0])}
     for name in agents:
         registry.register(name, name)
 
-    orch = Orchestrator(make_agent_ask(sm, agents, ws, timeout=timeout), store=store)
+    orch = Orchestrator(
+        make_agent_ask(sm, agents, ws, timeout=timeout), store=store, logbook=logbook
+    )
     return TUIController(registry, store, orch), store
