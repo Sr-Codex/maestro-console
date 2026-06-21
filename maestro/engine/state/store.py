@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS agents (
     state      TEXT NOT NULL,
     updated_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS teams (
+    name       TEXT PRIMARY KEY,
+    roles_json TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
 """
 
 
@@ -219,3 +224,29 @@ class Store:
     def remove_agent(self, agent_id: str) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM agents WHERE id=?", (agent_id,))
+
+    # -- teams (V2-S1) --------------------------------------------------
+    def save_team(self, name: str, roles: list[dict[str, Any]]) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO teams(name, roles_json, updated_at) VALUES(?,?,?) "
+                "ON CONFLICT(name) DO UPDATE SET roles_json=excluded.roles_json, "
+                "updated_at=excluded.updated_at",
+                (name, json.dumps(roles), time.time()),
+            )
+
+    def get_team(self, name: str) -> list[dict[str, Any]] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT roles_json FROM teams WHERE name=?", (name,)
+            ).fetchone()
+        return json.loads(row["roles_json"]) if row else None
+
+    def list_teams(self) -> list[str]:
+        with self._lock:
+            rows = self._conn.execute("SELECT name FROM teams ORDER BY name").fetchall()
+        return [r["name"] for r in rows]
+
+    def delete_team(self, name: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM teams WHERE name=?", (name,))
