@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "maestro console Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "message_id", "from", "to"],
+  "properties": {
+    "v": { "type": "integer", "minimum": 1 },
+    "message_id": { "type": "string", "minLength": 1 },
+    "task_id": { "type": ["string", "null"] },
+    "from": { "type": "string", "minLength": 1 },
+    "to": { "type": "string", "minLength": 1 },
+    "state": {
+      "type": ["string", "null"],
+      "enum": ["DONE", "BLOCKED", "FAILED", "NEEDS_INPUT", null]
+    },
+    "task": { "type": ["string", "null"] },
+    "result": { "type": ["string", "null"] },
+    "artifacts": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "note": { "type": ["string", "null"] }
+  }
+}
