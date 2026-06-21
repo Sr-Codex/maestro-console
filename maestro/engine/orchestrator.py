@@ -12,12 +12,14 @@ implementação real (``make_agent_ask``) usa SessionManager (mutex/continuidade
 
 from __future__ import annotations
 
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from .envelope import Envelope, EnvelopeState
 from .session import SessionManager
+from .teams import Team
 from .workspace import Workspace
 from .wrapper import request_envelope
 
@@ -44,6 +46,21 @@ class ChainResult:
     @property
     def ok(self) -> bool:
         return not self.escalated
+
+
+@dataclass(frozen=True)
+class StepProgress:
+    index: int
+    role: str
+    agent: str
+    task_id: str
+    phase: str  # "start" | "done"
+    state: str | None = None
+    duration_s: float = 0.0
+
+
+# Callback de progresso por etapa (síncrono, só observabilidade)
+ProgressFn = Callable[[StepProgress], None]
 
 
 class Orchestrator:
@@ -86,6 +103,45 @@ class Orchestrator:
                 out.escalated = True
                 out.reason = f"{step.agent_id} retornou {env.state}: {env.note or env.result}"
                 return out  # escala ao humano, não trava
+            carry = env.result
+        return out
+
+    @staticmethod
+    def _role_task(role, intent: str, carry: str | None) -> str:
+        # compacto (escopo 4): instrução do papel + entrada (intenção ou result anterior)
+        entrada = intent if carry is None else carry
+        return f"[{role.name}] {role.instruction}\nentrada: {entrada}"
+
+    async def run_team(
+        self,
+        team: Team,
+        intent: str,
+        *,
+        task_id: str | None = None,
+        on_step: ProgressFn | None = None,
+    ) -> ChainResult:
+        """Executa a cadeia de um Team com progresso por etapa e cancelável.
+
+        Propaga CancelledError (o subprocesso é morto no runner) — cancelamento
+        seguro: as etapas seguintes não rodam.
+        """
+        tid = task_id or str(uuid.uuid4())
+        out = ChainResult()
+        carry: str | None = None
+        for i, role in enumerate(team.roles):
+            if on_step:
+                on_step(StepProgress(i, role.name, role.agent, tid, "start"))
+            t0 = time.monotonic()
+            env = await self.delegate(role.agent, self._role_task(role, intent, carry), task_id=tid)
+            dt = time.monotonic() - t0
+            out.envelopes.append(env)
+            if on_step:
+                state = str(env.state) if env.state else None
+                on_step(StepProgress(i, role.name, role.agent, tid, "done", state, dt))
+            if env.state is not EnvelopeState.DONE:
+                out.escalated = True
+                out.reason = f"{role.name}({role.agent}) -> {env.state}: {env.note or env.result}"
+                return out
             carry = env.result
         return out
 

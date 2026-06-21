@@ -12,6 +12,7 @@ entre agentes (semáforo/teto) vem da fila/orquestrador (E3).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -82,6 +83,13 @@ async def run_headless(
             duration_s=time.monotonic() - t0,
             timed_out=True,
         )
+    except asyncio.CancelledError:
+        # Cancelamento seguro: mata o subprocesso (bwrap --die-with-parent mata
+        # os filhos) e propaga o cancelamento — sem deixar processo órfão.
+        proc.kill()
+        with contextlib.suppress(Exception):
+            await proc.wait()
+        raise
 
     rc = proc.returncode
     return RunResult(

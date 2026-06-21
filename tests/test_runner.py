@@ -50,3 +50,37 @@ def test_cmd_vazio_levanta():
 
     with pytest.raises(ValueError):
         _run(run_headless([], timeout=1))
+
+
+def test_cancelamento_mata_subprocesso():
+    import os
+    import signal
+
+    async def main():
+        # processo filho que grava o proprio PID e dorme bastante
+        pidfile = f"/tmp/maestro_cancel_{os.getpid()}.pid"
+        code = f"import os,time;open({pidfile!r},'w').write(str(os.getpid()));time.sleep(30)"
+        task = asyncio.create_task(run_headless([PY, "-c", code], timeout=60))
+        await asyncio.sleep(1.0)
+        with open(pidfile) as f:
+            child = int(f.read())
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        await asyncio.sleep(0.3)
+        os.remove(pidfile)
+        # o processo filho nao deve mais existir
+        try:
+            os.kill(child, 0)
+            return "vivo"
+        except (ProcessLookupError, PermissionError):
+            return "morto"
+        finally:
+            try:
+                os.kill(child, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    assert _run(main()) == "morto"
