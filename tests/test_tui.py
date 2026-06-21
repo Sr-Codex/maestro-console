@@ -105,6 +105,24 @@ def test_run_team_atualiza_dashboard_e_estados(tmp_path):
         s.close()
 
 
+def test_run_team_progress_passthrough(tmp_path):
+    async def ask(agent_id, prompt):
+        return json.dumps({"state": "DONE", "result": "ok"})
+
+    s, ctrl, reg = _build(tmp_path, ask)
+    try:
+        reg.register("claude", "claude-code")
+        seen = []
+        team = Team("t", [Role("coder", "claude", "i")])
+        asyncio.run(ctrl.run_team(team, "x", progress=seen.append))
+        phases = [(e.role, e.phase) for e in seen]
+        assert ("coder", "start") in phases and ("coder", "done") in phases
+        # progress é limpo após a execução
+        assert ctrl._progress is None
+    finally:
+        s.close()
+
+
 def test_run_team_escala_marca_agente(tmp_path):
     async def ask(agent_id, prompt):
         return (

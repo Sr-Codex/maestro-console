@@ -37,6 +37,7 @@ class TUIController:
         self._teams = teams or Teams(store)
         self._active: dict | None = None
         self._last: dict | None = None
+        self._progress = None  # callback opcional do app para exibir progresso
 
     # -- consultas ------------------------------------------------------
     def list_agents(self) -> list[AgentRecord]:
@@ -95,17 +96,21 @@ class TUIController:
                 self._active["current"] = cur
                 self._active["state"] = sp.state or "?"
             self._registry.set_state(sp.agent, _STATE_MAP.get(sp.state, AgentState.IDLE))
+        if self._progress is not None:
+            self._progress(sp)
 
     def _active_route(self) -> str:
         return self._active["route"] if self._active else "?"
 
-    async def run_team(self, team: Team, intent: str) -> ChainResult:
+    async def run_team(self, team: Team, intent: str, *, progress=None) -> ChainResult:
         self._active = {"task_id": "-", "route": team.route, "current": "-", "state": "start"}
+        self._progress = progress
         try:
             res = await self._orch.run_team(team, intent, on_step=self._on_step)
         except asyncio.CancelledError:
             self._last = {"route": team.route, "state": "CANCELADO", "result": None}
             self._active = None
+            self._progress = None
             raise
         result = res.envelopes[-1].result if res.envelopes else None
         self._last = {
@@ -115,6 +120,7 @@ class TUIController:
             "reason": res.reason,
         }
         self._active = None
+        self._progress = None
         return res
 
     async def delegate(self, agent_id: str, task: str):
