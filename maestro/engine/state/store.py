@@ -1,0 +1,176 @@
+"""State Store — persistência segura em SQLite (WAL). E1-S3 / ADR-9.
+
+Única camada de acesso ao estado (sessões, tarefas, log de envelopes).
+Proibida escrita JSON concorrente direta: aqui tudo passa por transações
+SQLite, com WAL para leitura concorrente e um lock que serializa escritores
+("escritor único" lógico).
+
+Não conhece envelope/adapter — só persiste dados primitivos/JSON.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS sessions (
+    agent_id   TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tasks (
+    id          TEXT PRIMARY KEY,
+    intent      TEXT,
+    target      TEXT,
+    status      TEXT NOT NULL,
+    result_json TEXT,
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    created_at  REAL NOT NULL,
+    updated_at  REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS envelope_log (
+    seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id TEXT NOT NULL,
+    task_id    TEXT,
+    sender     TEXT,
+    recipient  TEXT,
+    state      TEXT,
+    payload    TEXT,
+    ts         REAL NOT NULL
+);
+"""
+
+
+class Store:
+    """Acesso transacional ao estado (SQLite WAL). Thread-safe."""
+
+    def __init__(self, db_path: str | Path):
+        self._path = Path(db_path)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        # WAL: leitores concorrentes + um escritor; busy_timeout evita "locked".
+        self._conn.execute("PRAGMA journal_mode=WAL;")
+        self._conn.execute("PRAGMA synchronous=NORMAL;")
+        self._conn.execute("PRAGMA busy_timeout=5000;")
+        with self._conn:
+            self._conn.executescript(_SCHEMA)
+
+    # -- infraestrutura -------------------------------------------------
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
+    def __enter__(self) -> Store:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def journal_mode(self) -> str:
+        with self._lock:
+            return self._conn.execute("PRAGMA journal_mode;").fetchone()[0]
+
+    # -- sessões (FR13) -------------------------------------------------
+    def set_session(self, agent_id: str, session_id: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO sessions(agent_id, session_id, updated_at) VALUES(?,?,?) "
+                "ON CONFLICT(agent_id) DO UPDATE SET session_id=excluded.session_id, "
+                "updated_at=excluded.updated_at",
+                (agent_id, session_id, time.time()),
+            )
+
+    def get_session(self, agent_id: str) -> str | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT session_id FROM sessions WHERE agent_id=?", (agent_id,)
+            ).fetchone()
+        return row["session_id"] if row else None
+
+    # -- tarefas --------------------------------------------------------
+    def create_task(
+        self,
+        task_id: str,
+        intent: str | None = None,
+        target: str | None = None,
+        status: str = "queued",
+    ) -> None:
+        now = time.time()
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO tasks(id,intent,target,status,attempts,created_at,updated_at) "
+                "VALUES(?,?,?,?,0,?,?)",
+                (task_id, intent, target, status, now, now),
+            )
+
+    def update_task(
+        self,
+        task_id: str,
+        *,
+        status: str | None = None,
+        result: Any | None = None,
+        bump_attempts: bool = False,
+    ) -> None:
+        sets: list[str] = ["updated_at=?"]
+        params: list[Any] = [time.time()]
+        if status is not None:
+            sets.append("status=?")
+            params.append(status)
+        if result is not None:
+            sets.append("result_json=?")
+            params.append(json.dumps(result))
+        if bump_attempts:
+            sets.append("attempts=attempts+1")
+        params.append(task_id)
+        with self._lock, self._conn:
+            self._conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id=?", params)
+
+    def get_task(self, task_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["result"] = json.loads(d["result_json"]) if d["result_json"] else None
+        return d
+
+    def count_tasks(self) -> int:
+        with self._lock:
+            return self._conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+
+    # -- log de envelopes (FR12) ---------------------------------------
+    def log_envelope(
+        self,
+        *,
+        message_id: str,
+        task_id: str | None,
+        sender: str | None,
+        recipient: str | None,
+        state: str | None,
+        payload: Any | None = None,
+    ) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO envelope_log(message_id,task_id,sender,recipient,state,payload,ts) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (
+                    message_id,
+                    task_id,
+                    sender,
+                    recipient,
+                    state,
+                    json.dumps(payload) if payload is not None else None,
+                    time.time(),
+                ),
+            )
+
+    def count_envelopes(self) -> int:
+        with self._lock:
+            return self._conn.execute("SELECT COUNT(*) FROM envelope_log").fetchone()[0]
