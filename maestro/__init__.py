@@ -7,4 +7,4 @@ Pacote raiz. Os subpacotes seguem a arquitetura aprovada (architecture.md):
   - tui: interface de terminal (frontend plugável)
 """
 
-__version__ = "0.0.1"
+__version__ = "0.2.0"
