@@ -69,14 +69,46 @@ BUILTIN_TEAMS: dict[str, Team] = {
 }
 
 
+class TeamValidationError(ValueError):
+    """Team inválido (nome/papéis/agentes/instruções)."""
+
+
+def validate_team(team: Team) -> None:
+    if not team.name.strip():
+        raise TeamValidationError("nome do team é obrigatório")
+    if not team.roles:
+        raise TeamValidationError("team precisa de ao menos 1 papel")
+    for r in team.roles:
+        if not r.name.strip():
+            raise TeamValidationError("papel sem nome")
+        if not r.agent.strip():
+            raise TeamValidationError(f"papel {r.name!r} sem agente")
+        if not r.instruction.strip():
+            raise TeamValidationError(f"papel {r.name!r} sem instrução")
+
+
 class Teams:
     """Gerência de equipes (built-ins + persistidas)."""
 
     def __init__(self, store: Store):
         self._store = store
 
+    def exists(self, name: str) -> bool:
+        return name in self.list()
+
     def save(self, team: Team) -> None:
+        validate_team(team)
         self._store.save_team(team.name, team.to_dicts())
+
+    def duplicate(self, src: str, new_name: str) -> Team:
+        src_team = self.get(src)
+        if src_team is None:
+            raise TeamValidationError(f"team de origem {src!r} não existe")
+        if self.exists(new_name):
+            raise TeamValidationError(f"team {new_name!r} já existe")
+        dup = Team(new_name, list(src_team.roles))
+        self.save(dup)
+        return dup
 
     def get(self, name: str) -> Team | None:
         roles = self._store.get_team(name)

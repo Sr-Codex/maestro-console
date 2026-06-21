@@ -12,7 +12,7 @@ from ..engine import history
 from ..engine.orchestrator import ChainResult, Orchestrator, StepProgress
 from ..engine.registry import AgentRecord, AgentState, Registry
 from ..engine.state.store import Store
-from ..engine.teams import Team, Teams
+from ..engine.teams import Role, Team, Teams
 
 # envelope state (no passo done) -> estado do agente no dashboard
 _STATE_MAP = {
@@ -57,6 +57,29 @@ class TUIController:
 
     def get_team(self, name: str) -> Team | None:
         return self._teams.get(name)
+
+    def team_detail_text(self, name: str) -> str:
+        t = self._teams.get(name)
+        if t is None:
+            return f"(team {name!r} não encontrado)"
+        linhas = [f"{name}: {t.route}"]
+        linhas += [f"  - {r.name} [{r.agent}]: {r.instruction}" for r in t.roles]
+        return "\n".join(linhas)
+
+    def save_team(self, name: str, roles: list[tuple[str, str, str]]) -> Team:
+        """Cria/edita um team. roles = [(papel, agente, instrução), ...]."""
+        team = Team(name.strip(), [Role(p.strip(), a.strip(), i.strip()) for p, a, i in roles])
+        self._teams.save(team)  # valida
+        return team
+
+    def duplicate_team(self, src: str, new_name: str) -> Team:
+        return self._teams.duplicate(src, new_name.strip())
+
+    def delete_team(self, name: str) -> None:
+        self._teams.delete(name)
+
+    def team_exists(self, name: str) -> bool:
+        return self._teams.exists(name)
 
     # -- dashboard ------------------------------------------------------
     def dashboard_text(self) -> str:

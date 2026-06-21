@@ -21,8 +21,61 @@ maestro console 🎼
   [3] montar cadeia (agentes+ordem)
   [4] delegar tarefa (1 agente)
   [5] histórico
+  [6] gerenciar teams
   [q] sair
 > """
+
+
+def _coletar_roles() -> list[tuple[str, str, str]]:  # pragma: no cover - input
+    roles = []
+    print("papéis (em ordem; papel vazio encerra):")
+    while True:
+        nome = input("  papel: ").strip()
+        if not nome:
+            break
+        agente = input("  agente: ").strip()
+        instr = input("  instrução curta: ").strip()
+        roles.append((nome, agente, instr))
+    return roles
+
+
+def _gerenciar_teams(controller: TUIController) -> None:  # pragma: no cover - input
+    while True:
+        print("teams:", ", ".join(controller.list_teams()))
+        op = (
+            input("  [l]istar [c]riar [e]ditar [d]uplicar [x]excluir [v]er [b]voltar > ")
+            .strip()
+            .lower()
+        )
+        if op == "b" or op == "":
+            return
+        if op == "l":
+            print("\n".join(controller.list_teams()))
+        elif op == "v":
+            print(controller.team_detail_text(input("  nome: ").strip()))
+        elif op in ("c", "e"):
+            nome = input("  nome do team: ").strip()
+            roles = _coletar_roles()
+            try:
+                t = controller.save_team(nome, roles)
+                print(f"  ✓ salvo: {t.route}")
+            except Exception as e:
+                print(f"  ✗ inválido: {e}")
+        elif op == "d":
+            src = input("  origem: ").strip()
+            novo = input("  novo nome: ").strip()
+            try:
+                controller.duplicate_team(src, novo)
+                print("  ✓ duplicado")
+            except Exception as e:
+                print(f"  ✗ {e}")
+        elif op == "x":
+            nome = input("  excluir qual: ").strip()
+            if input(f"  confirmar exclusão de {nome!r}? (s/N) ").strip().lower() == "s":
+                controller.delete_team(nome)
+                print("  ✓ excluído")
+            else:
+                print("  cancelado")
 
 
 def _print_step(sp: StepProgress) -> None:
@@ -79,5 +132,7 @@ def run(controller: TUIController) -> None:  # pragma: no cover - loop interativ
             print(f"-> {env.state}: {env.result or env.note or ''}")
         elif choice == "5":
             print(controller.history_text())
+        elif choice == "6":
+            _gerenciar_teams(controller)
         else:
             print("opção inválida")
