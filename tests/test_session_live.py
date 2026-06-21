@@ -30,14 +30,18 @@ def test_claude_lembra_entre_turnos(tmp_path):
             sm = SessionManager(s)
             ws = tempfile.mkdtemp(prefix="maestro_ws_")
             await sm.run_in_session(
-                prof, "claude",
+                prof,
+                "claude",
                 "Memorize o numero secreto 7391. Responda apenas OK.",
-                workspace=ws, timeout=120,
+                workspace=ws,
+                timeout=120,
             )
             r = await sm.run_in_session(
-                prof, "claude",
+                prof,
+                "claude",
                 "Qual o numero secreto que memorizei? Responda APENAS o numero.",
-                workspace=ws, timeout=120,
+                workspace=ws,
+                timeout=120,
             )
             assert "7391" in r.stdout
 

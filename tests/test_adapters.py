@@ -40,7 +40,8 @@ def test_build_claude_com_workspace_aplica_permissoes():
     assert "--add-dir" in argv and "/ws" in argv
     assert "--allowedTools" in argv
     assert "--dangerously-skip-permissions" not in argv  # ADR-6
-    assert argv[-1] == "oi"  # prompt por último
+    # prompt vem ANTES de --allowedTools (nargs), senão seria engolido
+    assert argv.index("oi") < argv.index("--allowedTools")
 
 
 def test_build_codex_simples_e_resume():
