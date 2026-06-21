@@ -31,9 +31,14 @@ def wrap(
     *,
     workspace: str | Path,
     rw_paths: Sequence[str] = (),
+    shared_paths: Sequence[str] = (),
     allow_network: bool = True,
 ) -> list[str]:
-    """Retorna o argv do agente envelopado em bwrap. Levanta se bwrap ausente."""
+    """Retorna o argv do agente envelopado em bwrap. Levanta se bwrap ausente.
+
+    rw_paths: config/sessão do agente (ex.: ~/.claude).
+    shared_paths: diretórios de artefatos compartilhados entre agentes (rw).
+    """
     if not bwrap_available():
         raise SandboxUnavailable("bwrap não encontrado; recusando rodar sem sandbox")
     ws = str(Path(workspace).resolve())
@@ -61,6 +66,10 @@ def wrap(
         rp = str(Path(p).expanduser())
         if Path(rp).exists():
             args += ["--bind", rp, rp]  # config/sessão do agente: rw
+    for p in shared_paths:
+        sp = str(Path(p).resolve())
+        if Path(sp).exists():
+            args += ["--bind", sp, sp]  # artefatos compartilhados: rw
     args.append("--")
     args.extend(inner_argv)
     return args

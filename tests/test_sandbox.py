@@ -29,6 +29,14 @@ def test_wrap_rw_paths_existentes(tmp_path, monkeypatch):
     assert "/nao/existe" not in argv
 
 
+def test_wrap_shared_paths_bind_rw(tmp_path, monkeypatch):
+    monkeypatch.setattr(sandbox, "bwrap_available", lambda: True)
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    argv = sandbox.wrap(["x"], workspace=tmp_path, shared_paths=[str(shared)])
+    assert str(shared.resolve()) in argv  # diretório compartilhado montado
+
+
 def test_wrap_unshare_net_opcional(tmp_path, monkeypatch):
     monkeypatch.setattr(sandbox, "bwrap_available", lambda: True)
     com_rede = sandbox.wrap(["x"], workspace=tmp_path, allow_network=True)

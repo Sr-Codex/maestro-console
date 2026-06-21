@@ -6,6 +6,7 @@ monta o comando com a política de permissão e roda com cwd = workspace.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -42,9 +43,13 @@ async def run_agent(
     timeout: float,
     session_id: str | None = None,
     resume: bool = False,
+    shared_paths: Sequence[str] = (),
 ) -> RunResult:
     plan = plan_run(profile, prompt, workspace=workspace, session_id=session_id, resume=resume)
     # Confinamento estrito de SO (ADR-6): workspace rw, /tmp privado, resto ro.
-    # Falha-seguro se bwrap ausente (SandboxUnavailable).
-    sandboxed = sandbox_wrap(plan.argv, workspace=plan.cwd, rw_paths=profile.rw_paths)
+    # shared_paths: diretórios de artefatos compartilhados (FR14). Falha-seguro
+    # se bwrap ausente (SandboxUnavailable).
+    sandboxed = sandbox_wrap(
+        plan.argv, workspace=plan.cwd, rw_paths=profile.rw_paths, shared_paths=shared_paths
+    )
     return await run_headless(sandboxed, timeout=timeout)
