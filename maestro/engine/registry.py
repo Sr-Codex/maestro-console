@@ -16,6 +16,8 @@ from .state.store import Store
 class AgentState(StrEnum):
     IDLE = "idle"
     BUSY = "busy"
+    BLOCKED = "blocked"
+    FAILED = "failed"
     ERROR = "error"
 
 

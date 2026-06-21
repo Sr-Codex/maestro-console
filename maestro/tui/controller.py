@@ -1,23 +1,44 @@
-"""TUI Controller — lógica da interface, desacoplada do render (E4-S2 / FR11).
+"""TUI Controller — lógica da interface, desacoplada do render (V2-S3 / FR11).
 
-Expõe o que a TUI precisa: listar agentes/estado, ver histórico e disparar uma
-delegação. Testável sem terminal (o app.py é só o render/loop por cima).
+Dashboard (agentes+estados, tarefa ativa, fila, último resultado, rotas) e
+execução de cadeias de Team com progresso por etapa. Testável sem terminal.
 """
 
 from __future__ import annotations
 
+import asyncio
+
 from ..engine import history
-from ..engine.orchestrator import Orchestrator
-from ..engine.registry import AgentRecord, Registry
+from ..engine.orchestrator import ChainResult, Orchestrator, StepProgress
+from ..engine.registry import AgentRecord, AgentState, Registry
 from ..engine.state.store import Store
+from ..engine.teams import Team, Teams
+
+# envelope state (no passo done) -> estado do agente no dashboard
+_STATE_MAP = {
+    "DONE": AgentState.IDLE,
+    "BLOCKED": AgentState.BLOCKED,
+    "FAILED": AgentState.FAILED,
+    "NEEDS_INPUT": AgentState.BLOCKED,
+}
 
 
 class TUIController:
-    def __init__(self, registry: Registry, store: Store, orchestrator: Orchestrator):
+    def __init__(
+        self,
+        registry: Registry,
+        store: Store,
+        orchestrator: Orchestrator,
+        teams: Teams | None = None,
+    ):
         self._registry = registry
         self._store = store
         self._orch = orchestrator
+        self._teams = teams or Teams(store)
+        self._active: dict | None = None
+        self._last: dict | None = None
 
+    # -- consultas ------------------------------------------------------
     def list_agents(self) -> list[AgentRecord]:
         return self._registry.list()
 
@@ -25,10 +46,76 @@ class TUIController:
         agents = self.list_agents()
         if not agents:
             return "(nenhum agente registrado)"
-        return "\n".join(f"- {a.id} [{a.type}] estado={a.state}" for a in agents)
+        return "\n".join(f"  - {a.id} [{a.type}] estado={a.state}" for a in agents)
 
-    def history_text(self, limit: int = 20) -> str:
+    def history_text(self, limit: int = 10) -> str:
         return history.format_history(history.recent(self._store, limit=limit))
+
+    def list_teams(self) -> list[str]:
+        return self._teams.list()
+
+    def get_team(self, name: str) -> Team | None:
+        return self._teams.get(name)
+
+    # -- dashboard ------------------------------------------------------
+    def dashboard_text(self) -> str:
+        if self._active:
+            a = self._active
+            ativa = f"{a['task_id'][:8]} | {a['route']} | etapa: {a['current']} [{a['state']}]"
+        else:
+            ativa = "(nenhuma)"
+        if self._last:
+            ll = self._last
+            res = (ll.get("result") or ll.get("reason") or "")[:60]
+            ultimo = f"{ll['route']} -> {ll['state']} | {res}"
+        else:
+            ultimo = "(nenhum)"
+        return (
+            "== maestro console — dashboard ==\n"
+            f"Agentes:\n{self.agents_text()}\n"
+            f"Tarefa ativa: {ativa}\n"
+            "Fila: (vazia)\n"
+            f"Último resultado: {ultimo}\n"
+            f"Rotas recentes:\n{self.history_text()}"
+        )
+
+    # -- execução -------------------------------------------------------
+    def _on_step(self, sp: StepProgress) -> None:
+        cur = f"{sp.role}({sp.agent})"
+        if sp.phase == "start":
+            self._active = {
+                "task_id": sp.task_id,
+                "route": self._active_route(),
+                "current": cur,
+                "state": "busy",
+            }
+            self._registry.set_state(sp.agent, AgentState.BUSY)
+        else:  # done
+            if self._active:
+                self._active["current"] = cur
+                self._active["state"] = sp.state or "?"
+            self._registry.set_state(sp.agent, _STATE_MAP.get(sp.state, AgentState.IDLE))
+
+    def _active_route(self) -> str:
+        return self._active["route"] if self._active else "?"
+
+    async def run_team(self, team: Team, intent: str) -> ChainResult:
+        self._active = {"task_id": "-", "route": team.route, "current": "-", "state": "start"}
+        try:
+            res = await self._orch.run_team(team, intent, on_step=self._on_step)
+        except asyncio.CancelledError:
+            self._last = {"route": team.route, "state": "CANCELADO", "result": None}
+            self._active = None
+            raise
+        result = res.envelopes[-1].result if res.envelopes else None
+        self._last = {
+            "route": team.route,
+            "state": "DONE" if res.ok else "ESCALOU",
+            "result": result,
+            "reason": res.reason,
+        }
+        self._active = None
+        return res
 
     async def delegate(self, agent_id: str, task: str):
         return await self._orch.delegate(agent_id, task)
