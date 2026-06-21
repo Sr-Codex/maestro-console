@@ -1,0 +1,17 @@
+name = "claude"
+
+[headless]
+cmd = ["claude", "-p"]
+stdin = "devnull"
+# Saída: E3-S1 troca para JSON estrito (FR15). Por ora, texto.
+output_args = []
+
+[headless.session]
+mode = "flag"
+set = ["--session-id", "{id}"]
+resume = ["--resume", "{id}"]
+
+# Política de permissão explícita (ADR-6) — SEM bypass. Workspace isolado (E2-S2).
+[headless.permissions]
+args = ["--permission-mode", "acceptEdits", "--add-dir", "{workspace}"]
+allowed_tools = ["--allowedTools", "Read", "Write", "Edit"]

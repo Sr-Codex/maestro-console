@@ -1,0 +1,16 @@
+name = "codex"
+
+[headless]
+cmd = ["codex", "exec", "--skip-git-repo-check"]
+stdin = "devnull"
+output_args = []
+
+# Codex retoma sessão por subcomando (estruturalmente diferente do claude).
+[headless.session]
+mode = "subcommand"
+resume_cmd = ["codex", "exec", "--skip-git-repo-check", "resume", "{id}"]
+
+# Sandbox workspace-write (ADR-6) — SEM --dangerously-bypass-*. Workspace isolado (E2-S2).
+[headless.permissions]
+args = ["--sandbox", "workspace-write", "-C", "{workspace}"]
+allowed_tools = []
