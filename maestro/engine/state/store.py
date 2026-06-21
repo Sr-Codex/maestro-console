@@ -181,6 +181,14 @@ class Store:
         with self._lock:
             return self._conn.execute("SELECT COUNT(*) FROM envelope_log").fetchone()[0]
 
+    def list_envelopes(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Últimos envelopes logados (mais recentes primeiro)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM envelope_log ORDER BY seq DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     # -- agentes (E1-S4) -----------------------------------------------
     def upsert_agent(self, agent_id: str, agent_type: str, state: str) -> None:
         with self._lock, self._conn:
