@@ -1,0 +1,8 @@
+# BMAD — saídas geradas pelos agentes
+_bmad-output/
+
+# BMAD — config pessoal (não versionar)
+_bmad/config.user.toml
+
+# Node
+node_modules/
