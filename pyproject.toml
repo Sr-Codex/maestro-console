@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "maestro-console"
+version = "0.0.1"
+description = "Orquestrador de agentes de IA em terminal (terminal-first) para handhelds Linux ARM (ClockworkPi uConsole)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "maestro console authors" }]
+keywords = ["agents", "orchestration", "tmux", "terminal", "uconsole", "cli"]
+dependencies = [
+    "jsonschema>=4.0",   # validação estrita do envelope (FR15 / ADR-7)
+]
+
+[project.optional-dependencies]
+tui = ["textual>=0.50"]            # interface TUI (Épico 4)
+dev = ["pytest>=8.0", "ruff>=0.4"]  # testes + lint/format
+
+[project.scripts]
+maestro = "maestro.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["maestro"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Lint só o código de produto. spike/ é descartável; demais são docs/infra/tooling.
+extend-exclude = ["spike", "_bmad", "_bmad-output", "docs", ".venv", ".claude"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

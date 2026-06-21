@@ -6,3 +6,23 @@ _bmad/config.user.toml
 
 # Node
 node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# maestro — estado de runtime (SQLite/logs)
+maestro/state/*.db
+maestro/state/logs/
+
+# spike — código descartável das Fases 0/0.1/0.2 (não faz parte do produto)
+spike/__pycache__/
+spike/*.json
+spike/*.log
