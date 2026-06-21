@@ -43,6 +43,12 @@ CREATE TABLE IF NOT EXISTS envelope_log (
     payload    TEXT,
     ts         REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS agents (
+    id         TEXT PRIMARY KEY,
+    type       TEXT NOT NULL,
+    state      TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
 """
 
 
@@ -174,3 +180,34 @@ class Store:
     def count_envelopes(self) -> int:
         with self._lock:
             return self._conn.execute("SELECT COUNT(*) FROM envelope_log").fetchone()[0]
+
+    # -- agentes (E1-S4) -----------------------------------------------
+    def upsert_agent(self, agent_id: str, agent_type: str, state: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO agents(id, type, state, updated_at) VALUES(?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET type=excluded.type, state=excluded.state, "
+                "updated_at=excluded.updated_at",
+                (agent_id, agent_type, state, time.time()),
+            )
+
+    def set_agent_state(self, agent_id: str, state: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE agents SET state=?, updated_at=? WHERE id=?",
+                (state, time.time(), agent_id),
+            )
+
+    def get_agent(self, agent_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM agents WHERE id=?", (agent_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_agents(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM agents ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
+
+    def remove_agent(self, agent_id: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM agents WHERE id=?", (agent_id,))
