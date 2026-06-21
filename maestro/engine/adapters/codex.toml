@@ -4,6 +4,8 @@ name = "codex"
 cmd = ["codex", "exec", "--skip-git-repo-check"]
 stdin = "devnull"
 output_args = []
+# Config/sessão/auth do codex (liberados rw no sandbox).
+rw_paths = ["~/.codex", "~/.config/codex"]
 
 # Codex retoma sessão por subcomando (estruturalmente diferente do claude).
 [headless.session]

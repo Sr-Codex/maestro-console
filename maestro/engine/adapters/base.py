@@ -38,7 +38,15 @@ class AgentProfile:
     output_args: list[str] = field(default_factory=list)
     permission_args: list[str] = field(default_factory=list)
     allowed_tools_args: list[str] = field(default_factory=list)
+    # Diretórios rw que o sandbox deve liberar (config/sessão/auth do agente),
+    # ex.: ~/.claude, ~/.codex — necessários para auth e --resume.
+    rw_paths: list[str] = field(default_factory=list)
     stdin: str = "devnull"
+    # Onde o prompt entra no argv (quirk por CLI):
+    #   "after_cmd" -> logo após o cmd base (ex.: claude -p PROMPT ...flags),
+    #                  evita que flags nargs (--allowedTools) engulam o prompt;
+    #   "last"      -> no fim (ex.: codex exec ...flags PROMPT).
+    prompt_position: str = "last"
 
     @classmethod
     def from_dict(cls, data: dict) -> AgentProfile:
@@ -55,7 +63,9 @@ class AgentProfile:
             output_args=list(h.get("output_args", [])),
             permission_args=list(perms.get("args", [])),
             allowed_tools_args=list(perms.get("allowed_tools", [])),
+            rw_paths=list(h.get("rw_paths", [])),
             stdin=h.get("stdin", "devnull"),
+            prompt_position=h.get("prompt_position", "last"),
         )
 
     def build_command(
@@ -68,18 +78,20 @@ class AgentProfile:
     ) -> list[str]:
         """Monta o argv headless aplicando cmd/sessão/permissão/saída."""
         if resume and self.session_mode == "subcommand":
-            argv = _subst(self.session_resume_cmd, id=session_id or "")
+            base = _subst(self.session_resume_cmd, id=session_id or "")
         else:
-            argv = list(self.cmd)
+            base = list(self.cmd)
             if session_id and self.session_mode == "flag":
                 tmpl = self.session_resume if resume else self.session_set
-                argv += _subst(tmpl, id=session_id)
-        argv += list(self.output_args)
+                base += _subst(tmpl, id=session_id)
+        flags = list(self.output_args)
         if workspace:
-            argv += _subst(self.permission_args, workspace=workspace)
-            argv += list(self.allowed_tools_args)
-        argv.append(prompt)
-        return argv
+            flags += _subst(self.permission_args, workspace=workspace)
+            flags += list(self.allowed_tools_args)
+        # Posição do prompt evita que flags nargs (ex.: --allowedTools) o engulam.
+        if self.prompt_position == "after_cmd":
+            return base + [prompt] + flags
+        return base + flags + [prompt]
 
 
 def load_profile(path: str | Path) -> AgentProfile:

@@ -3,8 +3,12 @@ name = "claude"
 [headless]
 cmd = ["claude", "-p"]
 stdin = "devnull"
+# claude: prompt logo após "-p" (senão --allowedTools nargs engole o prompt).
+prompt_position = "after_cmd"
 # Saída: E3-S1 troca para JSON estrito (FR15). Por ora, texto.
 output_args = []
+# Config/sessão/auth do claude (liberados rw no sandbox para auth e --resume).
+rw_paths = ["~/.claude", "~/.claude.json", "~/.config/claude"]
 
 [headless.session]
 mode = "flag"
