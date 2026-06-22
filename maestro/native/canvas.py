@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import gi
 
+gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 gi.require_version("Vte", "2.91")
 from gi.repository import Gdk, GLib, Gtk, Vte  # noqa: E402
@@ -17,9 +18,12 @@ from gi.repository import Gdk, GLib, Gtk, Vte  # noqa: E402
 from ..engine.state.store import Store  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from .agents import STATE_COLORS, agent_argv, installed_agents  # noqa: E402
-from .state import CanvasModel  # noqa: E402
+from .orchestrate import run_team_in_thread  # noqa: E402
+from .state import CanvasModel, cable_segments  # noqa: E402
 
 BASE_W, BASE_H = 420, 220
+# estado do envelope (passo done) -> estado visual do nó
+_ST_MAP = {"DONE": "done", "BLOCKED": "blocked", "FAILED": "failed", "NEEDS_INPUT": "blocked"}
 
 
 def _rgba(hex_color: str) -> Gdk.RGBA:
@@ -47,10 +51,14 @@ def make_terminal(argv: list[str]) -> Vte.Terminal:
 
 
 class CanvasWindow:
-    def __init__(self, model: CanvasModel, nodes: list[tuple[str, str, list[str]]]):
+    def __init__(self, model, nodes, controller=None, run_team_name="coder-reviewer"):
         self.model = model
+        self.controller = controller
+        self.run_team_name = run_team_name
         self.terms: list[Vte.Terminal] = []
         self.heads: dict[str, Gtk.EventBox] = {}
+        self.frames: dict[str, Gtk.Widget] = {}
+        self.order: list[str] = []
         self.win = Gtk.Window(title="maestro console 🎼 — canvas (nativo)")
         self.win.set_default_size(1000, 600)
         self.win.connect("destroy", Gtk.main_quit)
@@ -68,6 +76,7 @@ class CanvasWindow:
         self.layout.connect("button-press-event", self._pan_start)
         self.layout.connect("motion-notify-event", self._pan_move)
         self.layout.connect("button-release-event", self._pan_end)
+        self.layout.connect("draw", self._draw_cables)
         self.scrolled.add(self.layout)
         root.pack_start(self.scrolled, True, True, 0)
         self.win.add(root)
@@ -85,6 +94,10 @@ class CanvasWindow:
             bar.pack_start(b, False, False, 0)
         self.zlabel = Gtk.Label(label="zoom 100%")
         bar.pack_start(self.zlabel, False, False, 6)
+        if self.controller is not None:
+            run_b = Gtk.Button(label=f"▶ rodar time ({self.run_team_name})")
+            run_b.connect("clicked", lambda _b: self._run_team())
+            bar.pack_end(run_b, False, False, 0)
         return bar
 
     def _add_node(self, nid, title, argv, default):
@@ -109,6 +122,8 @@ class CanvasWindow:
         frame.add(box)
         x, y = self.model.position(nid, default)
         self.layout.put(frame, int(x), int(y))
+        self.frames[nid] = frame
+        self.order.append(nid)
 
     # -- arrastar nó (por título) --
     def _drag_start(self, _w, e, frame):
@@ -173,17 +188,48 @@ class CanvasWindow:
                 Gtk.StateFlags.NORMAL, _rgba(STATE_COLORS.get(state, STATE_COLORS["idle"]))
             )
 
+    # -- cabos (handoffs) --
+    def _draw_cables(self, _layout, cr):
+        z = self.model.zoom()
+        w, h = BASE_W * z, BASE_H * z
+        pos = [
+            (
+                self.layout.child_get_property(self.frames[n], "x"),
+                self.layout.child_get_property(self.frames[n], "y"),
+            )
+            for n in self.order
+            if n in self.frames
+        ]
+        cr.set_source_rgb(0.34, 0.38, 0.42)
+        cr.set_line_width(2)
+        for x1, y1, x2, y2 in cable_segments(pos, w, h):
+            cr.move_to(x1, y1)
+            cr.line_to(x2, y2)
+            cr.stroke()
+        return False
+
+    # -- rodar time da engine (headless) refletindo nas cores --
+    def _run_team(self):
+        team = self.controller.get_team(self.run_team_name)
+        if team is None:
+            return
+        run_team_in_thread(self.controller, team, "Responda apenas OK.", self._on_step_ts)
+
+    def _on_step_ts(self, sp):
+        # chamado na thread da engine -> marshalla p/ a UI com segurança
+        state = "busy" if sp.phase == "start" else _ST_MAP.get(sp.state, "idle")
+        GLib.idle_add(self.set_node_state, sp.agent, state)
+        GLib.idle_add(self.layout.queue_draw)
+
     def show(self):
         self.win.show_all()
 
 
 def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
-    from ..bootstrap import default_home
+    from ..bootstrap import build_controller, default_home
 
-    owns = store is None
     base = default_home()
-    if owns:
-        store = Store(f"{base}/maestro.db")
+    controller, store = build_controller()
     # um terminal de AGENTE interativo (sandbox bwrap) por CLI instalado
     ws = Workspace(f"{base}/workspaces")
     nodes = []
@@ -191,9 +237,8 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         nodes.append((name, name, agent_argv(profile, str(ws.create(name)))))
     if not nodes:  # nenhum agente instalado -> um shell de exemplo
         nodes = [("term1", "shell", ["/bin/bash"])]
-    CanvasWindow(CanvasModel(store), nodes).show()
+    CanvasWindow(CanvasModel(store), nodes, controller=controller).show()
     try:
         Gtk.main()
     finally:
-        if owns:
-            store.close()
+        store.close()

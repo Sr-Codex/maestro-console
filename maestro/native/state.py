@@ -26,3 +26,17 @@ class CanvasModel:
 
     def set_zoom(self, z: float) -> None:
         self._store.set_ui("native_zoom", max(0.3, min(3.0, float(z))))
+
+
+def cable_segments(
+    positions: list[tuple[float, float]], w: float, h: float
+) -> list[tuple[float, float, float, float]]:
+    """Segmentos (x1,y1,x2,y2) ligando nós consecutivos da rota (handoffs).
+
+    Conecta a borda direita de um nó à borda esquerda do próximo (centro vertical).
+    `positions` são cantos superior-esquerdos; `w`,`h` o tamanho do nó.
+    """
+    segs = []
+    for (ax, ay), (bx, by) in zip(positions, positions[1:], strict=False):
+        segs.append((ax + w, ay + h / 2, bx, by + h / 2))
+    return segs
