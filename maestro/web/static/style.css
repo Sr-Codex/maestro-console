@@ -31,3 +31,11 @@ button.warn { background: var(--failed); } button.alt { background: var(--blocke
 .dot.idle{background:var(--idle)} .dot.busy{background:var(--busy)} .dot.blocked{background:var(--blocked)}
 .dot.failed{background:var(--failed)} .dot.done{background:var(--done)}
 ul { margin: 0; padding-left: 18px; } footer small { color: var(--muted); }
+/* terminais ao vivo no canvas (V5) */
+.term { width: 100%; height: 100%; display: flex; flex-direction: column;
+  background: #0b0e12; border: 2px solid var(--idle); border-radius: 8px; overflow: hidden;
+  font-family: ui-monospace, monospace; }
+.term-title { padding: 3px 8px; font-size: 11px; font-weight: 700; color: #06121f;
+  cursor: grab; user-select: none; }
+.term-body { flex: 1; margin: 0; padding: 6px 8px; font-size: 10px; line-height: 1.25;
+  color: #b8c2cc; overflow: auto; white-space: pre-wrap; word-break: break-word; }

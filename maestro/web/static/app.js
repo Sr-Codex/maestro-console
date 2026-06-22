@@ -67,6 +67,8 @@ function connectSSE() {
       $("active").textContent =
         `Tarefa ativa: ${e.task_id.slice(0, 8)} | etapa ${e.index} ${e.role}(${e.agent}) [${e.phase}${e.state ? " " + e.state : ""}]${dur}`;
       if (window.MaestroCanvas) window.MaestroCanvas.onStep(e);
+    } else if (e.type === "output") {
+      if (window.MaestroCanvas) window.MaestroCanvas.onOutput(e); // terminal ao vivo
     } else if (e.type === "run_end") {
       $("active").textContent = `Tarefa ativa: (nenhuma) — última: ${e.outcome}`;
       if (window.MaestroCanvas) window.MaestroCanvas.onRunEnd(e);
