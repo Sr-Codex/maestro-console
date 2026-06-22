@@ -42,8 +42,9 @@ passam trabalho entre si — com **isolamento de segurança** por padrão.
 - **Requisito:** `tmux`, `bwrap` (bubblewrap), `git`
 - **Agentes:** `claude` e/ou `codex` instalados e autenticados (usam **API/rede** —
   o produto **não** é totalmente offline)
-- **Canvas nativo (opcional):** PyGObject + GTK 3 + VTE 2.91 — no Debian/Kali:
-  `apt install python3-gi gir1.2-gtk-3.0 gir1.2-vte-2.91`
+- **Canvas nativo (opcional):** PyGObject + GTK 4 + VTE-gtk4 (zoom real do plano
+  infinito) — no Debian/Kali:
+  `apt install python3-gi gir1.2-gtk-4.0 gir1.2-vte-3.91 libvte-2.91-gtk4-0`
 - **Notificações de desktop (opcional):** `notify-send`
 
 Verifique tudo de uma vez:

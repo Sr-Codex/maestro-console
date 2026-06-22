@@ -3,6 +3,20 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.13.0] — Canvas GTK4 + zoom real do plano
+- **Migração do canvas nativo de GTK3/VTE-2.91 → GTK4/VTE-3.91.**
+- **Zoom real do plano infinito** via `Gsk.Transform` (escala visual dos terminais
+  sem mexer na alocação do widget — grid colunas×linhas e PTY do agente ficam
+  intactos), no lugar do `set_font_scale` do GTK3. Coordenadas-base independentes
+  do zoom (`to_display`/`to_base`); posições persistidas em coords-base.
+- **Fix:** zoom e arraste não resetam mais a posição de nós/notas para o canto
+  superior-esquerdo. No `Gtk.Fixed`, posição (`put`/`move`) e `set_child_transform`
+  dividem o mesmo slot de transform — então um `scale` puro apagava a translação.
+  Agora translação+escala vão num **único** transform e `_base_pos`/`_note_base`
+  são a fonte de verdade da posição (sem depender de `get_child_position`).
+- `doctor.sh` e README atualizados para as deps GTK4 (`gir1.2-gtk-4.0`,
+  `gir1.2-vte-3.91`, `libvte-2.91-gtk4-0`).
+
 ## [0.12.0] — Lapidação (polish/hardening)
 - **Polish/hardening** do que já existe (sem nova feature de produto):
   - Correção de bugs da revisão adversarial: **deadlock** de `asyncio.Lock` entre

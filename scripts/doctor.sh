@@ -34,10 +34,10 @@ echo "- agentes (opcional — ao menos um p/ uso real):"
 check claude opt
 check codex opt
 
-echo "- canvas nativo (opcional — GTK na tela do dispositivo):"
+echo "- canvas nativo (opcional — GTK4 na tela do dispositivo):"
 pycheck "PyGObject (gi)" "import gi" opt "apt: python3-gi"
-pycheck "GTK 3.0" "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk" opt "apt: gir1.2-gtk-3.0"
-pycheck "VTE 2.91" "import gi; gi.require_version('Vte','2.91'); from gi.repository import Vte" opt "apt: gir1.2-vte-2.91"
+pycheck "GTK 4.0" "import gi; gi.require_version('Gtk','4.0'); from gi.repository import Gtk" opt "apt: gir1.2-gtk-4.0"
+pycheck "VTE 3.91 (gtk4)" "import gi; gi.require_version('Vte','3.91'); from gi.repository import Vte" opt "apt: gir1.2-vte-3.91 libvte-2.91-gtk4-0"
 check notify-send opt "notificações de desktop (attention)"
 
 echo "- pacote:"

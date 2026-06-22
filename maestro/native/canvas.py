@@ -1,19 +1,25 @@
-"""Canvas nativo GTK3 + VTE (V6-S2): pan/zoom + nós-terminal arrastáveis.
+"""Canvas nativo GTK4 + VTE-3.91: plano infinito com zoom REAL (transform).
 
-Gtk.Layout = plano "infinito" (pan via arrastar o fundo); nós são molduras com
-título (arraste por ele) + Vte.Terminal real; zoom via font_scale + tamanho.
-Posições/zoom persistidos pelo CanvasModel (Store da engine). Headless/bwrap não
-muda — VTE é a camada visual/interativa.
+Diferença-chave vs o antigo GTK3: o zoom é uma *transform de escala* no plano
+(`Gtk.Fixed.set_child_transform`), não `set_font_scale`/`set_size_request`. Assim
+os terminais escalam **visualmente** junto com o canvas SEM mexer na alocação do
+widget — ou seja, o grid (colunas×linhas) e o PTY do agente ficam intactos. Só a
+"tela infinita" zooma; o terminal em si não é afetado.
+
+Posições/zoom persistidos pelo CanvasModel (Store da engine). Coordenadas-base são
+independentes do zoom: display = base * zoom (helpers `to_display`/`to_base`).
 """
 
 from __future__ import annotations
 
 import gi
 
-gi.require_version("Gdk", "3.0")
-gi.require_version("Gtk", "3.0")
-gi.require_version("Vte", "2.91")
-from gi.repository import Gdk, GLib, Gtk, Vte  # noqa: E402
+gi.require_version("Gdk", "4.0")
+gi.require_version("Gsk", "4.0")
+gi.require_version("Graphene", "1.0")
+gi.require_version("Gtk", "4.0")
+gi.require_version("Vte", "3.91")
+from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Vte  # noqa: E402
 
 from ..engine.attention import attention_items, notify  # noqa: E402
 from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
@@ -32,7 +38,7 @@ from .orchestrate import (  # noqa: E402
 )
 from .palette import build_palette_items, fuzzy  # noqa: E402
 from .routines_ui import parse_steps, routine_rows  # noqa: E402
-from .state import CanvasModel, EdgeModel, cable_segments  # noqa: E402
+from .state import CanvasModel, EdgeModel, cable_segments, to_display  # noqa: E402
 from .themes import get_theme, theme_names  # noqa: E402
 from .toolbar import action_menu_items  # noqa: E402
 
@@ -45,6 +51,17 @@ def _rgba(hex_color: str) -> Gdk.RGBA:
     c = Gdk.RGBA()
     c.parse(hex_color)
     return c
+
+
+def _plane_xform(px: float, py: float, z: float) -> Gsk.Transform:
+    """Transform ÚNICO do plano: posiciona em (px,py) e escala por z.
+
+    Em Gtk.Fixed a posição (put/move) e o set_child_transform compartilham o
+    MESMO slot de transform do filho — a posição é só uma translação. Se a gente
+    setar um scale puro depois do put/move, a translação é apagada e o nó volta
+    pra origem (0,0). Por isso posição e zoom têm que vir juntos no mesmo transform.
+    """
+    return Gsk.Transform().translate(Graphene.Point().init(px, py)).scale(z, z)
 
 
 def make_terminal(argv: list[str]) -> Vte.Terminal:
@@ -65,9 +82,29 @@ def make_terminal(argv: list[str]) -> Vte.Terminal:
     return term
 
 
+class _Plane(Gtk.Fixed):
+    """Gtk.Fixed que desenha os cabos (handoffs) atrás dos nós, no snapshot."""
+
+    __gtype_name__ = "MaestroPlane"
+
+    def __init__(self):
+        super().__init__()
+        self._owner: CanvasWindow | None = None
+
+    def do_snapshot(self, snapshot):  # pragma: no cover - precisa de GTK
+        o = self._owner
+        if o is not None:
+            w, h = self.get_width(), self.get_height()
+            if w > 0 and h > 0:
+                cr = snapshot.append_cairo(Graphene.Rect().init(0, 0, w, h))
+                o._draw_cables_cr(cr)
+        Gtk.Fixed.do_snapshot(self, snapshot)
+
+
 class CanvasWindow:
     def __init__(
         self,
+        app,
         model,
         nodes,
         controller=None,
@@ -91,39 +128,47 @@ class CanvasWindow:
         self.notes = notes  # Notes | None — notas no canvas (V9-S3)
         self.badges = badges or {}  # agente -> cor do badge de papel (V9-S3)
         self.note_frames: dict[str, Gtk.Widget] = {}
+        # coords-base independentes do zoom; display = base * zoom (P5)
+        self._base_pos: dict[str, tuple[float, float]] = {}
+        self._note_base: dict[str, tuple[float, float]] = {}
         self.routines = routines  # Routines | None — prompts agendados (V10-S4)
         self._store = store  # Store | None — p/ attention "precisa de você" (V11-S1)
         self._notified: set = set()  # (agente, ts) já notificados no desktop
         self.terms: list[Vte.Terminal] = []
-        self.heads: dict[str, Gtk.EventBox] = {}
+        self.heads: dict[str, Gtk.Widget] = {}
         self.frames: dict[str, Gtk.Widget] = {}
         self.order: list[str] = []
         self._connect_mode = False
         self._connect_src: str | None = None
         self._edge_state: dict[tuple[str, str], str] = {}  # cor do cabo por handoff (V7-S4)
         self._active_edge: tuple[str, str] | None = None
-        self.win = Gtk.Window(title="maestro console 🎼 — canvas (nativo)")
+        self._pan: tuple[float, float] | None = None
+
+        self._install_css()
+        self.win = Gtk.ApplicationWindow(application=app)
+        self.win.set_title("maestro console 🎼 — canvas (GTK4)")
         self.win.set_default_size(1000, 600)
-        self.win.connect("destroy", Gtk.main_quit)
-        self.win.connect("key-press-event", self._on_key)
+        key = Gtk.EventControllerKey()
+        key.connect("key-pressed", self._on_key)
+        self.win.add_controller(key)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        root.pack_start(self._toolbar(), False, False, 0)
+        root.append(self._toolbar())
         self.scrolled = Gtk.ScrolledWindow()
-        self.layout = Gtk.Layout()
-        self.layout.set_size(5000, 4000)
-        self.layout.add_events(
-            Gdk.EventMask.BUTTON_PRESS_MASK
-            | Gdk.EventMask.BUTTON_RELEASE_MASK
-            | Gdk.EventMask.POINTER_MOTION_MASK
-        )
-        self.layout.connect("button-press-event", self._pan_start)
-        self.layout.connect("motion-notify-event", self._pan_move)
-        self.layout.connect("button-release-event", self._pan_end)
-        self.layout.connect("draw", self._draw_cables)
-        self.scrolled.add(self.layout)
-        root.pack_start(self.scrolled, True, True, 0)
-        self.win.add(root)
+        self.scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.scrolled.set_hexpand(True)
+        self.scrolled.set_vexpand(True)
+        self.plane = _Plane()
+        self.plane._owner = self
+        self.plane.set_size_request(5000, 4000)
+        # pan: arrastar o fundo do plano (ignora se cair sobre um nó/nota)
+        pan = Gtk.GestureDrag()
+        pan.connect("drag-begin", self._pan_begin)
+        pan.connect("drag-update", self._pan_update)
+        self.plane.add_controller(pan)
+        self.scrolled.set_child(self.plane)
+        root.append(self.scrolled)
+        self.win.set_child(root)
 
         for i, (nid, title, argv) in enumerate(nodes):
             self._add_node(nid, title, argv, default=(60 + i * 460, 60))
@@ -132,21 +177,41 @@ class CanvasWindow:
                 self._add_note_widget(note)
         self._apply_zoom()
         self._apply_theme(self.model.terminal_theme())  # tema persistido (V11-S4)
-        self._pan = None
+
+    # -- CSS: cores de estado (substitui override_background_color do GTK3) --
+    def _install_css(self) -> None:
+        rules = [".nodehead { padding: 1px 6px; }", ".notehead { background-color: #fde68a; }"]
+        for st, hexc in STATE_COLORS.items():
+            rules.append(f".st-{st} {{ background-color: {hexc}; }}")
+        provider = Gtk.CssProvider()
+        data = "\n".join(rules)
+        if hasattr(provider, "load_from_string"):
+            provider.load_from_string(data)
+        else:  # GTK4 < 4.12
+            provider.load_from_data(data.encode())
+        display = Gdk.Display.get_default()
+        if display is not None:
+            Gtk.StyleContext.add_provider_for_display(
+                display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            )
 
     def _toolbar(self) -> Gtk.Widget:
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        bar.set_margin_top(2)
+        bar.set_margin_bottom(2)
+        bar.set_margin_start(4)
+        bar.set_margin_end(4)
         # -- controles de vista (esquerda) --
         for label, dz, tip in (("−", -0.1, "diminuir zoom"), ("+", 0.1, "aumentar zoom")):
             b = Gtk.Button(label=label)
             b.set_tooltip_text(tip)
             b.connect("clicked", lambda _b, d=dz: self._zoom(d))
-            bar.pack_start(b, False, False, 0)
+            bar.append(b)
         self.zlabel = Gtk.Label(label="zoom 100%")
-        bar.pack_start(self.zlabel, False, False, 6)
+        bar.append(self.zlabel)
         self._attn_label = Gtk.Label(label="")  # "⚠ N" quando algo precisa de você (V11-S1)
         self._attn_label.set_tooltip_text("itens que precisam de você")
-        bar.pack_start(self._attn_label, False, False, 6)
+        bar.append(self._attn_label)
         self._theme_combo = Gtk.ComboBoxText()  # tema dos terminais (V11-S4)
         self._theme_combo.set_tooltip_text("tema dos terminais")
         for tn in theme_names():
@@ -155,13 +220,21 @@ class CanvasWindow:
         names = theme_names()
         self._theme_combo.set_active(names.index(cur) if cur in names else 0)
         self._theme_combo.connect("changed", self._on_theme_changed)
-        bar.pack_start(self._theme_combo, False, False, 0)
-        if self.edges is not None:  # modo conexão (persistente) fica direto na barra
+        bar.append(self._theme_combo)
+        if self.edges is not None:  # modo conexão (persistente) direto na barra
             self._connect_btn = Gtk.ToggleButton(label="🔌 conectar")
             self._connect_btn.set_tooltip_text("ligar agentes por cabo (clique A, depois B)")
             self._connect_btn.connect("toggled", self._toggle_connect)
-            bar.pack_start(self._connect_btn, False, False, 0)
-        # -- comandos agrupados num menu (direita): descongestiona a barra (P3) --
+            bar.append(self._connect_btn)
+        # espaçador empurra o resto p/ a direita
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        bar.append(spacer)
+        # dica: Ctrl-P abre a busca rápida (palette)
+        hint = Gtk.Label(label="Ctrl-P: ir para…")
+        hint.set_tooltip_text("busca rápida de agentes/teams/floors/notas/routines")
+        bar.append(hint)
+        # -- comandos agrupados num menu (popover): descongestiona a barra (P3) --
         spec = action_menu_items(
             has_controller=self.controller is not None,
             has_edges=self.edges is not None,
@@ -179,111 +252,133 @@ class CanvasWindow:
         }
         if spec:
             mb = Gtk.MenuButton(label="☰ ações")
-            menu = Gtk.Menu()
+            pop = Gtk.Popover()
+            vb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             for label, key in spec:
-                mi = Gtk.MenuItem(label=label)
-                mi.connect("activate", lambda _m, k=key: cbmap[k]())
-                menu.append(mi)
-            menu.show_all()
-            mb.set_popup(menu)
-            bar.pack_end(mb, False, False, 0)
-        # dica: Ctrl-P abre a busca rápida (palette)
-        hint = Gtk.Label(label="Ctrl-P: ir para…")
-        hint.set_tooltip_text("busca rápida de agentes/teams/floors/notas/routines")
-        bar.pack_end(hint, False, False, 6)
+                b = Gtk.Button(label=label)
+                b.set_has_frame(False)
+                b.connect("clicked", lambda _b, k=key, p=pop: (p.popdown(), cbmap[k]()))
+                vb.append(b)
+            pop.set_child(vb)
+            mb.set_popover(pop)
+            bar.append(mb)
         return bar
 
     def _add_node(self, nid, title, argv, default):
         frame = Gtk.Frame()
-        head = Gtk.EventBox()
-        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        frame._nid = nid
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        head.add_css_class("nodehead")
+        head.add_css_class("st-idle")
         badge = self.badges.get(nid)
-        if badge:  # tira/coluna colorida = badge do papel (V9-S3)
-            sq = Gtk.Box()
-            sq.set_size_request(10, -1)
-            sq.override_background_color(Gtk.StateFlags.NORMAL, _rgba(badge))
-            hbox.pack_start(sq, False, False, 0)
-        hbox.pack_start(Gtk.Label(label=f"  {title}  "), True, True, 0)
-        head.add(hbox)
-        head.add_events(
-            Gdk.EventMask.BUTTON_PRESS_MASK
-            | Gdk.EventMask.BUTTON_RELEASE_MASK
-            | Gdk.EventMask.POINTER_MOTION_MASK
-        )
-        head.connect("button-press-event", self._drag_start, frame)
-        head.connect("motion-notify-event", self._drag_move, frame)
-        head.connect("button-release-event", self._drag_end, frame, nid)
+        if badge:  # tira colorida = badge do papel (V9-S3) — DrawingArea c/ cor arbitrária
+            sq = Gtk.DrawingArea()
+            sq.set_content_width(10)
+            col = _rgba(badge)
+
+            def _draw_badge(_area, cr, _w, _h, c=col):
+                cr.set_source_rgba(c.red, c.green, c.blue, 1.0)
+                cr.paint()
+
+            sq.set_draw_func(_draw_badge)
+            head.append(sq)
+        lbl = Gtk.Label(label=f"  {title}  ")
+        lbl.set_hexpand(True)
+        head.append(lbl)
+        # arrastar o nó pelo título (ou, em modo conexão, escolher origem/destino)
+        drag = Gtk.GestureDrag()
+        drag.connect("drag-begin", self._node_drag_begin, frame)
+        drag.connect("drag-update", self._node_drag_update, frame)
+        drag.connect("drag-end", self._node_drag_end, frame, nid)
+        head.add_controller(drag)
         self.heads[nid] = head
-        head.override_background_color(Gtk.StateFlags.NORMAL, _rgba(STATE_COLORS["idle"]))
         term = make_terminal(argv)
+        term.set_hexpand(True)
+        term.set_vexpand(True)
+        term.set_size_request(BASE_W, BASE_H)  # tamanho NATURAL; o zoom é por transform
         self.terms.append(term)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        box.pack_start(head, False, False, 0)
-        box.pack_start(term, True, True, 0)
-        frame.add(box)
-        frame._nid = nid
-        x, y = self.model.position(nid, default)
-        self.layout.put(frame, int(x), int(y))
+        box.append(head)
+        box.append(term)
+        frame.set_child(box)
+        bx, by = self.model.position(nid, default)
+        self._base_pos[nid] = (bx, by)
+        self.plane.put(frame, 0, 0)  # posição real vem no transform (_place)
+        self._place(frame, (bx, by), self.model.zoom())
         self.frames[nid] = frame
         self.order.append(nid)
 
-    # -- arrastar nó (por título) --
-    def _drag_start(self, _w, e, frame):
+    def _place(self, child, base, z) -> None:
+        """Posiciona+escala o child com UM transform único (ver _plane_xform)."""
+        px, py = to_display(base, z)
+        self.plane.set_child_transform(child, _plane_xform(px, py, z))
+
+    # -- arrastar nó (por título) via GestureDrag --
+    def _node_drag_begin(self, _g, _x, _y, frame):
         if self._connect_mode:
+            frame._connecting = True
             self._connect_pick(frame._nid)
-            return True
-        frame._d = (
-            e.x_root,
-            e.y_root,
-            self.layout.child_get_property(frame, "x"),
-            self.layout.child_get_property(frame, "y"),
-        )
-
-    def _drag_move(self, _w, e, frame):
-        d = getattr(frame, "_d", None)
-        if not d:
             return
-        self.layout.move(frame, int(d[2] + (e.x_root - d[0])), int(d[3] + (e.y_root - d[1])))
+        frame._connecting = False
+        frame._origin_base = self._base_pos.get(frame._nid, (0.0, 0.0))
 
-    def _drag_end(self, _w, _e, frame, nid):
-        if getattr(frame, "_d", None):
-            self.model.set_position(
-                nid,
-                self.layout.child_get_property(frame, "x"),
-                self.layout.child_get_property(frame, "y"),
-            )
-            frame._d = None
+    def _node_drag_update(self, _g, off_x, off_y, frame):
+        if getattr(frame, "_connecting", False):
+            return
+        o = getattr(frame, "_origin_base", None)
+        if o is None:
+            return
+        # offset vem em coords do nó (escaladas por z); base-delta = (off*z)/z = off
+        nb = (o[0] + off_x, o[1] + off_y)
+        self._base_pos[frame._nid] = nb
+        self._place(frame, nb, self.model.zoom())
+        self.plane.queue_draw()
+
+    def _node_drag_end(self, _g, _ox, _oy, frame, nid):
+        if getattr(frame, "_connecting", False):
+            frame._connecting = False
+            return
+        if getattr(frame, "_origin_base", None) is None:
+            return
+        frame._origin_base = None
+        bx, by = self._base_pos.get(nid, (0.0, 0.0))
+        self.model.set_position(nid, bx, by)  # persiste em coords-base
+        self.plane.queue_draw()
 
     # -- pan (arrastar fundo) --
-    def _pan_start(self, _w, e):
-        if e.window == self.layout.get_bin_window():
-            self._pan = (
-                e.x_root,
-                e.y_root,
-                self.scrolled.get_hadjustment().get_value(),
-                self.scrolled.get_vadjustment().get_value(),
-            )
+    def _pan_begin(self, gesture, x, y):
+        picked = self.plane.pick(x, y, Gtk.PickFlags.DEFAULT)
+        w = picked
+        while w is not None and w is not self.plane:  # caiu sobre um nó/nota? não faz pan
+            if getattr(w, "_nid", None) or getattr(w, "_note_id", None):
+                self._pan = None
+                gesture.set_state(Gtk.EventSequenceState.DENIED)
+                return
+            w = w.get_parent()
+        self._pan = (
+            self.scrolled.get_hadjustment().get_value(),
+            self.scrolled.get_vadjustment().get_value(),
+        )
 
-    def _pan_move(self, _w, e):
-        if not self._pan:
+    def _pan_update(self, _g, off_x, off_y):
+        if self._pan is None:
             return
-        self.scrolled.get_hadjustment().set_value(self._pan[2] - (e.x_root - self._pan[0]))
-        self.scrolled.get_vadjustment().set_value(self._pan[3] - (e.y_root - self._pan[1]))
+        self.scrolled.get_hadjustment().set_value(self._pan[0] - off_x)
+        self.scrolled.get_vadjustment().set_value(self._pan[1] - off_y)
 
-    def _pan_end(self, _w, _e):
-        self._pan = None
-
-    # -- zoom --
+    # -- zoom: escala o PLANO (posição + transform); terminal mantém alocação/PTY --
     def _zoom(self, dz):
         self.model.set_zoom(self.model.zoom() + dz)
         self._apply_zoom()
 
     def _apply_zoom(self):
         z = self.model.zoom()
-        for t in self.terms:
-            t.set_font_scale(z)
-            t.set_size_request(int(BASE_W * z), int(BASE_H * z))
+        for nid, frame in self.frames.items():
+            self._place(frame, self._base_pos.get(nid, (0.0, 0.0)), z)
+        for note_id, frame in self.note_frames.items():
+            self._place(frame, self._note_base.get(note_id, (0.0, 0.0)), z)
         self.zlabel.set_text(f"zoom {int(z * 100)}%")
+        self.plane.queue_draw()
 
     # -- tema dos terminais (V11-S4) --
     def _apply_theme(self, name: str) -> None:
@@ -302,10 +397,11 @@ class CanvasWindow:
     def set_node_state(self, nid: str, state: str) -> None:
         """Recolore o título do nó conforme o estado (idle/busy/blocked/failed/done)."""
         head = self.heads.get(nid)
-        if head is not None:
-            head.override_background_color(
-                Gtk.StateFlags.NORMAL, _rgba(STATE_COLORS.get(state, STATE_COLORS["idle"]))
-            )
+        if head is None:
+            return
+        for st in STATE_COLORS:
+            head.remove_css_class(f"st-{st}")
+        head.add_css_class(f"st-{state if state in STATE_COLORS else 'idle'}")
 
     # -- modo conexão: criar/remover cabos por clique (V7-S2) --
     def _toggle_connect(self, btn):
@@ -330,46 +426,42 @@ class CanvasWindow:
             self.edges.remove(src, dst)  # toggle: clicar de novo remove
         else:
             self.edges.add(src, dst)
-        self.layout.queue_draw()
+        self.plane.queue_draw()
 
     def _cancel_connect(self) -> None:
         if self._connect_src is not None:
             self.set_node_state(self._connect_src, "idle")
             self._connect_src = None
 
-    def _on_key(self, _w, e):
-        if e.keyval == Gdk.KEY_Escape and self._connect_mode:
+    def _on_key(self, _c, keyval, _keycode, state):
+        if keyval == Gdk.KEY_Escape and self._connect_mode:
             self._connect_btn.set_active(False)  # untoggle -> cancela
             return False
-        if e.keyval == Gdk.KEY_p and (e.state & Gdk.ModifierType.CONTROL_MASK):
+        if keyval == Gdk.KEY_p and (state & Gdk.ModifierType.CONTROL_MASK):
             self._open_palette()  # Ctrl-P (V11-S2)
             return True
         return False
 
-    # -- cabos (handoffs) --
-    def _draw_cables(self, _layout, cr):
+    # -- cabos (handoffs): desenhados no snapshot do _Plane --
+    def _draw_cables_cr(self, cr):
         z = self.model.zoom()
         w, h = BASE_W * z, BASE_H * z
-        pos = [
-            (
-                self.layout.child_get_property(self.frames[n], "x"),
-                self.layout.child_get_property(self.frames[n], "y"),
-            )
-            for n in self.order
-            if n in self.frames
-        ]
+
+        def disp(nid):  # canto sup-esq no plano = base * zoom (mesma fonte do _place)
+            return to_display(self._base_pos.get(nid, (0.0, 0.0)), z)
+
+        pos = [disp(n) for n in self.order if self.frames.get(n) is not None]
         cr.set_source_rgb(0.34, 0.38, 0.42)
         cr.set_line_width(2)
         for x1, y1, x2, y2 in cable_segments(pos, w, h):
             cr.move_to(x1, y1)
             cr.line_to(x2, y2)
             cr.stroke()
-        # cabos do usuário (V7-S2): azul por padrão; cor do estado durante handoff (V7-S4)
+        # cabos do usuário (V7-S2): azul; cor do estado durante o handoff (V7-S4)
         if self.edges is not None:
             cr.set_line_width(2.5)
             for src, dst in self.edges.list():
-                a, b = self.frames.get(src), self.frames.get(dst)
-                if a is None or b is None:
+                if src not in self.frames or dst not in self.frames:
                     continue
                 st = self._edge_state.get((src, dst))
                 if st is not None:
@@ -377,14 +469,11 @@ class CanvasWindow:
                     cr.set_source_rgb(c.red, c.green, c.blue)
                 else:
                     cr.set_source_rgb(0.23, 0.51, 0.96)
-                ax = self.layout.child_get_property(a, "x")
-                ay = self.layout.child_get_property(a, "y")
-                bx = self.layout.child_get_property(b, "x")
-                by = self.layout.child_get_property(b, "y")
+                ax, ay = disp(src)
+                bx, by = disp(dst)
                 cr.move_to(ax + w, ay + h / 2)
                 cr.line_to(bx, by + h / 2)
                 cr.stroke()
-        return False
 
     # -- rodar time da engine (headless) refletindo nas cores --
     def _run_team(self):
@@ -397,7 +486,7 @@ class CanvasWindow:
         # chamado na thread da engine -> marshalla p/ a UI com segurança
         state = "busy" if sp.phase == "start" else _ST_MAP.get(sp.state, "idle")
         GLib.idle_add(self.set_node_state, sp.agent, state)
-        GLib.idle_add(self.layout.queue_draw)
+        GLib.idle_add(self.plane.queue_draw)
 
     # -- disparar handoff mediado por um cabo (V7-S4) --
     def _open_handoff_dialog(self):
@@ -406,42 +495,48 @@ class CanvasWindow:
         edges = self.edges.list()
         if not edges:
             return  # nenhum cabo p/ disparar
-        dlg = Gtk.Dialog(title="Disparar handoff", transient_for=self.win, modal=True)
-        dlg.add_buttons("Cancelar", Gtk.ResponseType.CANCEL, "Disparar", Gtk.ResponseType.OK)
-        box = dlg.get_content_area()
+        dlg, box = self._dialog("Disparar handoff")
         combo = Gtk.ComboBoxText()
         for s, d in edges:
             combo.append_text(f"{s} → {d}")
         combo.set_active(0)
         entry = Gtk.Entry()
         entry.set_placeholder_text("intenção para a origem…")
-        box.add(Gtk.Label(label="Cabo:"))
-        box.add(combo)
-        box.add(Gtk.Label(label="Intenção:"))
-        box.add(entry)
-        dlg.show_all()
-        resp = dlg.run()
-        idx = combo.get_active()
-        intent = entry.get_text().strip() or "Responda apenas OK."
-        dlg.destroy()
-        if resp == Gtk.ResponseType.OK and 0 <= idx < len(edges):
-            src, dst = edges[idx]
-            self._run_handoff(src, dst, intent)
+        box.append(Gtk.Label(label="Cabo:"))
+        box.append(combo)
+        box.append(Gtk.Label(label="Intenção:"))
+        box.append(entry)
+        brow = Gtk.Box(spacing=6)
+
+        def fire(_b):
+            idx = combo.get_active()
+            intent = entry.get_text().strip() or "Responda apenas OK."
+            dlg.destroy()
+            if 0 <= idx < len(edges):
+                src, dst = edges[idx]
+                self._run_handoff(src, dst, intent)
+
+        cancel = Gtk.Button(label="Cancelar")
+        cancel.connect("clicked", lambda _b: dlg.destroy())
+        ok = Gtk.Button(label="Disparar")
+        ok.connect("clicked", fire)
+        brow.append(cancel)
+        brow.append(ok)
+        box.append(brow)
+        dlg.present()
 
     def _run_handoff(self, src: str, dst: str, intent: str) -> None:
         self._active_edge = (src, dst)
         self._edge_state[(src, dst)] = "busy"
-        self.layout.queue_draw()
+        self.plane.queue_draw()
         run_edge_handoff_in_thread(self.controller, src, dst, intent, self._on_handoff_step_ts)
 
     def _on_handoff_step_ts(self, sp):
         GLib.idle_add(self._apply_handoff_step, sp)
 
     def _apply_handoff_step(self, sp):
-        # cor do nó
         node_state = "busy" if sp.phase == "start" else _ST_MAP.get(sp.state, "idle")
         self.set_node_state(sp.agent, node_state)
-        # cor do cabo conforme o progresso do handoff
         if self._active_edge is not None:
             src, dst = self._active_edge
             if sp.phase == "done":
@@ -450,22 +545,34 @@ class CanvasWindow:
                         self._edge_state[(src, dst)] = "done"
                 else:  # A ou B escalou -> cabo reflete o estado
                     self._edge_state[(src, dst)] = _ST_MAP.get(sp.state, "blocked")
-        self.layout.queue_draw()
+        self.plane.queue_draw()
         return False
+
+    # -- helper de diálogo (GTK4: sem Dialog.run; janela modal simples) --
+    def _dialog(self, title: str):
+        win = Gtk.Window(title=title)
+        win.set_transient_for(self.win)
+        win.set_modal(True)
+        win.set_default_size(420, -1)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_top(8)
+        box.set_margin_bottom(8)
+        box.set_margin_start(8)
+        box.set_margin_end(8)
+        win.set_child(box)
+        return win, box
 
     # -- floors no canvas (V8-S5) --
     def _open_floors_dialog(self):
         if self.floors is None:
             return
-        dlg = Gtk.Dialog(title="Floors (ambientes isolados)", transient_for=self.win, modal=True)
-        dlg.add_button("Fechar", Gtk.ResponseType.CLOSE)
-        box = dlg.get_content_area()
-        box.set_spacing(6)
+        dlg, box = self._dialog("Floors (ambientes isolados)")
 
         combo = Gtk.ComboBoxText()
         out = Gtk.Label(label="")
         out.set_xalign(0)
         out.set_selectable(True)
+        out.set_wrap(True)
 
         def refresh():
             combo.remove_all()
@@ -480,14 +587,15 @@ class CanvasWindow:
             return self.floors.get(name) if name else None
 
         refresh()
-        box.add(Gtk.Label(label="Floor:"))
-        box.add(combo)
+        box.append(Gtk.Label(label="Floor:"))
+        box.append(combo)
 
         # criar
         crow = Gtk.Box(spacing=4)
         new_entry = Gtk.Entry()
         new_entry.set_placeholder_text("nome do novo floor")
-        crow.pack_start(new_entry, True, True, 0)
+        new_entry.set_hexpand(True)
+        crow.append(new_entry)
 
         def do_create(_b):
             name = new_entry.get_text().strip()
@@ -503,10 +611,9 @@ class CanvasWindow:
 
         cbtn = Gtk.Button(label="criar")
         cbtn.connect("clicked", do_create)
-        crow.pack_start(cbtn, False, False, 0)
-        box.add(crow)
+        crow.append(cbtn)
+        box.append(crow)
 
-        # preview / integrar / remover
         def do_preview(_b):
             f = selected()
             if f is not None:
@@ -529,8 +636,8 @@ class CanvasWindow:
         for label, cb in (("preview", do_preview), ("integrar", do_merge), ("remover", do_rm)):
             b = Gtk.Button(label=label)
             b.connect("clicked", cb)
-            arow.pack_start(b, False, False, 0)
-        box.add(arow)
+            arow.append(b)
+        box.append(arow)
 
         # rodar agente num floor
         if self.session_manager is not None:
@@ -543,6 +650,7 @@ class CanvasWindow:
                 acombo.set_active(0)
             pentry = Gtk.Entry()
             pentry.set_placeholder_text("prompt p/ o agente")
+            pentry.set_hexpand(True)
 
             def do_run(_b):
                 f = selected()
@@ -562,17 +670,18 @@ class CanvasWindow:
                     self.session_manager, agents[agent], agent, prompt, f, self.repo, done
                 )
 
-            rrow.pack_start(acombo, False, False, 0)
-            rrow.pack_start(pentry, True, True, 0)
+            rrow.append(acombo)
+            rrow.append(pentry)
             rb = Gtk.Button(label="rodar")
             rb.connect("clicked", do_run)
-            rrow.pack_start(rb, False, False, 0)
-            box.add(rrow)
+            rrow.append(rb)
+            box.append(rrow)
 
-        box.add(out)
-        dlg.show_all()
-        dlg.run()
-        dlg.destroy()
+        box.append(out)
+        close = Gtk.Button(label="Fechar")
+        close.connect("clicked", lambda _b: dlg.destroy())
+        box.append(close)
+        dlg.present()
 
     # -- sticky notes no canvas (V9-S3) --
     def _create_note(self):
@@ -581,39 +690,39 @@ class CanvasWindow:
         n = len(self.note_frames)
         note = self.notes.create("Nota", "", x=120 + n * 40, y=320 + n * 40)
         self._add_note_widget(note)
-        self.win.show_all()
 
     def _add_note_widget(self, note):
         frame = Gtk.Frame()
         frame._note_id = note.id
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        # barra de título (arraste + edição do título)
-        head = Gtk.EventBox()
-        head.override_background_color(Gtk.StateFlags.NORMAL, _rgba("#fde68a"))  # amarelo nota
+        # barra de título (arraste pelo "≡" + edição do título)
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        head.add_css_class("notehead")
+        grip = Gtk.Label(label=" ≡ ")
+        head.append(grip)
         title = Gtk.Entry()
         title.set_text(note_title_display(note) if note.title else "Nota")
-        title.set_has_frame(False)
-        head.add(title)
-        head.add_events(
-            Gdk.EventMask.BUTTON_PRESS_MASK
-            | Gdk.EventMask.BUTTON_RELEASE_MASK
-            | Gdk.EventMask.POINTER_MOTION_MASK
-        )
-        head.connect("button-press-event", self._note_drag_start, frame)
-        head.connect("motion-notify-event", self._note_drag_move, frame)
-        head.connect("button-release-event", self._note_drag_end, frame)
+        title.set_hexpand(True)
+        head.append(title)
+        ndrag = Gtk.GestureDrag()
+        ndrag.connect("drag-begin", self._note_drag_begin, frame)
+        ndrag.connect("drag-update", self._note_drag_update, frame)
+        ndrag.connect("drag-end", self._note_drag_end, frame)
+        head.add_controller(ndrag)
         # corpo (markdown editável)
         body = Gtk.TextView()
         body.set_wrap_mode(Gtk.WrapMode.WORD)
         body.get_buffer().set_text(note.body)
         body.set_size_request(200, 110)
-        # salvar ao perder foco
-        title.connect("focus-out-event", lambda *_: self._save_note(frame))
-        body.connect("focus-out-event", lambda *_: self._save_note(frame))
+        # salvar ao perder foco (GTK4: EventControllerFocus)
+        for w in (title, body):
+            fc = Gtk.EventControllerFocus()
+            fc.connect("leave", lambda _c, fr=frame: self._save_note(fr))
+            w.add_controller(fc)
         frame._title_entry = title
         frame._body_view = body
-        box.pack_start(head, False, False, 0)
-        box.pack_start(body, True, True, 0)
+        box.append(head)
+        box.append(body)
         # agent-to-note: rodar um agente com a nota (V9-S4)
         if self.controller is not None:
             agents = installed_agents()
@@ -623,13 +732,17 @@ class CanvasWindow:
                 acombo.append_text(name)
             if agents:
                 acombo.set_active(0)
+            acombo.set_hexpand(True)
             rb = Gtk.Button(label="▶ rodar")
             rb.connect("clicked", lambda _b, fr=frame, c=acombo: self._run_note(fr, c))
-            rrow.pack_start(acombo, True, True, 0)
-            rrow.pack_start(rb, False, False, 0)
-            box.pack_start(rrow, False, False, 0)
-        frame.add(box)
-        self.layout.put(frame, int(note.x), int(note.y))
+            rrow.append(acombo)
+            rrow.append(rb)
+            box.append(rrow)
+        frame.set_child(box)
+        # note.x/note.y são coords-base; o zoom escala como nos nós (P5)
+        self._note_base[note.id] = (note.x, note.y)
+        self.plane.put(frame, 0, 0)  # posição real vem no transform (_place)
+        self._place(frame, (note.x, note.y), self.model.zoom())
         self.note_frames[note.id] = frame
 
     def _save_note(self, frame):
@@ -641,29 +754,25 @@ class CanvasWindow:
         buf = frame._body_view.get_buffer()
         note.title = frame._title_entry.get_text().strip()
         note.body = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
-        note.x = self.layout.child_get_property(frame, "x")
-        note.y = self.layout.child_get_property(frame, "y")
+        note.x, note.y = self._note_base.get(frame._note_id, (0.0, 0.0))  # coords-base
         self.notes.save(note)
         return False
 
-    def _note_drag_start(self, _w, e, frame):
-        frame._nd = (
-            e.x_root,
-            e.y_root,
-            self.layout.child_get_property(frame, "x"),
-            self.layout.child_get_property(frame, "y"),
-        )
+    def _note_drag_begin(self, _g, _x, _y, frame):
+        frame._norigin_base = self._note_base.get(frame._note_id, (0.0, 0.0))
 
-    def _note_drag_move(self, _w, e, frame):
-        d = getattr(frame, "_nd", None)
-        if not d:
+    def _note_drag_update(self, _g, off_x, off_y, frame):
+        o = getattr(frame, "_norigin_base", None)
+        if o is None:
             return
-        self.layout.move(frame, int(d[2] + (e.x_root - d[0])), int(d[3] + (e.y_root - d[1])))
+        nb = (o[0] + off_x, o[1] + off_y)  # base-delta = off (ver _node_drag_update)
+        self._note_base[frame._note_id] = nb
+        self._place(frame, nb, self.model.zoom())
 
-    def _note_drag_end(self, _w, _e, frame):
-        if getattr(frame, "_nd", None):
-            frame._nd = None
-            self._save_note(frame)  # persiste título/corpo/posição
+    def _note_drag_end(self, _g, _ox, _oy, frame):
+        if getattr(frame, "_norigin_base", None) is not None:
+            frame._norigin_base = None
+            self._save_note(frame)  # persiste título/corpo/posição (coords-base)
 
     def _run_note(self, frame, acombo):
         """agent-to-note: roda o agente escolhido com a nota; resposta volta à nota."""
@@ -700,15 +809,13 @@ class CanvasWindow:
     def _open_routines_dialog(self):
         if self.routines is None or self.controller is None:
             return
-        dlg = Gtk.Dialog(title="Routines (prompts agendados)", transient_for=self.win, modal=True)
-        dlg.add_button("Fechar", Gtk.ResponseType.CLOSE)
-        box = dlg.get_content_area()
-        box.set_spacing(6)
+        dlg, box = self._dialog("Routines (prompts agendados)")
 
         combo = Gtk.ComboBoxText()
         out = Gtk.Label(label="")
         out.set_xalign(0)
         out.set_selectable(True)
+        out.set_wrap(True)
 
         def refresh():
             combo.remove_all()
@@ -723,8 +830,8 @@ class CanvasWindow:
             return rs[i] if 0 <= i < len(rs) else None
 
         refresh()
-        box.add(Gtk.Label(label="Routine:"))
-        box.add(combo)
+        box.append(Gtk.Label(label="Routine:"))
+        box.append(combo)
 
         # criar
         agents = installed_agents()
@@ -738,13 +845,14 @@ class CanvasWindow:
             acombo.set_active(0)
         prompt_e = Gtk.Entry()
         prompt_e.set_placeholder_text("prompt (use ' && ' p/ passos)")
+        prompt_e.set_hexpand(True)
         int_e = Gtk.Entry()
         int_e.set_text("600")
         int_e.set_width_chars(6)
-        crow.pack_start(name_e, False, False, 0)
-        crow.pack_start(acombo, False, False, 0)
-        crow.pack_start(prompt_e, True, True, 0)
-        crow.pack_start(int_e, False, False, 0)
+        crow.append(name_e)
+        crow.append(acombo)
+        crow.append(prompt_e)
+        crow.append(int_e)
 
         def do_create(_b):
             name = name_e.get_text().strip()
@@ -765,10 +873,9 @@ class CanvasWindow:
 
         cbtn = Gtk.Button(label="criar")
         cbtn.connect("clicked", do_create)
-        crow.pack_start(cbtn, False, False, 0)
-        box.add(crow)
+        crow.append(cbtn)
+        box.append(crow)
 
-        # ações
         def do_toggle(_b):
             r = selected()
             if r is not None:
@@ -800,12 +907,13 @@ class CanvasWindow:
         for label, cb in (("on/off", do_toggle), ("▶ rodar agora", do_run), ("remover", do_rm)):
             b = Gtk.Button(label=label)
             b.connect("clicked", cb)
-            arow.pack_start(b, False, False, 0)
-        box.add(arow)
-        box.add(out)
-        dlg.show_all()
-        dlg.run()
-        dlg.destroy()
+            arow.append(b)
+        box.append(arow)
+        box.append(out)
+        close = Gtk.Button(label="Fechar")
+        close.connect("clicked", lambda _b: dlg.destroy())
+        box.append(close)
+        dlg.present()
 
     # -- command palette (Ctrl-P) (V11-S2) --
     def _palette_items(self):
@@ -819,8 +927,14 @@ class CanvasWindow:
         )
 
     def _center_on(self, frame):
-        x = self.layout.child_get_property(frame, "x")
-        y = self.layout.child_get_property(frame, "y")
+        z = self.model.zoom()
+        nid, note_id = getattr(frame, "_nid", None), getattr(frame, "_note_id", None)
+        if nid is not None:
+            x, y = to_display(self._base_pos.get(nid, (0.0, 0.0)), z)
+        elif note_id is not None:
+            x, y = to_display(self._note_base.get(note_id, (0.0, 0.0)), z)
+        else:
+            x, y = 0, 0
         ha, va = self.scrolled.get_hadjustment(), self.scrolled.get_vadjustment()
         ha.set_value(max(0, x - ha.get_page_size() / 2))
         va.set_value(max(0, y - va.get_page_size() / 2))
@@ -842,30 +956,32 @@ class CanvasWindow:
 
     def _open_palette(self):
         items = self._palette_items()
-        dlg = Gtk.Dialog(title="Ir para… (Ctrl-P)", transient_for=self.win, modal=True)
+        dlg, box = self._dialog("Ir para… (Ctrl-P)")
         dlg.set_default_size(420, 320)
-        box = dlg.get_content_area()
         entry = Gtk.Entry()
         entry.set_placeholder_text("buscar agente/team/floor/nota/routine…")
-        box.add(entry)
+        box.append(entry)
         listbox = Gtk.ListBox()
         scroller = Gtk.ScrolledWindow()
         scroller.set_vexpand(True)
-        scroller.add(listbox)
-        box.add(scroller)
+        scroller.set_child(listbox)
+        box.append(scroller)
 
         rows: list = []  # PaletteItem por linha (índice = posição)
 
         def rebuild():
-            for child in listbox.get_children():
+            child = listbox.get_first_child()
+            while child is not None:
+                nxt = child.get_next_sibling()
                 listbox.remove(child)
+                child = nxt
             rows.clear()
             for it in fuzzy(entry.get_text(), items):
                 row = Gtk.ListBoxRow()
-                row.add(Gtk.Label(label=it.label, xalign=0))
-                listbox.add(row)
+                lbl = Gtk.Label(label=it.label, xalign=0)
+                row.set_child(lbl)
+                listbox.append(row)
                 rows.append(it)
-            listbox.show_all()
             first = listbox.get_row_at_index(0)
             if first is not None:
                 listbox.select_row(first)
@@ -876,17 +992,15 @@ class CanvasWindow:
                 item = rows[row.get_index()]
                 dlg.destroy()
                 self._palette_act(item)
-                return True
+                return
             dlg.destroy()
-            return False
 
         entry.connect("changed", lambda _e: rebuild())
         entry.connect("activate", lambda _e: activate())
         listbox.connect("row-activated", lambda _lb, _r: activate())
         rebuild()
-        dlg.show_all()
+        dlg.present()
         entry.grab_focus()
-        dlg.run()
 
     # -- attention: "o que precisa de você" (V11-S1) --
     def _refresh_attention(self):
@@ -905,7 +1019,7 @@ class CanvasWindow:
         return True  # repete
 
     def show(self):
-        self.win.show_all()
+        self.win.present()
 
 
 def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
@@ -916,39 +1030,50 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
     from ..engine.session import SessionManager
     from .floors_ui import resolve_floors
 
-    base = default_home()
-    controller, store = build_controller()
-    # um terminal de AGENTE interativo (sandbox bwrap) por CLI instalado
-    ws = Workspace(f"{base}/workspaces")
-    nodes = []
-    for name, profile in installed_agents().items():
-        nodes.append((name, name, agent_argv(profile, str(ws.create(name)))))
-    if not nodes:  # nenhum agente instalado -> um shell de exemplo
-        nodes = [("term1", "shell", ["/bin/bash"])]
-    # floors: só se o cwd (ou MAESTRO_PROJECT) for um repo git
-    floors = resolve_floors(store, f"{base}/floors")
-    # badges de papel a partir do team default
-    badges = agent_badges(controller.get_team("coder-reviewer"))
-    win = CanvasWindow(
-        CanvasModel(store),
-        nodes,
-        controller=controller,
-        edges=EdgeModel(store),
-        floors=floors,
-        session_manager=SessionManager(store) if floors is not None else None,
-        repo=str(floors.repo) if floors is not None else None,
-        notes=Notes(store),
-        badges=badges,
-        routines=Routines(store),
-        store=store,
+    app = Gtk.Application(
+        application_id="app.maestro.canvas", flags=Gio.ApplicationFlags.NON_UNIQUE
     )
-    win.show()
-    # tick in-app do scheduler: dispara as routines vencidas enquanto aberto (V10-S4)
-    GLib.timeout_add_seconds(30, win._routines_tick)
-    # attention: realça/notifica o que precisa de você (V11-S1)
-    GLib.timeout_add_seconds(10, win._refresh_attention)
-    win._refresh_attention()
-    try:
-        Gtk.main()
-    finally:
-        store.close()
+    state: dict = {}
+
+    def on_activate(_a):
+        base = default_home()
+        controller, st = build_controller()
+        state["store"] = st
+        # um terminal de AGENTE interativo (sandbox bwrap) por CLI instalado
+        ws = Workspace(f"{base}/workspaces")
+        nodes = []
+        for name, profile in installed_agents().items():
+            nodes.append((name, name, agent_argv(profile, str(ws.create(name)))))
+        if not nodes:  # nenhum agente instalado -> um shell de exemplo
+            nodes = [("term1", "shell", ["/bin/bash"])]
+        floors = resolve_floors(st, f"{base}/floors")
+        badges = agent_badges(controller.get_team("coder-reviewer"))
+        win = CanvasWindow(
+            app,
+            CanvasModel(st),
+            nodes,
+            controller=controller,
+            edges=EdgeModel(st),
+            floors=floors,
+            session_manager=SessionManager(st) if floors is not None else None,
+            repo=str(floors.repo) if floors is not None else None,
+            notes=Notes(st),
+            badges=badges,
+            routines=Routines(st),
+            store=st,
+        )
+        win.show()
+        # tick in-app do scheduler: dispara routines vencidas enquanto aberto (V10-S4)
+        GLib.timeout_add_seconds(30, win._routines_tick)
+        # attention: realça/notifica o que precisa de você (V11-S1)
+        GLib.timeout_add_seconds(10, win._refresh_attention)
+        win._refresh_attention()
+
+    def on_shutdown(_a):
+        st = state.get("store")
+        if st is not None:
+            st.close()
+
+    app.connect("activate", on_activate)
+    app.connect("shutdown", on_shutdown)
+    app.run([])

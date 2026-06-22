@@ -1,7 +1,7 @@
 """Testes do CanvasModel (V6-S2) — persistência de posições/zoom (sem GTK)."""
 
 from maestro.engine.state.store import Store
-from maestro.native.state import CanvasModel
+from maestro.native.state import CanvasModel, to_base, to_display
 
 
 def test_position_default_e_persistencia(tmp_path):
@@ -22,6 +22,25 @@ def test_zoom_default_persistencia_e_limites(tmp_path):
         assert m.zoom() == 3.0
         m.set_zoom(0.01)  # clamp inferior
         assert m.zoom() == 0.3
+
+
+def test_zoom_transform_display_eh_base_vezes_zoom():
+    # o zoom escala a POSIÇÃO no plano infinito (não a fonte do terminal)
+    assert to_display((100.0, 200.0), 1.0) == (100, 200)
+    assert to_display((100.0, 200.0), 1.5) == (150, 300)
+    assert to_display((100.0, 200.0), 0.5) == (50, 100)
+
+
+def test_zoom_transform_round_trip_preserva_base():
+    # arrastar com zoom != 1 e converter de volta não deve mover a coord-base
+    for z in (0.3, 0.5, 1.0, 1.5, 3.0):
+        dx, dy = to_display((120.0, 80.0), z)
+        bx, by = to_base((dx, dy), z)
+        assert abs(bx - 120.0) < 1.0 and abs(by - 80.0) < 1.0
+
+
+def test_to_base_zoom_zero_nao_divide_por_zero():
+    assert to_base((100.0, 100.0), 0.0) == (100.0, 100.0)  # cai p/ 1.0
 
 
 def test_persiste_entre_instancias(tmp_path):
