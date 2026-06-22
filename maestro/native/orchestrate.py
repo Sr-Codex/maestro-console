@@ -18,6 +18,7 @@ import uuid
 from dataclasses import dataclass
 
 from ..engine.envelope import Envelope, EnvelopeState
+from ..engine.floor_run import commit_floor, run_agent_in_floor
 from ..engine.orchestrator import StepProgress
 
 
@@ -85,6 +86,38 @@ def run_edge_handoff_in_thread(controller, src, dst, intent: str, on_step) -> th
 
     def worker():
         asyncio.run(run_edge_handoff(controller, src, dst, intent, on_step))
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    return t
+
+
+def run_floor_agent_in_thread(
+    session_manager,
+    profile,
+    agent_id: str,
+    prompt: str,
+    floor,
+    repo,
+    on_done,
+    *,
+    run_fn=None,
+) -> threading.Thread:
+    """Roda um agente NUM floor (V8-S5) em thread; snapshot do trabalho na branch.
+
+    on_done(res, committed): res = RunResult do agente; committed = bool (houve
+    commit na branch do floor). `run_fn` injetável (testes).
+    """
+
+    def worker():
+        kw = {"run_fn": run_fn} if run_fn is not None else {}
+        res = asyncio.run(
+            run_agent_in_floor(
+                session_manager, profile, agent_id, prompt, floor, repo, timeout=180, **kw
+            )
+        )
+        committed = commit_floor(floor, f"floor {floor.name}: {prompt[:50]}")
+        on_done(res, committed)
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()

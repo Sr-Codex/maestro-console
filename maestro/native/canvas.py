@@ -15,10 +15,16 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Vte", "2.91")
 from gi.repository import Gdk, GLib, Gtk, Vte  # noqa: E402
 
+from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
 from ..engine.state.store import Store  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from .agents import STATE_COLORS, agent_argv, installed_agents  # noqa: E402
-from .orchestrate import run_edge_handoff_in_thread, run_team_in_thread  # noqa: E402
+from .floors_ui import floor_rows, merge_text, preview_text  # noqa: E402
+from .orchestrate import (  # noqa: E402
+    run_edge_handoff_in_thread,
+    run_floor_agent_in_thread,
+    run_team_in_thread,
+)
 from .state import CanvasModel, EdgeModel, cable_segments  # noqa: E402
 
 BASE_W, BASE_H = 420, 220
@@ -51,11 +57,24 @@ def make_terminal(argv: list[str]) -> Vte.Terminal:
 
 
 class CanvasWindow:
-    def __init__(self, model, nodes, controller=None, run_team_name="coder-reviewer", edges=None):
+    def __init__(
+        self,
+        model,
+        nodes,
+        controller=None,
+        run_team_name="coder-reviewer",
+        edges=None,
+        floors=None,
+        session_manager=None,
+        repo=None,
+    ):
         self.model = model
         self.controller = controller
         self.run_team_name = run_team_name
         self.edges = edges  # EdgeModel | None — cabos criados pelo usuário (V7-S2)
+        self.floors = floors  # Floors | None — ambientes isolados (V8-S5)
+        self.session_manager = session_manager  # p/ rodar agente num floor
+        self.repo = repo  # path do repo de projeto (floors)
         self.terms: list[Vte.Terminal] = []
         self.heads: dict[str, Gtk.EventBox] = {}
         self.frames: dict[str, Gtk.Widget] = {}
@@ -112,6 +131,10 @@ class CanvasWindow:
             hb = Gtk.Button(label="▶ disparar handoff")
             hb.connect("clicked", lambda _b: self._open_handoff_dialog())
             bar.pack_end(hb, False, False, 0)
+        if self.floors is not None:
+            fb = Gtk.Button(label="🧱 floors")
+            fb.connect("clicked", lambda _b: self._open_floors_dialog())
+            bar.pack_end(fb, False, False, 0)
         return bar
 
     def _add_node(self, nid, title, argv, default):
@@ -348,12 +371,135 @@ class CanvasWindow:
         self.layout.queue_draw()
         return False
 
+    # -- floors no canvas (V8-S5) --
+    def _open_floors_dialog(self):
+        if self.floors is None:
+            return
+        dlg = Gtk.Dialog(title="Floors (ambientes isolados)", transient_for=self.win, modal=True)
+        dlg.add_button("Fechar", Gtk.ResponseType.CLOSE)
+        box = dlg.get_content_area()
+        box.set_spacing(6)
+
+        combo = Gtk.ComboBoxText()
+        out = Gtk.Label(label="")
+        out.set_xalign(0)
+        out.set_selectable(True)
+
+        def refresh():
+            combo.remove_all()
+            rows = floor_rows(self.floors)
+            for r in rows:
+                combo.append_text(r["name"])
+            if rows:
+                combo.set_active(0)
+
+        def selected():
+            name = combo.get_active_text()
+            return self.floors.get(name) if name else None
+
+        refresh()
+        box.add(Gtk.Label(label="Floor:"))
+        box.add(combo)
+
+        # criar
+        crow = Gtk.Box(spacing=4)
+        new_entry = Gtk.Entry()
+        new_entry.set_placeholder_text("nome do novo floor")
+        crow.pack_start(new_entry, True, True, 0)
+
+        def do_create(_b):
+            name = new_entry.get_text().strip()
+            if not name:
+                return
+            try:
+                self.floors.create(name)
+                new_entry.set_text("")
+                refresh()
+                out.set_text(f"floor {name!r} criado")
+            except Exception as e:  # FloorError etc.
+                out.set_text(f"erro: {e}")
+
+        cbtn = Gtk.Button(label="criar")
+        cbtn.connect("clicked", do_create)
+        crow.pack_start(cbtn, False, False, 0)
+        box.add(crow)
+
+        # preview / integrar / remover
+        def do_preview(_b):
+            f = selected()
+            if f is not None:
+                out.set_text(preview_text(merge_preview(self.repo, f)))
+
+        def do_merge(_b):
+            f = selected()
+            if f is not None:
+                out.set_text(merge_text(merge_floor(self.repo, f)))
+                refresh()
+
+        def do_rm(_b):
+            f = selected()
+            if f is not None:
+                self.floors.remove(f.name)
+                refresh()
+                out.set_text(f"floor {f.name!r} removido")
+
+        arow = Gtk.Box(spacing=4)
+        for label, cb in (("preview", do_preview), ("integrar", do_merge), ("remover", do_rm)):
+            b = Gtk.Button(label=label)
+            b.connect("clicked", cb)
+            arow.pack_start(b, False, False, 0)
+        box.add(arow)
+
+        # rodar agente num floor
+        if self.session_manager is not None:
+            agents = installed_agents()
+            rrow = Gtk.Box(spacing=4)
+            acombo = Gtk.ComboBoxText()
+            for name in agents:
+                acombo.append_text(name)
+            if agents:
+                acombo.set_active(0)
+            pentry = Gtk.Entry()
+            pentry.set_placeholder_text("prompt p/ o agente")
+
+            def do_run(_b):
+                f = selected()
+                agent = acombo.get_active_text()
+                if f is None or not agent:
+                    return
+                prompt = pentry.get_text().strip() or "Responda apenas OK."
+                out.set_text(f"rodando {agent} no floor {f.name}…")
+
+                def done(res, committed):
+                    GLib.idle_add(
+                        out.set_text,
+                        f"{agent}: {res.status}; commit={'sim' if committed else '(nada)'}",
+                    )
+
+                run_floor_agent_in_thread(
+                    self.session_manager, agents[agent], agent, prompt, f, self.repo, done
+                )
+
+            rrow.pack_start(acombo, False, False, 0)
+            rrow.pack_start(pentry, True, True, 0)
+            rb = Gtk.Button(label="rodar")
+            rb.connect("clicked", do_run)
+            rrow.pack_start(rb, False, False, 0)
+            box.add(rrow)
+
+        box.add(out)
+        dlg.show_all()
+        dlg.run()
+        dlg.destroy()
+
     def show(self):
         self.win.show_all()
 
 
 def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
     from ..bootstrap import build_controller, default_home
+    from ..engine.session import SessionManager
+    from .floors_ui import resolve_floors
 
     base = default_home()
     controller, store = build_controller()
@@ -364,7 +510,17 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         nodes.append((name, name, agent_argv(profile, str(ws.create(name)))))
     if not nodes:  # nenhum agente instalado -> um shell de exemplo
         nodes = [("term1", "shell", ["/bin/bash"])]
-    CanvasWindow(CanvasModel(store), nodes, controller=controller, edges=EdgeModel(store)).show()
+    # floors: só se o cwd (ou MAESTRO_PROJECT) for um repo git
+    floors = resolve_floors(store, f"{base}/floors")
+    CanvasWindow(
+        CanvasModel(store),
+        nodes,
+        controller=controller,
+        edges=EdgeModel(store),
+        floors=floors,
+        session_manager=SessionManager(store) if floors is not None else None,
+        repo=str(floors.repo) if floors is not None else None,
+    ).show()
     try:
         Gtk.main()
     finally:
