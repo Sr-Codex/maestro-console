@@ -37,6 +37,7 @@ cd maestri-console
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+pip install -e ".[web]"   # necessário para a Web UI (aiohttp)
 ```
 
 ## Uso
@@ -51,6 +52,50 @@ Observar a execução em outro pane:
 ```bash
 tmux attach -t maestro-observe
 ```
+
+## Web UI (v0.4.0)
+
+Interface web controlável com **canvas visual** (agentes como nós, handoffs como
+conexões), sobre a **mesma engine** (headless, bwrap, envelope, checkpoints).
+
+```bash
+pip install -e ".[web]"   # se ainda não instalou o extra
+maestro web               # inicia o servidor
+```
+
+- **URL padrão:** http://127.0.0.1:8765
+- **Host/porta:** `MAESTRO_WEB_HOST` e `MAESTRO_WEB_PORT`
+  ```bash
+  MAESTRO_WEB_HOST=0.0.0.0 MAESTRO_WEB_PORT=9000 maestro web
+  ```
+
+### Acesso e segurança
+- **Bind padrão `127.0.0.1`** (só local). Exposição na **LAN é opt-in** (defina
+  `MAESTRO_WEB_HOST=0.0.0.0`).
+- Fora de localhost, um **token aleatório é obrigatório** (impresso ao iniciar) e
+  enviado no **header** `X-Maestro-Token` (nunca em query string). CORS é fechado
+  e o `Origin` é validado.
+- **Acesso remoto seguro = SSH port forwarding** (mantém tudo em localhost, sem
+  expor a LAN nem precisar de token no navegador):
+  ```bash
+  # na sua máquina:
+  ssh -L 8765:127.0.0.1:8765 kali@<ip-do-uconsole>
+  # depois abra http://127.0.0.1:8765 no navegador local
+  ```
+
+### Como usar
+- **Executar um team:** escolha o team no seletor, digite a tarefa e clique
+  **Executar**. O progresso de cada handoff aparece **ao vivo** (SSE).
+- **Cancelar:** botão **Cancelar** (libera processo, lock e fila).
+- **Retomar:** botão **Retomar** continua do último checkpoint (sem repetir
+  etapas concluídas; opções de trocar agente/reprompt na TUI).
+- **Canvas:** agentes são **nós** coloridos por estado (idle/busy/blocked/failed/
+  done) e as rotas do team são **conexões**; **arraste os nós** para reposicionar
+  (as posições são persistidas).
+
+> ⚠️ **Rede e tokens:** os agentes **Claude Code** e **Codex** chamam suas **APIs**
+> (Anthropic/OpenAI) — exigem **conexão de rede e autenticação/tokens** próprios.
+> A engine roda local, mas os agentes **não** são offline.
 
 ## Configuração
 
