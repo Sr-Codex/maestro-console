@@ -24,6 +24,7 @@ from .notes_ui import note_title_display  # noqa: E402
 from .orchestrate import (  # noqa: E402
     run_edge_handoff_in_thread,
     run_floor_agent_in_thread,
+    run_note_to_agent_in_thread,
     run_team_in_thread,
 )
 from .state import CanvasModel, EdgeModel, cable_segments  # noqa: E402
@@ -553,6 +554,20 @@ class CanvasWindow:
         frame._body_view = body
         box.pack_start(head, False, False, 0)
         box.pack_start(body, True, True, 0)
+        # agent-to-note: rodar um agente com a nota (V9-S4)
+        if self.controller is not None:
+            agents = installed_agents()
+            rrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+            acombo = Gtk.ComboBoxText()
+            for name in agents:
+                acombo.append_text(name)
+            if agents:
+                acombo.set_active(0)
+            rb = Gtk.Button(label="▶ rodar")
+            rb.connect("clicked", lambda _b, fr=frame, c=acombo: self._run_note(fr, c))
+            rrow.pack_start(acombo, True, True, 0)
+            rrow.pack_start(rb, False, False, 0)
+            box.pack_start(rrow, False, False, 0)
         frame.add(box)
         self.layout.put(frame, int(note.x), int(note.y))
         self.note_frames[note.id] = frame
@@ -589,6 +604,31 @@ class CanvasWindow:
         if getattr(frame, "_nd", None):
             frame._nd = None
             self._save_note(frame)  # persiste título/corpo/posição
+
+    def _run_note(self, frame, acombo):
+        """agent-to-note: roda o agente escolhido com a nota; resposta volta à nota."""
+        if self.controller is None or self.notes is None:
+            return
+        agent = acombo.get_active_text()
+        if not agent:
+            return
+        self._save_note(frame)  # garante que edições recentes entram no prompt
+        note = self.notes.get(frame._note_id)
+        if note is None:
+            return
+        frame._title_entry.set_text(f"{note_title_display(note)} · rodando {agent}…")
+
+        def done(env, updated, updated_note):
+            def apply():
+                fresh = self.notes.get(frame._note_id)
+                if fresh is not None:
+                    frame._body_view.get_buffer().set_text(fresh.body)
+                    frame._title_entry.set_text(note_title_display(fresh))
+                return False
+
+            GLib.idle_add(apply)
+
+        run_note_to_agent_in_thread(self.controller, note, agent, self.notes, done)
 
     def show(self):
         self.win.show_all()

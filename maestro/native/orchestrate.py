@@ -92,6 +92,38 @@ def run_edge_handoff_in_thread(controller, src, dst, intent: str, on_step) -> th
     return t
 
 
+async def run_note_to_agent(controller, note, agent_id: str, notes):
+    """agent-to-note (V9-S4): a nota alimenta o prompt; a resposta volta p/ a nota.
+
+    Mediado: delegate(agent_id, conteúdo da nota). Se DONE, ANEXA a resposta ao
+    corpo da nota (colaborativo, não destrutivo) e persiste. Retorna (env, updated).
+    """
+    prompt = note.body.strip() or note.title
+    env = await controller.delegate(agent_id, prompt)
+    state = str(env.state) if env.state else None
+    updated = False
+    if state == "DONE" and env.result:
+        suffix = f"\n\n## resposta de {agent_id}\n{env.result}"
+        note.body = (note.body + suffix).strip()
+        notes.save(note)
+        updated = True
+    return env, updated
+
+
+def run_note_to_agent_in_thread(
+    controller, note, agent_id: str, notes, on_done
+) -> threading.Thread:
+    """Executa run_note_to_agent num thread daemon; on_done(env, updated, note)."""
+
+    def worker():
+        env, updated = asyncio.run(run_note_to_agent(controller, note, agent_id, notes))
+        on_done(env, updated, note)
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    return t
+
+
 def run_floor_agent_in_thread(
     session_manager,
     profile,
