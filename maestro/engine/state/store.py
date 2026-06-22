@@ -75,6 +75,10 @@ CREATE TABLE IF NOT EXISTS node_positions (
     x        REAL NOT NULL,
     y        REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ui_state (
+    k TEXT PRIMARY KEY,
+    v TEXT NOT NULL
+);
 """
 
 
@@ -334,3 +338,16 @@ class Store:
         with self._lock:
             rows = self._conn.execute("SELECT agent_id, x, y FROM node_positions").fetchall()
         return {r["agent_id"]: {"x": r["x"], "y": r["y"]} for r in rows}
+
+    # -- estado de UI genérico (V5-S3: viewport do canvas) -------------
+    def set_ui(self, key: str, value: Any) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO ui_state(k, v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                (key, json.dumps(value)),
+            )
+
+    def get_ui(self, key: str) -> Any | None:
+        with self._lock:
+            row = self._conn.execute("SELECT v FROM ui_state WHERE k=?", (key,)).fetchone()
+        return json.loads(row["v"]) if row else None

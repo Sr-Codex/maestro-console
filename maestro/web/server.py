@@ -123,6 +123,16 @@ async def _cancel(request):
     return web.json_response({"cancelled": request.app["runs"].cancel()})
 
 
+async def _get_viewport(request):
+    return web.json_response(_ctrl(request)._store.get_ui("viewport") or {})
+
+
+async def _set_viewport(request):
+    data = await request.json()
+    _ctrl(request)._store.set_ui("viewport", data)
+    return web.json_response({"ok": True})
+
+
 async def _get_positions(request):
     return web.json_response(_ctrl(request)._store.get_node_positions())
 
@@ -197,6 +207,8 @@ def make_app(controller, *, host: str, port: int, token: str) -> web.Application
     app.router.add_get("/api/events", _events)
     app.router.add_get("/api/positions", _get_positions)
     app.router.add_post("/api/positions", _set_position)
+    app.router.add_get("/api/viewport", _get_viewport)
+    app.router.add_post("/api/viewport", _set_viewport)
     app.router.add_get("/", _index)
     if STATIC_DIR.is_dir():
         app.router.add_static("/static/", STATIC_DIR)
