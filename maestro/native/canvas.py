@@ -30,6 +30,7 @@ from .orchestrate import (  # noqa: E402
     run_routines_tick_in_thread,
     run_team_in_thread,
 )
+from .palette import build_palette_items, fuzzy  # noqa: E402
 from .routines_ui import parse_steps, routine_rows  # noqa: E402
 from .state import CanvasModel, EdgeModel, cable_segments  # noqa: E402
 
@@ -299,6 +300,10 @@ class CanvasWindow:
     def _on_key(self, _w, e):
         if e.keyval == Gdk.KEY_Escape and self._connect_mode:
             self._connect_btn.set_active(False)  # untoggle -> cancela
+            return False
+        if e.keyval == Gdk.KEY_p and (e.state & Gdk.ModifierType.CONTROL_MASK):
+            self._open_palette()  # Ctrl-P (V11-S2)
+            return True
         return False
 
     # -- cabos (handoffs) --
@@ -761,6 +766,87 @@ class CanvasWindow:
         dlg.show_all()
         dlg.run()
         dlg.destroy()
+
+    # -- command palette (Ctrl-P) (V11-S2) --
+    def _palette_items(self):
+        agents = list(self.frames.keys())
+        teams = self.controller.list_teams() if self.controller is not None else []
+        floors = self.floors.list() if self.floors is not None else []
+        notes = self.notes.list() if self.notes is not None else []
+        routines = self.routines.list() if self.routines is not None else []
+        return build_palette_items(
+            agents=agents, teams=teams, floors=floors, notes=notes, routines=routines
+        )
+
+    def _center_on(self, frame):
+        x = self.layout.child_get_property(frame, "x")
+        y = self.layout.child_get_property(frame, "y")
+        ha, va = self.scrolled.get_hadjustment(), self.scrolled.get_vadjustment()
+        ha.set_value(max(0, x - ha.get_page_size() / 2))
+        va.set_value(max(0, y - va.get_page_size() / 2))
+
+    def _palette_act(self, item):
+        if item.kind == "agent":
+            fr = self.frames.get(item.ref)
+            if fr is not None:
+                self._center_on(fr)
+        elif item.kind == "note":
+            fr = self.note_frames.get(item.ref)
+            if fr is not None:
+                self._center_on(fr)
+        elif item.kind == "floor":
+            self._open_floors_dialog()
+        elif item.kind == "routine":
+            self._open_routines_dialog()
+        # team: sem ação dedicada (informativo)
+
+    def _open_palette(self):
+        items = self._palette_items()
+        dlg = Gtk.Dialog(title="Ir para… (Ctrl-P)", transient_for=self.win, modal=True)
+        dlg.set_default_size(420, 320)
+        box = dlg.get_content_area()
+        entry = Gtk.Entry()
+        entry.set_placeholder_text("buscar agente/team/floor/nota/routine…")
+        box.add(entry)
+        listbox = Gtk.ListBox()
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_vexpand(True)
+        scroller.add(listbox)
+        box.add(scroller)
+
+        rows: list = []  # PaletteItem por linha (índice = posição)
+
+        def rebuild():
+            for child in listbox.get_children():
+                listbox.remove(child)
+            rows.clear()
+            for it in fuzzy(entry.get_text(), items):
+                row = Gtk.ListBoxRow()
+                row.add(Gtk.Label(label=it.label, xalign=0))
+                listbox.add(row)
+                rows.append(it)
+            listbox.show_all()
+            first = listbox.get_row_at_index(0)
+            if first is not None:
+                listbox.select_row(first)
+
+        def activate():
+            row = listbox.get_selected_row() or listbox.get_row_at_index(0)
+            if row is not None and 0 <= row.get_index() < len(rows):
+                item = rows[row.get_index()]
+                dlg.destroy()
+                self._palette_act(item)
+                return True
+            dlg.destroy()
+            return False
+
+        entry.connect("changed", lambda _e: rebuild())
+        entry.connect("activate", lambda _e: activate())
+        listbox.connect("row-activated", lambda _lb, _r: activate())
+        rebuild()
+        dlg.show_all()
+        entry.grab_focus()
+        dlg.run()
 
     # -- attention: "o que precisa de você" (V11-S1) --
     def _refresh_attention(self):
