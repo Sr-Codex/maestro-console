@@ -23,12 +23,50 @@ from ..engine.floor_run import commit_floor, run_agent_in_floor
 from ..engine.orchestrator import StepProgress
 from ..engine.scheduler import tick_once
 
+# -- loop compartilhado (P1) -------------------------------------------
+# Um ÚNICO event loop para toda a orquestração nativa. Antes, cada worker fazia
+# asyncio.run() (= loop novo por thread), e o mutex por sessão (asyncio.Lock,
+# cacheado por agent_id) ficava preso ao 1º loop → 2ª thread no MESMO agent_id
+# travava (deadlock cross-loop). Rodando tudo num loop só, o asyncio.Lock
+# serializa corretamente, sem deadlock.
+_LOOP: asyncio.AbstractEventLoop | None = None
+_LOOP_LOCK = threading.Lock()
+
+
+def _shared_loop() -> asyncio.AbstractEventLoop:
+    global _LOOP
+    with _LOOP_LOCK:
+        if _LOOP is None or _LOOP.is_closed():
+            _LOOP = asyncio.new_event_loop()
+            threading.Thread(target=_LOOP.run_forever, daemon=True).start()
+    loop = _LOOP
+    while not loop.is_running():  # espera o loop começar (race de partida)
+        time.sleep(0.001)
+    return loop
+
+
+def _run_sync(coro):
+    """Roda a coroutine no loop compartilhado e bloqueia a thread chamadora."""
+    return asyncio.run_coroutine_threadsafe(coro, _shared_loop()).result()
+
+
+def _report_thread_error(where: str, exc: BaseException) -> None:
+    """Não engole erro de thread daemon: reporta no stderr (visível no terminal)."""
+    import sys
+    import traceback
+
+    print(f"[maestro] erro em {where}:", file=sys.stderr)
+    traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+
 
 def run_team_in_thread(controller, team, intent: str, on_step) -> threading.Thread:
     """Executa controller.run_team(...) num thread; chama on_step(StepProgress)."""
 
     def worker():
-        asyncio.run(controller.run_team(team, intent, progress=on_step))
+        try:
+            _run_sync(controller.run_team(team, intent, progress=on_step))
+        except Exception as exc:
+            _report_thread_error("run_team", exc)
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()
@@ -87,7 +125,10 @@ def run_edge_handoff_in_thread(controller, src, dst, intent: str, on_step) -> th
     """Executa run_edge_handoff(...) num thread daemon; chama on_step(StepProgress)."""
 
     def worker():
-        asyncio.run(run_edge_handoff(controller, src, dst, intent, on_step))
+        try:
+            _run_sync(run_edge_handoff(controller, src, dst, intent, on_step))
+        except Exception as exc:
+            _report_thread_error("edge_handoff", exc)
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()
@@ -118,8 +159,11 @@ def run_note_to_agent_in_thread(
     """Executa run_note_to_agent num thread daemon; on_done(env, updated, note)."""
 
     def worker():
-        env, updated = asyncio.run(run_note_to_agent(controller, note, agent_id, notes))
-        on_done(env, updated, note)
+        try:
+            env, updated = _run_sync(run_note_to_agent(controller, note, agent_id, notes))
+            on_done(env, updated, note)
+        except Exception as exc:
+            _report_thread_error("note_to_agent", exc)
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()
@@ -144,14 +188,17 @@ def run_floor_agent_in_thread(
     """
 
     def worker():
-        kw = {"run_fn": run_fn} if run_fn is not None else {}
-        res = asyncio.run(
-            run_agent_in_floor(
-                session_manager, profile, agent_id, prompt, floor, repo, timeout=180, **kw
+        try:
+            kw = {"run_fn": run_fn} if run_fn is not None else {}
+            res = _run_sync(
+                run_agent_in_floor(
+                    session_manager, profile, agent_id, prompt, floor, repo, timeout=180, **kw
+                )
             )
-        )
-        committed = commit_floor(floor, f"floor {floor.name}: {prompt[:50]}")
-        on_done(res, committed)
+            committed = commit_floor(floor, f"floor {floor.name}: {prompt[:50]}")
+            on_done(res, committed)
+        except Exception as exc:
+            _report_thread_error("floor_agent", exc)
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()
@@ -165,9 +212,12 @@ def run_routines_tick_in_thread(controller, routines, on_done=None) -> threading
     """
 
     def worker():
-        fired = asyncio.run(tick_once(controller, routines, now=time.time()))
-        if on_done is not None:
-            on_done(fired)
+        try:
+            fired = _run_sync(tick_once(controller, routines, now=time.time()))
+            if on_done is not None:
+                on_done(fired)
+        except Exception as exc:
+            _report_thread_error("routines_tick", exc)
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()
@@ -179,9 +229,12 @@ def run_one_routine_in_thread(controller, routine, routines, on_done=None) -> th
     from ..engine.routines import run_routine_once
 
     def worker():
-        run = asyncio.run(run_routine_once(controller, routine, routines))
-        if on_done is not None:
-            on_done(run)
+        try:
+            run = _run_sync(run_routine_once(controller, routine, routines))
+            if on_done is not None:
+                on_done(run)
+        except Exception as exc:
+            _report_thread_error("routine_run", exc)
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()

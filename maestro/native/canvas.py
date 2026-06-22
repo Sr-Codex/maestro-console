@@ -878,14 +878,15 @@ class CanvasWindow:
         if self._store is None:
             return True
         items = attention_items(self._store)
-        for it in items:  # realça o nó conforme o estado acionável
-            self.set_node_state(it.agent, _ST_MAP.get(it.state, "blocked"))
-        self._attn_label.set_text(f"⚠ {len(items)}" if items else "")
-        for it in items:  # notificação de desktop só p/ itens novos
-            key = (it.agent, it.ts)
-            if key not in self._notified:
-                self._notified.add(key)
+        current: set = set()
+        for it in items:
+            self.set_node_state(it.agent, _ST_MAP.get(it.state, "blocked"))  # realça o nó
+            key = (it.agent, it.state)
+            current.add(key)
+            if key not in self._notified:  # notifica só o que é novo
                 notify(f"maestro: {it.agent} precisa de você", it.state)
+        self._notified = current  # poda p/ os atuais: sem leak; re-notifica se voltar
+        self._attn_label.set_text(f"⚠ {len(items)}" if items else "")
         return True  # repete
 
     def show(self):

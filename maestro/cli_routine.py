@@ -41,11 +41,12 @@ def _build_parser(home_default) -> argparse.ArgumentParser:
 
 
 def _resolve(routines: Routines, ref: str):
-    if routines.get(ref) is not None:
-        return routines.get(ref)
-    for r in routines.list():
-        if r.name == ref:
-            return r
+    r = routines.get(ref)
+    if r is not None:
+        return r
+    for x in routines.list():
+        if x.name == ref:
+            return x
     return None
 
 

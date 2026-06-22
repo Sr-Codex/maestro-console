@@ -108,7 +108,7 @@ async def run_headless(
     # streaming: lê o stdout incrementalmente, emitindo cada pedaço ao vivo
     chunks: list[str] = []
 
-    async def _pump() -> bytes:
+    async def _pump_out() -> None:
         while True:
             data = await proc.stdout.read(4096)
             if not data:
@@ -117,7 +117,12 @@ async def run_headless(
             chunks.append(text)
             with contextlib.suppress(Exception):
                 on_output(text)
-        return await proc.stderr.read()
+
+    async def _pump() -> bytes:
+        # drena stdout e stderr CONCORRENTEMENTE: se o agente enche o buffer do
+        # pipe de stderr antes de fechar o stdout, ler stderr só no fim travaria.
+        _out, err = await asyncio.gather(_pump_out(), proc.stderr.read())
+        return err
 
     try:
         err_b = await asyncio.wait_for(_pump(), timeout=timeout)

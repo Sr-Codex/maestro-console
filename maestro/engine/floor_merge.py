@@ -98,6 +98,11 @@ def merge_floor(repo: str | Path, floor: Floor, *, message: str | None = None) -
     repo = Path(repo)
     base = _base_ref(repo, floor)
     cur = _current_branch(repo)
+    if not cur:
+        return MergeResult(
+            ok=False,
+            reason="repo principal em HEAD destacado — faça checkout da branch base p/ integrar",
+        )
     if cur != base:
         return MergeResult(
             ok=False,

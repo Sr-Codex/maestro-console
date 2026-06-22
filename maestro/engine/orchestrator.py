@@ -178,10 +178,14 @@ class Orchestrator:
         """
         if self._store is None:
             raise RuntimeError("resume_chain requer store (checkpoints)")
-        steps = self._store.get_steps(run_id)
-        done = [s for s in steps if s["state"] == "DONE"]
-        start_idx = len(done)  # 1ª etapa não concluída
-        carry = done[-1]["result"] if done else None
+        steps = self._store.get_steps(run_id)  # ordenado por idx
+        # 1ª etapa NÃO concluída (robusto a buracos; não conta DONEs cegamente)
+        start_idx = len(steps)
+        for i, s in enumerate(steps):
+            if s["state"] != "DONE":
+                start_idx = i
+                break
+        carry = steps[start_idx - 1]["result"] if start_idx > 0 else None
         override = (
             {"agent": swap_agent, "reprompt": reprompt} if start_idx < len(team.roles) else {}
         )
