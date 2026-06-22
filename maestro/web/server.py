@@ -6,6 +6,9 @@ TUIController/Orchestrator async diretamente).
 
 from __future__ import annotations
 
+import asyncio
+import json
+
 from aiohttp import web
 
 from .. import __version__
@@ -109,6 +112,33 @@ async def _cancel(request):
     return web.json_response({"cancelled": request.app["runs"].cancel()})
 
 
+async def _events(request):
+    """SSE: progresso por etapa e estados ao vivo (não é caminho de dados)."""
+    runs: RunManager = request.app["runs"]
+    queue: asyncio.Queue = asyncio.Queue()
+    runs.subscribe(queue.put_nowait)
+    resp = web.StreamResponse(
+        headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        }
+    )
+    await resp.prepare(request)
+    try:
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=15)
+                await resp.write(f"data: {json.dumps(event)}\n\n".encode())
+            except TimeoutError:
+                await resp.write(b": keep-alive\n\n")  # heartbeat
+    except (ConnectionResetError, asyncio.CancelledError):
+        pass
+    finally:
+        runs.unsubscribe(queue.put_nowait)
+    return resp
+
+
 async def _resume(request):
     data = await request.json() if request.can_read_body else {}
     runs: RunManager = request.app["runs"]
@@ -138,4 +168,5 @@ def make_app(controller, *, host: str, port: int, token: str) -> web.Application
     app.router.add_post("/api/execute", _execute)
     app.router.add_post("/api/cancel", _cancel)
     app.router.add_post("/api/resume", _resume)
+    app.router.add_get("/api/events", _events)
     return app
