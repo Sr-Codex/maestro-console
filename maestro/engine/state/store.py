@@ -85,6 +85,13 @@ CREATE TABLE IF NOT EXISTS edges (
     created_at REAL NOT NULL,
     PRIMARY KEY (src, dst)
 );
+CREATE TABLE IF NOT EXISTS floors (
+    name        TEXT PRIMARY KEY,
+    branch      TEXT NOT NULL,
+    path        TEXT NOT NULL,
+    base_branch TEXT NOT NULL,
+    created_at  REAL NOT NULL
+);
 """
 
 
@@ -362,6 +369,30 @@ class Store:
         with self._lock:
             rows = self._conn.execute("SELECT src, dst FROM edges ORDER BY created_at").fetchall()
         return [(r["src"], r["dst"]) for r in rows]
+
+    # -- floors (ambientes isolados / git worktree) (V8-S1) ------------
+    def add_floor(self, name: str, branch: str, path: str, base_branch: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO floors(name, branch, path, base_branch, created_at) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET "
+                "branch=excluded.branch, path=excluded.path, base_branch=excluded.base_branch",
+                (name, branch, path, base_branch, time.time()),
+            )
+
+    def get_floor(self, name: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM floors WHERE name=?", (name,)).fetchone()
+        return dict(row) if row else None
+
+    def list_floors(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM floors ORDER BY created_at").fetchall()
+        return [dict(r) for r in rows]
+
+    def remove_floor(self, name: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM floors WHERE name=?", (name,))
 
     # -- estado de UI genérico (V5-S3: viewport do canvas) -------------
     def set_ui(self, key: str, value: Any) -> None:
