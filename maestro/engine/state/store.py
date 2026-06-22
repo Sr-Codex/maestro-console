@@ -106,6 +106,16 @@ CREATE TABLE IF NOT EXISTS notes (
     y          REAL NOT NULL,
     updated_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS routines (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    agent      TEXT NOT NULL,
+    steps_json TEXT NOT NULL,
+    interval_s REAL NOT NULL,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    run_count  INTEGER NOT NULL DEFAULT 0,
+    last_run   REAL
+);
 """
 
 
@@ -452,6 +462,53 @@ class Store:
     def remove_note(self, note_id: str) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM notes WHERE id=?", (note_id,))
+
+    # -- routines (prompts agendados) (V10-S1) -------------------------
+    def upsert_routine(
+        self,
+        routine_id: str,
+        name: str,
+        agent: str,
+        steps_json: str,
+        interval_s: float,
+        enabled: bool,
+        run_count: int,
+        last_run: float | None,
+    ) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO routines(id,name,agent,steps_json,interval_s,enabled,run_count,"
+                "last_run) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+                "name=excluded.name, agent=excluded.agent, steps_json=excluded.steps_json, "
+                "interval_s=excluded.interval_s, enabled=excluded.enabled, "
+                "run_count=excluded.run_count, last_run=excluded.last_run",
+                (
+                    routine_id,
+                    name,
+                    agent,
+                    steps_json,
+                    interval_s,
+                    1 if enabled else 0,
+                    run_count,
+                    last_run,
+                ),
+            )
+
+    def get_routine(self, routine_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM routines WHERE id=?", (routine_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_routines(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM routines ORDER BY name").fetchall()
+        return [dict(r) for r in rows]
+
+    def remove_routine(self, routine_id: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM routines WHERE id=?", (routine_id,))
 
     # -- estado de UI genérico (V5-S3: viewport do canvas) -------------
     def set_ui(self, key: str, value: Any) -> None:
