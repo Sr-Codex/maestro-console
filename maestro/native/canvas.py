@@ -34,6 +34,7 @@ from .palette import build_palette_items, fuzzy  # noqa: E402
 from .routines_ui import parse_steps, routine_rows  # noqa: E402
 from .state import CanvasModel, EdgeModel, cable_segments  # noqa: E402
 from .themes import get_theme, theme_names  # noqa: E402
+from .toolbar import action_menu_items  # noqa: E402
 
 BASE_W, BASE_H = 420, 220
 # estado do envelope (passo done) -> estado visual do nó
@@ -135,16 +136,19 @@ class CanvasWindow:
 
     def _toolbar(self) -> Gtk.Widget:
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        for label, dz in (("−", -0.1), ("+", 0.1)):
+        # -- controles de vista (esquerda) --
+        for label, dz, tip in (("−", -0.1, "diminuir zoom"), ("+", 0.1, "aumentar zoom")):
             b = Gtk.Button(label=label)
+            b.set_tooltip_text(tip)
             b.connect("clicked", lambda _b, d=dz: self._zoom(d))
             bar.pack_start(b, False, False, 0)
         self.zlabel = Gtk.Label(label="zoom 100%")
         bar.pack_start(self.zlabel, False, False, 6)
         self._attn_label = Gtk.Label(label="")  # "⚠ N" quando algo precisa de você (V11-S1)
+        self._attn_label.set_tooltip_text("itens que precisam de você")
         bar.pack_start(self._attn_label, False, False, 6)
-        # seletor de tema dos terminais (V11-S4)
-        self._theme_combo = Gtk.ComboBoxText()
+        self._theme_combo = Gtk.ComboBoxText()  # tema dos terminais (V11-S4)
+        self._theme_combo.set_tooltip_text("tema dos terminais")
         for tn in theme_names():
             self._theme_combo.append_text(tn)
         cur = self.model.terminal_theme()
@@ -152,30 +156,41 @@ class CanvasWindow:
         self._theme_combo.set_active(names.index(cur) if cur in names else 0)
         self._theme_combo.connect("changed", self._on_theme_changed)
         bar.pack_start(self._theme_combo, False, False, 0)
-        if self.edges is not None:
+        if self.edges is not None:  # modo conexão (persistente) fica direto na barra
             self._connect_btn = Gtk.ToggleButton(label="🔌 conectar")
+            self._connect_btn.set_tooltip_text("ligar agentes por cabo (clique A, depois B)")
             self._connect_btn.connect("toggled", self._toggle_connect)
             bar.pack_start(self._connect_btn, False, False, 0)
-        if self.controller is not None:
-            run_b = Gtk.Button(label=f"▶ rodar time ({self.run_team_name})")
-            run_b.connect("clicked", lambda _b: self._run_team())
-            bar.pack_end(run_b, False, False, 0)
-        if self.controller is not None and self.edges is not None:
-            hb = Gtk.Button(label="▶ disparar handoff")
-            hb.connect("clicked", lambda _b: self._open_handoff_dialog())
-            bar.pack_end(hb, False, False, 0)
-        if self.floors is not None:
-            fb = Gtk.Button(label="🧱 floors")
-            fb.connect("clicked", lambda _b: self._open_floors_dialog())
-            bar.pack_end(fb, False, False, 0)
-        if self.notes is not None:
-            nb = Gtk.Button(label="📝 nota")
-            nb.connect("clicked", lambda _b: self._create_note())
-            bar.pack_start(nb, False, False, 0)
-        if self.routines is not None and self.controller is not None:
-            rtb = Gtk.Button(label="⏰ routines")
-            rtb.connect("clicked", lambda _b: self._open_routines_dialog())
-            bar.pack_end(rtb, False, False, 0)
+        # -- comandos agrupados num menu (direita): descongestiona a barra (P3) --
+        spec = action_menu_items(
+            has_controller=self.controller is not None,
+            has_edges=self.edges is not None,
+            has_notes=self.notes is not None,
+            has_floors=self.floors is not None,
+            has_routines=self.routines is not None,
+            team_name=self.run_team_name,
+        )
+        cbmap = {
+            "run_team": self._run_team,
+            "handoff": self._open_handoff_dialog,
+            "note": self._create_note,
+            "floors": self._open_floors_dialog,
+            "routines": self._open_routines_dialog,
+        }
+        if spec:
+            mb = Gtk.MenuButton(label="☰ ações")
+            menu = Gtk.Menu()
+            for label, key in spec:
+                mi = Gtk.MenuItem(label=label)
+                mi.connect("activate", lambda _m, k=key: cbmap[k]())
+                menu.append(mi)
+            menu.show_all()
+            mb.set_popup(menu)
+            bar.pack_end(mb, False, False, 0)
+        # dica: Ctrl-P abre a busca rápida (palette)
+        hint = Gtk.Label(label="Ctrl-P: ir para…")
+        hint.set_tooltip_text("busca rápida de agentes/teams/floors/notas/routines")
+        bar.pack_end(hint, False, False, 6)
         return bar
 
     def _add_node(self, nid, title, argv, default):
