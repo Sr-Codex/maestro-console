@@ -92,6 +92,12 @@ CREATE TABLE IF NOT EXISTS floors (
     base_branch TEXT NOT NULL,
     created_at  REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS floor_hooks (
+    name     TEXT PRIMARY KEY,
+    setup    TEXT,
+    run      TEXT,
+    teardown TEXT
+);
 """
 
 
@@ -393,6 +399,27 @@ class Store:
     def remove_floor(self, name: str) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM floors WHERE name=?", (name,))
+            self._conn.execute("DELETE FROM floor_hooks WHERE name=?", (name,))
+
+    def set_floor_hooks(
+        self, name: str, *, setup: str | None, run: str | None, teardown: str | None
+    ) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO floor_hooks(name, setup, run, teardown) VALUES(?,?,?,?) "
+                "ON CONFLICT(name) DO UPDATE SET setup=excluded.setup, run=excluded.run, "
+                "teardown=excluded.teardown",
+                (name, setup, run, teardown),
+            )
+
+    def get_floor_hooks(self, name: str) -> dict[str, str | None] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT setup, run, teardown FROM floor_hooks WHERE name=?", (name,)
+            ).fetchone()
+        if row is None:
+            return None
+        return {"setup": row["setup"], "run": row["run"], "teardown": row["teardown"]}
 
     # -- estado de UI genérico (V5-S3: viewport do canvas) -------------
     def set_ui(self, key: str, value: Any) -> None:
