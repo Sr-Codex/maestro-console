@@ -7,6 +7,8 @@ execução de cadeias de Team com progresso por etapa. Testável sem terminal.
 from __future__ import annotations
 
 import asyncio
+import time
+import uuid
 
 from ..engine import history
 from ..engine.orchestrator import ChainResult, Orchestrator, StepProgress
@@ -85,7 +87,11 @@ class TUIController:
     def dashboard_text(self) -> str:
         if self._active:
             a = self._active
-            ativa = f"{a['task_id'][:8]} | {a['route']} | etapa: {a['current']} [{a['state']}]"
+            elapsed = time.monotonic() - a.get("t0", time.monotonic())
+            ativa = (
+                f"{a['task_id'][:8]} | {a['route']} | etapa: {a['current']} "
+                f"[{a['state']}] {elapsed:.0f}s"
+            )
         else:
             ativa = "(nenhuma)"
         if self._last:
@@ -112,6 +118,7 @@ class TUIController:
                 "route": self._active_route(),
                 "current": cur,
                 "state": "busy",
+                "t0": time.monotonic(),
             }
             self._registry.set_state(sp.agent, AgentState.BUSY)
         else:  # done
@@ -125,18 +132,35 @@ class TUIController:
     def _active_route(self) -> str:
         return self._active["route"] if self._active else "?"
 
+    def last_run_id(self) -> str | None:
+        return self._last.get("task_id") if self._last else None
+
     async def run_team(self, team: Team, intent: str, *, progress=None) -> ChainResult:
-        self._active = {"task_id": "-", "route": team.route, "current": "-", "state": "start"}
+        run_id = str(uuid.uuid4())  # task_id coerente em log/histórico/checkpoint
+        self._run_id = run_id
+        self._active = {
+            "task_id": run_id,
+            "route": team.route,
+            "current": "-",
+            "state": "start",
+            "t0": time.monotonic(),
+        }
         self._progress = progress
         try:
-            res = await self._orch.run_team(team, intent, on_step=self._on_step)
+            res = await self._orch.run_team(team, intent, task_id=run_id, on_step=self._on_step)
         except asyncio.CancelledError:
-            self._last = {"route": team.route, "state": "CANCELADO", "result": None}
+            self._last = {
+                "task_id": run_id,
+                "route": team.route,
+                "state": "CANCELADO",
+                "result": None,
+            }
             self._active = None
             self._progress = None
             raise
         result = res.envelopes[-1].result if res.envelopes else None
         self._last = {
+            "task_id": run_id,
             "route": team.route,
             "state": "DONE" if res.ok else "ESCALOU",
             "result": result,

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 
-from ..engine.orchestrator import StepProgress
 from ..engine.teams import Role, Team
 from .controller import TUIController
 
@@ -78,25 +77,32 @@ def _gerenciar_teams(controller: TUIController) -> None:  # pragma: no cover - i
                 print("  cancelado")
 
 
-def _print_step(sp: StepProgress) -> None:
-    if sp.phase == "start":
-        print(f"  ▶ {sp.role}({sp.agent}) ...")
-    else:
-        print(f"  ✓ {sp.role}({sp.agent}) -> {sp.state} ({sp.duration_s:.1f}s)")
-
-
-def _run_chain(controller: TUIController, team: Team) -> None:
-    intent = input("intenção/tarefa: ").strip()
-    print(f"rota: {team.route}   (Ctrl-C cancela)")
+async def _live(controller: TUIController, team: Team, intent: str):  # pragma: no cover
+    """Roda a cadeia e redesenha o dashboard ao vivo (~1s) até terminar."""
+    run = asyncio.create_task(controller.run_team(team, intent))
     try:
-        res = asyncio.run(controller.run_team(team, intent, progress=_print_step))
+        while not run.done():
+            print("\033[2J\033[H", end="")  # limpa a tela
+            print(controller.dashboard_text())
+            print("\n(Ctrl-C cancela)")
+            await asyncio.wait({run}, timeout=1.0)
+    except asyncio.CancelledError:
+        run.cancel()
+        raise
+    return await run
+
+
+def _run_chain(controller: TUIController, team: Team) -> None:  # pragma: no cover
+    intent = input("intenção/tarefa: ").strip()
+    try:
+        res = asyncio.run(_live(controller, team, intent))
     except KeyboardInterrupt:
-        print("⛔ cancelado com segurança")
+        print("⛔ cancelado com segurança (processos/locks/fila liberados)")
         return
     if res.ok:
         print(f"✅ final: {res.envelopes[-1].result}")
     else:
-        print(f"⚠️ escalou: {res.reason}")
+        print(f"⚠️ escalou: {res.reason} — use 'retomar' p/ recuperar do checkpoint")
 
 
 def run(controller: TUIController) -> None:  # pragma: no cover - loop interativo
