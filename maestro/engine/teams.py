@@ -11,19 +11,50 @@ from dataclasses import dataclass
 
 from .state.store import Store
 
+# paleta default de badge por papel (Maestri-like); fallback p/ papéis desconhecidos
+DEFAULT_ROLE_COLORS = {
+    "lead": "#a855f7",
+    "planner": "#a855f7",
+    "coder": "#3b82f6",
+    "reviewer": "#f59e0b",
+    "tester": "#22c55e",
+}
+_FALLBACK_COLOR = "#6b7280"
+
+
+def default_color(role_name: str) -> str:
+    """Cor de badge default para o papel (por nome); fallback neutro."""
+    return DEFAULT_ROLE_COLORS.get(role_name.strip().lower(), _FALLBACK_COLOR)
+
 
 @dataclass(frozen=True)
 class Role:
     name: str  # papel: coder, reviewer, planner...
     agent: str  # agente que executa (ex.: claude, codex)
     instruction: str  # instrução técnica CURTA do papel
+    color: str = ""  # badge; "" = usar default por papel (badge())
+
+    def badge(self) -> str:
+        """Cor efetiva do badge: explícita, ou default pelo nome do papel."""
+        return self.color or default_color(self.name)
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "agent": self.agent, "instruction": self.instruction}
+        return {
+            "name": self.name,
+            "agent": self.agent,
+            "instruction": self.instruction,
+            "color": self.color,
+        }
 
     @classmethod
     def from_dict(cls, d: dict) -> Role:
-        return cls(name=d["name"], agent=d["agent"], instruction=d["instruction"])
+        # retrocompatível: teams antigos não têm "color"
+        return cls(
+            name=d["name"],
+            agent=d["agent"],
+            instruction=d["instruction"],
+            color=d.get("color", ""),
+        )
 
 
 @dataclass(frozen=True)
