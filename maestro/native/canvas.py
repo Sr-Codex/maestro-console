@@ -18,7 +18,7 @@ from gi.repository import Gdk, GLib, Gtk, Vte  # noqa: E402
 from ..engine.state.store import Store  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from .agents import STATE_COLORS, agent_argv, installed_agents  # noqa: E402
-from .orchestrate import run_team_in_thread  # noqa: E402
+from .orchestrate import run_edge_handoff_in_thread, run_team_in_thread  # noqa: E402
 from .state import CanvasModel, EdgeModel, cable_segments  # noqa: E402
 
 BASE_W, BASE_H = 420, 220
@@ -62,6 +62,8 @@ class CanvasWindow:
         self.order: list[str] = []
         self._connect_mode = False
         self._connect_src: str | None = None
+        self._edge_state: dict[tuple[str, str], str] = {}  # cor do cabo por handoff (V7-S4)
+        self._active_edge: tuple[str, str] | None = None
         self.win = Gtk.Window(title="maestro console 🎼 — canvas (nativo)")
         self.win.set_default_size(1000, 600)
         self.win.connect("destroy", Gtk.main_quit)
@@ -106,6 +108,10 @@ class CanvasWindow:
             run_b = Gtk.Button(label=f"▶ rodar time ({self.run_team_name})")
             run_b.connect("clicked", lambda _b: self._run_team())
             bar.pack_end(run_b, False, False, 0)
+        if self.controller is not None and self.edges is not None:
+            hb = Gtk.Button(label="▶ disparar handoff")
+            hb.connect("clicked", lambda _b: self._open_handoff_dialog())
+            bar.pack_end(hb, False, False, 0)
         return bar
 
     def _add_node(self, nid, title, argv, default):
@@ -253,14 +259,19 @@ class CanvasWindow:
             cr.move_to(x1, y1)
             cr.line_to(x2, y2)
             cr.stroke()
-        # cabos do usuário (V7-S2): src -> dst arbitrários, em azul (distintos da rota)
+        # cabos do usuário (V7-S2): azul por padrão; cor do estado durante handoff (V7-S4)
         if self.edges is not None:
-            cr.set_source_rgb(0.23, 0.51, 0.96)
             cr.set_line_width(2.5)
             for src, dst in self.edges.list():
                 a, b = self.frames.get(src), self.frames.get(dst)
                 if a is None or b is None:
                     continue
+                st = self._edge_state.get((src, dst))
+                if st is not None:
+                    c = _rgba(STATE_COLORS.get(st, STATE_COLORS["idle"]))
+                    cr.set_source_rgb(c.red, c.green, c.blue)
+                else:
+                    cr.set_source_rgb(0.23, 0.51, 0.96)
                 ax = self.layout.child_get_property(a, "x")
                 ay = self.layout.child_get_property(a, "y")
                 bx = self.layout.child_get_property(b, "x")
@@ -282,6 +293,60 @@ class CanvasWindow:
         state = "busy" if sp.phase == "start" else _ST_MAP.get(sp.state, "idle")
         GLib.idle_add(self.set_node_state, sp.agent, state)
         GLib.idle_add(self.layout.queue_draw)
+
+    # -- disparar handoff mediado por um cabo (V7-S4) --
+    def _open_handoff_dialog(self):
+        if self.edges is None or self.controller is None:
+            return
+        edges = self.edges.list()
+        if not edges:
+            return  # nenhum cabo p/ disparar
+        dlg = Gtk.Dialog(title="Disparar handoff", transient_for=self.win, modal=True)
+        dlg.add_buttons("Cancelar", Gtk.ResponseType.CANCEL, "Disparar", Gtk.ResponseType.OK)
+        box = dlg.get_content_area()
+        combo = Gtk.ComboBoxText()
+        for s, d in edges:
+            combo.append_text(f"{s} → {d}")
+        combo.set_active(0)
+        entry = Gtk.Entry()
+        entry.set_placeholder_text("intenção para a origem…")
+        box.add(Gtk.Label(label="Cabo:"))
+        box.add(combo)
+        box.add(Gtk.Label(label="Intenção:"))
+        box.add(entry)
+        dlg.show_all()
+        resp = dlg.run()
+        idx = combo.get_active()
+        intent = entry.get_text().strip() or "Responda apenas OK."
+        dlg.destroy()
+        if resp == Gtk.ResponseType.OK and 0 <= idx < len(edges):
+            src, dst = edges[idx]
+            self._run_handoff(src, dst, intent)
+
+    def _run_handoff(self, src: str, dst: str, intent: str) -> None:
+        self._active_edge = (src, dst)
+        self._edge_state[(src, dst)] = "busy"
+        self.layout.queue_draw()
+        run_edge_handoff_in_thread(self.controller, src, dst, intent, self._on_handoff_step_ts)
+
+    def _on_handoff_step_ts(self, sp):
+        GLib.idle_add(self._apply_handoff_step, sp)
+
+    def _apply_handoff_step(self, sp):
+        # cor do nó
+        node_state = "busy" if sp.phase == "start" else _ST_MAP.get(sp.state, "idle")
+        self.set_node_state(sp.agent, node_state)
+        # cor do cabo conforme o progresso do handoff
+        if self._active_edge is not None:
+            src, dst = self._active_edge
+            if sp.phase == "done":
+                if sp.state == "DONE":
+                    if sp.agent == dst:  # B concluiu -> cabo "done"
+                        self._edge_state[(src, dst)] = "done"
+                else:  # A ou B escalou -> cabo reflete o estado
+                    self._edge_state[(src, dst)] = _ST_MAP.get(sp.state, "blocked")
+        self.layout.queue_draw()
+        return False
 
     def show(self):
         self.win.show_all()
