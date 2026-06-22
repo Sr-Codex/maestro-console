@@ -28,6 +28,29 @@ class CanvasModel:
         self._store.set_ui("native_zoom", max(0.3, min(3.0, float(z))))
 
 
+class EdgeModel:
+    """Cabos criados pelo usuário (src -> dst), persistidos no Store (V7-S1).
+
+    Ignora self-loop (src == dst) e deduplica (a tabela tem PK composta). Sem GTK.
+    """
+
+    def __init__(self, store: Store):
+        self._store = store
+
+    def add(self, src: str, dst: str) -> bool:
+        """Cria o cabo; retorna False se for self-loop (ignorado)."""
+        if src == dst:
+            return False
+        self._store.add_edge(src, dst)
+        return True
+
+    def remove(self, src: str, dst: str) -> None:
+        self._store.remove_edge(src, dst)
+
+    def list(self) -> list[tuple[str, str]]:
+        return self._store.get_edges()
+
+
 def cable_segments(
     positions: list[tuple[float, float]], w: float, h: float
 ) -> list[tuple[float, float, float, float]]:

@@ -79,6 +79,12 @@ CREATE TABLE IF NOT EXISTS ui_state (
     k TEXT PRIMARY KEY,
     v TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS edges (
+    src        TEXT NOT NULL,
+    dst        TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    PRIMARY KEY (src, dst)
+);
 """
 
 
@@ -338,6 +344,24 @@ class Store:
         with self._lock:
             rows = self._conn.execute("SELECT agent_id, x, y FROM node_positions").fetchall()
         return {r["agent_id"]: {"x": r["x"], "y": r["y"]} for r in rows}
+
+    # -- cabos entre nós do canvas (V7-S1) -----------------------------
+    def add_edge(self, src: str, dst: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO edges(src, dst, created_at) VALUES(?,?,?) "
+                "ON CONFLICT(src, dst) DO NOTHING",
+                (src, dst, time.time()),
+            )
+
+    def remove_edge(self, src: str, dst: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM edges WHERE src=? AND dst=?", (src, dst))
+
+    def get_edges(self) -> list[tuple[str, str]]:
+        with self._lock:
+            rows = self._conn.execute("SELECT src, dst FROM edges ORDER BY created_at").fetchall()
+        return [(r["src"], r["dst"]) for r in rows]
 
     # -- estado de UI genérico (V5-S3: viewport do canvas) -------------
     def set_ui(self, key: str, value: Any) -> None:
