@@ -17,7 +17,8 @@ dependencies = [
 
 [project.optional-dependencies]
 tui = ["textual>=0.50"]            # interface TUI (Épico 4)
-dev = ["pytest>=8.0", "ruff>=0.4"]  # testes + lint/format
+web = ["aiohttp>=3.9"]             # Web UI (v0.4.0)
+dev = ["pytest>=8.0", "ruff>=0.4", "aiohttp>=3.9"]  # testes + lint/format
 
 [project.scripts]
 maestro = "maestro.__main__:main"
