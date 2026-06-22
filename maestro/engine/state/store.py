@@ -70,6 +70,11 @@ CREATE TABLE IF NOT EXISTS chain_steps (
     result  TEXT,
     PRIMARY KEY (run_id, idx)
 );
+CREATE TABLE IF NOT EXISTS node_positions (
+    agent_id TEXT PRIMARY KEY,
+    x        REAL NOT NULL,
+    y        REAL NOT NULL
+);
 """
 
 
@@ -315,3 +320,17 @@ class Store:
                 "SELECT * FROM chain_runs WHERE run_id=?", (run_id,)
             ).fetchone()
         return dict(row) if row else None
+
+    # -- posições dos nós no canvas (V4-S5) ----------------------------
+    def set_node_position(self, agent_id: str, x: float, y: float) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO node_positions(agent_id, x, y) VALUES(?,?,?) "
+                "ON CONFLICT(agent_id) DO UPDATE SET x=excluded.x, y=excluded.y",
+                (agent_id, x, y),
+            )
+
+    def get_node_positions(self) -> dict[str, dict[str, float]]:
+        with self._lock:
+            rows = self._conn.execute("SELECT agent_id, x, y FROM node_positions").fetchall()
+        return {r["agent_id"]: {"x": r["x"], "y": r["y"]} for r in rows}

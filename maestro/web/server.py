@@ -123,6 +123,21 @@ async def _cancel(request):
     return web.json_response({"cancelled": request.app["runs"].cancel()})
 
 
+async def _get_positions(request):
+    return web.json_response(_ctrl(request)._store.get_node_positions())
+
+
+async def _set_position(request):
+    data = await request.json()
+    try:
+        _ctrl(request)._store.set_node_position(
+            data["agent_id"], float(data["x"]), float(data["y"])
+        )
+    except (KeyError, TypeError, ValueError) as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return web.json_response({"ok": True})
+
+
 async def _events(request):
     """SSE: progresso por etapa e estados ao vivo (não é caminho de dados)."""
     runs: RunManager = request.app["runs"]
@@ -180,6 +195,8 @@ def make_app(controller, *, host: str, port: int, token: str) -> web.Application
     app.router.add_post("/api/cancel", _cancel)
     app.router.add_post("/api/resume", _resume)
     app.router.add_get("/api/events", _events)
+    app.router.add_get("/api/positions", _get_positions)
+    app.router.add_post("/api/positions", _set_position)
     app.router.add_get("/", _index)
     if STATIC_DIR.is_dir():
         app.router.add_static("/static/", STATIC_DIR)
