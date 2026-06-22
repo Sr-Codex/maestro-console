@@ -19,7 +19,7 @@ from ..engine.state.store import Store  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from .agents import STATE_COLORS, agent_argv, installed_agents  # noqa: E402
 from .orchestrate import run_team_in_thread  # noqa: E402
-from .state import CanvasModel, cable_segments  # noqa: E402
+from .state import CanvasModel, EdgeModel, cable_segments  # noqa: E402
 
 BASE_W, BASE_H = 420, 220
 # estado do envelope (passo done) -> estado visual do nó
@@ -51,17 +51,21 @@ def make_terminal(argv: list[str]) -> Vte.Terminal:
 
 
 class CanvasWindow:
-    def __init__(self, model, nodes, controller=None, run_team_name="coder-reviewer"):
+    def __init__(self, model, nodes, controller=None, run_team_name="coder-reviewer", edges=None):
         self.model = model
         self.controller = controller
         self.run_team_name = run_team_name
+        self.edges = edges  # EdgeModel | None — cabos criados pelo usuário (V7-S2)
         self.terms: list[Vte.Terminal] = []
         self.heads: dict[str, Gtk.EventBox] = {}
         self.frames: dict[str, Gtk.Widget] = {}
         self.order: list[str] = []
+        self._connect_mode = False
+        self._connect_src: str | None = None
         self.win = Gtk.Window(title="maestro console 🎼 — canvas (nativo)")
         self.win.set_default_size(1000, 600)
         self.win.connect("destroy", Gtk.main_quit)
+        self.win.connect("key-press-event", self._on_key)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         root.pack_start(self._toolbar(), False, False, 0)
@@ -94,6 +98,10 @@ class CanvasWindow:
             bar.pack_start(b, False, False, 0)
         self.zlabel = Gtk.Label(label="zoom 100%")
         bar.pack_start(self.zlabel, False, False, 6)
+        if self.edges is not None:
+            self._connect_btn = Gtk.ToggleButton(label="🔌 conectar")
+            self._connect_btn.connect("toggled", self._toggle_connect)
+            bar.pack_start(self._connect_btn, False, False, 0)
         if self.controller is not None:
             run_b = Gtk.Button(label=f"▶ rodar time ({self.run_team_name})")
             run_b.connect("clicked", lambda _b: self._run_team())
@@ -120,6 +128,7 @@ class CanvasWindow:
         box.pack_start(head, False, False, 0)
         box.pack_start(term, True, True, 0)
         frame.add(box)
+        frame._nid = nid
         x, y = self.model.position(nid, default)
         self.layout.put(frame, int(x), int(y))
         self.frames[nid] = frame
@@ -127,6 +136,9 @@ class CanvasWindow:
 
     # -- arrastar nó (por título) --
     def _drag_start(self, _w, e, frame):
+        if self._connect_mode:
+            self._connect_pick(frame._nid)
+            return True
         frame._d = (
             e.x_root,
             e.y_root,
@@ -188,6 +200,41 @@ class CanvasWindow:
                 Gtk.StateFlags.NORMAL, _rgba(STATE_COLORS.get(state, STATE_COLORS["idle"]))
             )
 
+    # -- modo conexão: criar/remover cabos por clique (V7-S2) --
+    def _toggle_connect(self, btn):
+        self._connect_mode = btn.get_active()
+        if not self._connect_mode:
+            self._cancel_connect()
+
+    def _connect_pick(self, nid: str) -> None:
+        """1º clique escolhe a origem; 2º cria (ou remove, se já existe) o cabo."""
+        if self.edges is None:
+            return
+        if self._connect_src is None:
+            self._connect_src = nid
+            self.set_node_state(nid, "busy")  # realça a origem pendente
+            return
+        src, dst = self._connect_src, nid
+        self._connect_src = None
+        self.set_node_state(src, "idle")
+        if src == dst:
+            return
+        if (src, dst) in set(self.edges.list()):
+            self.edges.remove(src, dst)  # toggle: clicar de novo remove
+        else:
+            self.edges.add(src, dst)
+        self.layout.queue_draw()
+
+    def _cancel_connect(self) -> None:
+        if self._connect_src is not None:
+            self.set_node_state(self._connect_src, "idle")
+            self._connect_src = None
+
+    def _on_key(self, _w, e):
+        if e.keyval == Gdk.KEY_Escape and self._connect_mode:
+            self._connect_btn.set_active(False)  # untoggle -> cancela
+        return False
+
     # -- cabos (handoffs) --
     def _draw_cables(self, _layout, cr):
         z = self.model.zoom()
@@ -206,6 +253,21 @@ class CanvasWindow:
             cr.move_to(x1, y1)
             cr.line_to(x2, y2)
             cr.stroke()
+        # cabos do usuário (V7-S2): src -> dst arbitrários, em azul (distintos da rota)
+        if self.edges is not None:
+            cr.set_source_rgb(0.23, 0.51, 0.96)
+            cr.set_line_width(2.5)
+            for src, dst in self.edges.list():
+                a, b = self.frames.get(src), self.frames.get(dst)
+                if a is None or b is None:
+                    continue
+                ax = self.layout.child_get_property(a, "x")
+                ay = self.layout.child_get_property(a, "y")
+                bx = self.layout.child_get_property(b, "x")
+                by = self.layout.child_get_property(b, "y")
+                cr.move_to(ax + w, ay + h / 2)
+                cr.line_to(bx, by + h / 2)
+                cr.stroke()
         return False
 
     # -- rodar time da engine (headless) refletindo nas cores --
@@ -237,7 +299,7 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         nodes.append((name, name, agent_argv(profile, str(ws.create(name)))))
     if not nodes:  # nenhum agente instalado -> um shell de exemplo
         nodes = [("term1", "shell", ["/bin/bash"])]
-    CanvasWindow(CanvasModel(store), nodes, controller=controller).show()
+    CanvasWindow(CanvasModel(store), nodes, controller=controller, edges=EdgeModel(store)).show()
     try:
         Gtk.main()
     finally:
