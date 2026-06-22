@@ -1,0 +1,62 @@
+# Changelog
+
+Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
+versionamento incremental. Datas em 2026.
+
+## [Não lançado] — Lapidação (v0.12.0)
+- **Polish/hardening** do que já existe (sem nova feature de produto):
+  - Correção de bugs da revisão adversarial: **deadlock** de `asyncio.Lock` entre
+    event loops (orquestração nativa agora usa um loop compartilhado); exceções de
+    thread não são mais engolidas; HEAD destacado no merge de floor; `resume_chain`
+    robusto; sem leak no attention; drain concorrente de stdout/stderr no runner.
+  - `doctor.sh` checa canvas (gi/GTK/VTE), `notify-send` e `git`.
+  - Toolbar do canvas descongestionada (menu **☰ ações** + tooltips).
+  - README reescrito + este CHANGELOG.
+
+## [0.11.0] — Observabilidade & UX (Fase 5)
+- **Attention** "o que precisa de você": realce/contagem de agentes em
+  BLOCKED/FAILED/NEEDS_INPUT + notificação de desktop opcional.
+- **Command palette** (Ctrl-P): busca fuzzy sobre agentes/teams/floors/notas/routines.
+- **Backup & Restore** de todo o estado em JSON (`maestro backup`/`restore`).
+- **Temas de terminal** (default/dracula/catppuccin/gruvbox), persistidos.
+
+## [0.10.0] — Routines (Fase 4)
+- Prompts **agendados** multi-step (`&&`), mediados; scheduler in-app (`serve` +
+  tick no canvas); CLI `maestro routine`; painel de routines no canvas.
+
+## [0.9.0] — Roles & Notes (Fase 3)
+- **Papéis ricos**: cor/badge + `role.json` + `CLAUDE.md`/`AGENTS.md` no workspace.
+- **Notas** colaborativas no canvas + **agent-to-note** (a nota alimenta o agente
+  e a resposta volta para a nota). Badges de papel nos nós.
+
+## [0.8.0] — Floors (Fase 2)
+- Ambientes isolados via **git worktree** (branch `floor/<nome>`); rodar agente num
+  floor (sandbox); **lifecycle hooks**; **merge preview** + integração; CLI
+  `maestro floor` e painel no canvas.
+
+## [0.7.0] — Cabos que conversam (Fase 1)
+- Conectar agentes A→B por **cabo** no canvas e disparar **handoff mediado**
+  (envelope + bwrap); nós e cabo coloridos por estado; cabos persistidos.
+
+## [0.6.0] — App nativo GTK+VTE *(sem tag)*
+- **Canvas nativo** na tela do dispositivo: terminais reais (VTE) num plano
+  infinito (pan/zoom), cabos de rota, "rodar time" refletindo estados.
+
+## [0.5.0] — Canvas web ao vivo *(sem tag)*
+- Terminais read-only ao vivo (streaming → SSE) + canvas infinito (pan/zoom) na Web UI.
+
+## [0.4.0] — Web UI controlável + canvas visual
+- `maestro web` (aiohttp + SSE): executar/cancelar/retomar teams, canvas SVG de
+  agentes/handoffs, segurança (bind local, token, CORS).
+
+## [0.3.0] — Robustez + gestão de teams
+- CRUD de teams na TUI; continuidade real do Codex (captura de session-id);
+  recuperação de cadeia (checkpoint/resume/swap/reprompt); dashboard ao vivo.
+
+## [0.2.0] — Orquestração multiagente pela TUI
+- `Teams`/`Roles`, `run_team` com progresso por etapa, dashboard, cancelamento
+  seguro, observabilidade via tmux.
+
+## [0.1.0] — MVP
+- Engine: runner headless, sandbox bwrap, sessão+mutex, envelope JSON estrito,
+  orchestrator (handoff A→B→A), SQLite (WAL), TUI, observabilidade tmux.

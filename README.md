@@ -1,35 +1,58 @@
 # maestro console 🎼
 
-Orquestrador de **agentes de IA em terminal**, *terminal-first*, para handhelds
-Linux ARM (ClockworkPi uConsole / Raspberry Pi CM4). Inspirado no
-[Maestri](https://www.themaestri.app), reproduz **o que importa** — orquestração
-e handoff entre agentes — sem o peso de um canvas gráfico, com **isolamento de
-segurança** por padrão.
+Orquestrador de **agentes de IA** para handhelds Linux ARM (ClockworkPi uConsole /
+Raspberry Pi CM4). Um clone do [Maestri](https://www.themaestri.app) para Linux:
+**canvas de terminais reais** onde agentes (Claude Code, Codex) se conectam e
+passam trabalho entre si — com **isolamento de segurança** por padrão.
 
-> Estado: **MVP funcional**. Um orquestrador delega tarefas a múltiplos agentes
-> reais (Claude Code, Codex), cada um isolado, com handoff encadeado A→B→A.
+> Estado: **maduro**. Engine de orquestração + **3 interfaces** (TUI, Web, canvas
+> nativo GTK) + cabos que conversam, ambientes isolados (floors), papéis & notas,
+> rotinas agendadas e observabilidade. ~315 testes.
 
-## Como funciona
+## O que dá pra fazer
 
-- **Orquestrador-mediado**: o orquestrador chama o agente A, **extrai** a
-  resposta e a **encaminha** ao agente B (não é agente↔agente direto).
-- **Caminho de dados = headless** (`claude -p`, `codex exec`): saída limpa, fim
-  por *exit code*. **Visibilidade** opcional via pane tmux (`tail -f` do log).
-- **Mensagens** entre agentes via **envelope JSON estrito** (validado por schema;
-  estados `DONE / BLOCKED / FAILED / NEEDS_INPUT`); artefatos grandes por caminho.
+- 🖥️ **Canvas nativo** na tela do dispositivo: terminais reais dos agentes num
+  plano infinito (pan/zoom), confinados por sandbox.
+- 🔌 **Cabos que conversam**: ligar agente A → B e disparar um **handoff**
+  (A trabalha, o resultado vai para B) — mediado, registrado e recuperável.
+- 🧱 **Floors**: ambientes isolados via **git worktree** (branches por agente, sem
+  conflito), com hooks de ciclo de vida e **merge preview** antes de integrar.
+- 👥 **Papéis & 📝 notas**: papéis com cor/badge (role.json + CLAUDE.md/AGENTS.md)
+  e notas colaborativas que um agente lê e reescreve (**agent-to-note**).
+- ⏰ **Routines**: prompts agendados, multi-step (`&&`), pausáveis.
+- ⚠️ **Observabilidade & UX**: "o que precisa de você" (realce + notificação),
+  busca rápida (**Ctrl-P**), **backup/restore** do estado, temas de terminal.
+
+## Como funciona (princípios da engine)
+
+- **Orquestrador-mediado**: o orquestrador chama o agente A, **extrai** a resposta
+  e a **encaminha** ao B (não é agente↔agente direto). Robusto, logável, recuperável.
+- **Caminho de dados = headless** (`claude -p`, `codex exec`): saída limpa, fim por
+  *exit code*. O canvas/VTE é a camada **visual**; o dado segue headless.
+- **Mensagens** via **envelope JSON estrito** (schema; `DONE / BLOCKED / FAILED /
+  NEEDS_INPUT`); artefatos grandes por caminho.
 - **Segurança**: cada agente roda em **sandbox bwrap** — workspace rw, `/tmp`
-  privado, resto do sistema read-only, rede mantida. **Sem bypass de permissões.**
-- **Sessões** persistentes (`--session-id`/`--resume`) com **mutex por sessão**
-  (1 tarefa ativa por agente). Estado em **SQLite (WAL)**.
+  privado, resto read-only, rede mantida. **Sem bypass de permissões.**
+- **Sessões** persistentes (`--session-id`/`--resume`) com **mutex por sessão**.
+  Estado em **SQLite (WAL)**.
 
 ## Requisitos
 
-- **Linux aarch64** (testado em Kali no uConsole/CM4)
-- **Python 3.11+**, **tmux 3.2+**, **bwrap (bubblewrap)**
-- **CLIs dos agentes instalados e autenticados**: `claude` e/ou `codex`
-  (dependem de **API/rede**, portanto o produto **não** é totalmente offline)
+- **Linux aarch64** (testado em Kali no uConsole/CM4), **Python 3.11+**
+- **Requisito:** `tmux`, `bwrap` (bubblewrap), `git`
+- **Agentes:** `claude` e/ou `codex` instalados e autenticados (usam **API/rede** —
+  o produto **não** é totalmente offline)
+- **Canvas nativo (opcional):** PyGObject + GTK 3 + VTE 2.91 — no Debian/Kali:
+  `apt install python3-gi gir1.2-gtk-3.0 gir1.2-vte-2.91`
+- **Notificações de desktop (opcional):** `notify-send`
 
-## Instalação (manual)
+Verifique tudo de uma vez:
+
+```bash
+bash scripts/doctor.sh
+```
+
+## Instalação
 
 ```bash
 git clone <repo> maestri-console
@@ -37,15 +60,61 @@ cd maestri-console
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pip install -e ".[web]"   # necessário para a Web UI (aiohttp)
+pip install -e ".[web]"   # opcional: Web UI (aiohttp)
 ```
 
-## Uso
+> ⚠️ O **canvas nativo** usa GTK/VTE via `python3-gi`, que vive no **Python do
+> sistema** (não no venv). Use o wrapper `./bin/maestro-canvas` (já chama o
+> `python3` certo). Os demais comandos rodam no venv normalmente.
+
+## Comandos
 
 ```bash
-maestro tui        # interface de terminal (lista agentes, histórico, delegar)
+maestro tui                 # interface de terminal (dashboard, teams, delegar, retomar)
+maestro web                 # Web UI (http://127.0.0.1:8765) — canvas visual + SSE
+maestro canvas              # app nativo GTK+VTE na tela do dispositivo
+maestro floor ...           # ambientes isolados: create/list/preview/merge/rm/run
+maestro routine ...         # prompts agendados: add/list/rm/run/enable/disable/serve
+maestro backup F  / restore F   # exporta/importa todo o estado (JSON)
 maestro --version
 ```
+
+### Canvas nativo (carro-chefe)
+
+```bash
+./bin/maestro-canvas        # abre na tela do uConsole (DISPLAY :0 por padrão)
+```
+
+- **Pan**: arraste o fundo · **Zoom**: `−`/`+` · **Mover nó**: arraste o título.
+- **🔌 conectar**: clique no agente A, depois no B → cria um **cabo** (clique no
+  mesmo par remove; **Esc** cancela).
+- Menu **☰ ações**: rodar time · disparar handoff · nova nota · floors · routines.
+- **Ctrl-P**: busca rápida (ir para um agente/team/floor/nota/routine).
+- Notas têm um seletor de agente + **▶ rodar** (a nota alimenta o agente e a
+  resposta volta para a nota).
+
+### Floors (ambientes isolados)
+
+Dentro de um repo git de projeto (ou aponte com `--project PATH` / `MAESTRO_PROJECT`):
+
+```bash
+maestro floor create exp            # cria worktree + branch floor/exp
+maestro floor run exp claude "implemente X"   # roda um agente no floor (sandbox)
+maestro floor preview exp           # diff + detecção de conflito (sem mexer)
+maestro floor merge exp             # integra na base se não houver conflito
+maestro floor rm exp                # remove worktree + branch
+```
+
+### Routines (prompts agendados)
+
+```bash
+maestro routine add ci claude "rode os testes && reporte" --interval 600
+maestro routine serve               # dispara as vencidas (deixe rodando, ex.: em tmux)
+maestro routine list / enable / disable / run / rm
+```
+
+> O agendamento é **in-app**: dispara enquanto `maestro routine serve` ou o canvas
+> estão abertos. (Export para cron/systemd é um follow-up futuro.)
 
 Observar a execução em outro pane:
 
@@ -53,70 +122,57 @@ Observar a execução em outro pane:
 tmux attach -t maestro-observe
 ```
 
-## Web UI (v0.4.0)
+## Web UI
 
 Interface web controlável com **canvas visual** (agentes como nós, handoffs como
-conexões), sobre a **mesma engine** (headless, bwrap, envelope, checkpoints).
+conexões), sobre a **mesma engine**.
 
 ```bash
-pip install -e ".[web]"   # se ainda não instalou o extra
-maestro web               # inicia o servidor
+pip install -e ".[web]"
+maestro web                 # http://127.0.0.1:8765
+MAESTRO_WEB_HOST=0.0.0.0 MAESTRO_WEB_PORT=9000 maestro web   # expor na LAN (opt-in)
 ```
 
-- **URL padrão:** http://127.0.0.1:8765
-- **Host/porta:** `MAESTRO_WEB_HOST` e `MAESTRO_WEB_PORT`
+- **Bind padrão `127.0.0.1`**; LAN é opt-in. Fora de localhost, um **token
+  aleatório** é exigido (header `X-Maestro-Token`); CORS fechado, `Origin` validado.
+- **Acesso remoto seguro = SSH port forwarding:**
   ```bash
-  MAESTRO_WEB_HOST=0.0.0.0 MAESTRO_WEB_PORT=9000 maestro web
+  ssh -L 8765:127.0.0.1:8765 kali@<ip-do-uconsole>   # depois abra http://127.0.0.1:8765
   ```
-
-### Acesso e segurança
-- **Bind padrão `127.0.0.1`** (só local). Exposição na **LAN é opt-in** (defina
-  `MAESTRO_WEB_HOST=0.0.0.0`).
-- Fora de localhost, um **token aleatório é obrigatório** (impresso ao iniciar) e
-  enviado no **header** `X-Maestro-Token` (nunca em query string). CORS é fechado
-  e o `Origin` é validado.
-- **Acesso remoto seguro = SSH port forwarding** (mantém tudo em localhost, sem
-  expor a LAN nem precisar de token no navegador):
-  ```bash
-  # na sua máquina:
-  ssh -L 8765:127.0.0.1:8765 kali@<ip-do-uconsole>
-  # depois abra http://127.0.0.1:8765 no navegador local
-  ```
-
-### Como usar
-- **Executar um team:** escolha o team no seletor, digite a tarefa e clique
-  **Executar**. O progresso de cada handoff aparece **ao vivo** (SSE).
-- **Cancelar:** botão **Cancelar** (libera processo, lock e fila).
-- **Retomar:** botão **Retomar** continua do último checkpoint (sem repetir
-  etapas concluídas; opções de trocar agente/reprompt na TUI).
-- **Canvas:** agentes são **nós** coloridos por estado (idle/busy/blocked/failed/
-  done) e as rotas do team são **conexões**; **arraste os nós** para reposicionar
-  (as posições são persistidas).
-
-> ⚠️ **Rede e tokens:** os agentes **Claude Code** e **Codex** chamam suas **APIs**
-> (Anthropic/OpenAI) — exigem **conexão de rede e autenticação/tokens** próprios.
-> A engine roda local, mas os agentes **não** são offline.
 
 ## Configuração
 
-- `MAESTRO_AGENT_CEILING` — teto de agentes concorrentes (default 3; suba
-  conforme a RAM).
 - `MAESTRO_HOME` — diretório de estado (default `~/.local/share/maestro-console`).
+- `MAESTRO_AGENT_CEILING` — teto de agentes concorrentes (default 3).
+- `MAESTRO_PROJECT` — repo de projeto dos floors (override do diretório atual).
+- `MAESTRO_WEB_HOST` / `MAESTRO_WEB_PORT` — bind da Web UI.
+
+> ⚠️ **Backup/restore e hooks:** os *hooks* de floor (Setup/Run/Teardown) são
+> comandos shell do usuário e rodam **fora** do sandbox. Restaure **apenas
+> backups confiáveis** — um backup importado pode conter hooks.
 
 ## Desenvolvimento
 
 ```bash
-pytest                                  # testes (rápidos; live são pulados)
-ruff check maestro tests                # lint
-MAESTRO_LIVE=1 pytest tests/test_*_live.py   # testes de integração reais (gastam tokens)
+.venv/bin/pytest -p no:warnings              # testes (rápidos; live são pulados)
+.venv/bin/ruff check maestro tests           # lint
+MAESTRO_LIVE=1 .venv/bin/pytest tests/test_*_live.py   # integração real (gasta tokens)
 ```
+
+Veja o histórico de versões em [CHANGELOG.md](CHANGELOG.md).
 
 ## Arquitetura
 
-Engine desacoplada da UI: `runner` (headless), `session` (+mutex), `registry`,
-`adapters` (perfis TOML), `envelope` (JSON), `bus`, `queue`, `orchestrator`,
-`sandbox` (bwrap), `artifacts`, `state/store` (SQLite). Frontend: `tui`.
-Detalhes em `_bmad-output/planning-artifacts/` (local).
+Engine desacoplada da UI:
+
+- **engine**: `runner` (headless), `session` (+mutex), `registry`, `adapters`
+  (perfis TOML), `envelope` (JSON), `bus`, `queue`, `orchestrator`, `sandbox`
+  (bwrap), `artifacts`, `state/store` (SQLite); e os módulos das fases —
+  `project`/`floors`/`floor_run`/`floor_merge`/`hooks`, `roles`, `notes`,
+  `routines`/`scheduler`, `attention`, `backup`.
+- **interfaces**: `tui`, `web` (aiohttp+SSE), `native` (GTK+VTE).
+
+Detalhes de planejamento em `_bmad-output/` e pesquisa em `docs/`.
 
 ## Licença
 
