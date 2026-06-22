@@ -16,6 +16,19 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] in {"-v", "--version"}:
         print(f"maestro console {__version__}")
         return 0
+    if argv and argv[0] == "canvas":
+        try:
+            from .native.canvas import run
+        except Exception as e:  # PyGObject/GTK/VTE ausentes ou sem ambiente gráfico
+            print(
+                "Canvas nativo requer ambiente gráfico + PyGObject/GTK3/VTE "
+                "(apt: python3-gi gir1.2-gtk-3.0 gir1.2-vte-2.91).\n"
+                "Rode com o Python do sistema (que tem o python3-gi) num desktop.\n"
+                f"detalhe: {e}"
+            )
+            return 1
+        run()
+        return 0
     if argv and argv[0] == "web":
         import os
 
@@ -46,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
         "Uso:\n"
         "  maestro tui        inicia a interface de terminal\n"
         "  maestro web        inicia a Web UI (http://127.0.0.1:8765)\n"
+        "  maestro canvas     app nativo (GTK+VTE) na tela do dispositivo\n"
         "  maestro --version  mostra a versão"
     )
     return 0
