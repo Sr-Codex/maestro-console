@@ -38,6 +38,10 @@ def main(argv: list[str] | None = None) -> int:
         port = int(os.environ.get("MAESTRO_WEB_PORT", "8765"))
         serve(host=host, port=port)
         return 0
+    if argv and argv[0] == "floor":
+        from .cli_floor import floor_cli
+
+        return floor_cli(argv[1:])
     if argv and argv[0] == "tui":
         from .bootstrap import build_controller, log_path
         from .tui.app import run
@@ -60,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         "  maestro tui        inicia a interface de terminal\n"
         "  maestro web        inicia a Web UI (http://127.0.0.1:8765)\n"
         "  maestro canvas     app nativo (GTK+VTE) na tela do dispositivo\n"
+        "  maestro floor ...  ambientes isolados (git worktree): create/list/preview/merge/rm/run\n"
         "  maestro --version  mostra a versão"
     )
     return 0
