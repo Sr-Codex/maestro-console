@@ -98,6 +98,14 @@ CREATE TABLE IF NOT EXISTS floor_hooks (
     run      TEXT,
     teardown TEXT
 );
+CREATE TABLE IF NOT EXISTS notes (
+    id         TEXT PRIMARY KEY,
+    title      TEXT NOT NULL,
+    body       TEXT NOT NULL,
+    x          REAL NOT NULL,
+    y          REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
 """
 
 
@@ -420,6 +428,30 @@ class Store:
         if row is None:
             return None
         return {"setup": row["setup"], "run": row["run"], "teardown": row["teardown"]}
+
+    # -- notas no canvas (V9-S2) ---------------------------------------
+    def upsert_note(self, note_id: str, title: str, body: str, x: float, y: float) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO notes(id, title, body, x, y, updated_at) VALUES(?,?,?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET title=excluded.title, body=excluded.body, "
+                "x=excluded.x, y=excluded.y, updated_at=excluded.updated_at",
+                (note_id, title, body, x, y, time.time()),
+            )
+
+    def get_note(self, note_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_notes(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM notes ORDER BY updated_at").fetchall()
+        return [dict(r) for r in rows]
+
+    def remove_note(self, note_id: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM notes WHERE id=?", (note_id,))
 
     # -- estado de UI genérico (V5-S3: viewport do canvas) -------------
     def set_ui(self, key: str, value: Any) -> None:
