@@ -39,6 +39,7 @@ class TUIController:
         self._teams = teams or Teams(store)
         self._active: dict | None = None
         self._last: dict | None = None
+        self._resume_ctx: tuple | None = None  # (team, intent, run_id) p/ retomar
         self._progress = None  # callback opcional do app para exibir progresso
 
     # -- consultas ------------------------------------------------------
@@ -166,6 +167,56 @@ class TUIController:
             "result": result,
             "reason": res.reason,
         }
+        # contexto p/ retomar (apenas quando escalou)
+        self._resume_ctx = (team, intent, run_id) if res.escalated else None
+        self._active = None
+        self._progress = None
+        return res
+
+    def can_resume(self) -> bool:
+        return self._resume_ctx is not None
+
+    async def resume_last(self, *, swap_agent=None, reprompt=None, progress=None) -> ChainResult:
+        """Retoma a última cadeia escalada do checkpoint (sem repetir DONE)."""
+        if self._resume_ctx is None:
+            raise RuntimeError("não há cadeia para retomar")
+        team, intent, run_id = self._resume_ctx
+        self._active = {
+            "task_id": run_id,
+            "route": team.route,
+            "current": "-",
+            "state": "resume",
+            "t0": time.monotonic(),
+        }
+        self._progress = progress
+        try:
+            res = await self._orch.resume_chain(
+                team,
+                intent,
+                run_id,
+                on_step=self._on_step,
+                swap_agent=swap_agent,
+                reprompt=reprompt,
+            )
+        except asyncio.CancelledError:
+            self._last = {
+                "task_id": run_id,
+                "route": team.route,
+                "state": "CANCELADO",
+                "result": None,
+            }
+            self._active = None
+            self._progress = None
+            raise
+        result = res.envelopes[-1].result if res.envelopes else None
+        self._last = {
+            "task_id": run_id,
+            "route": team.route,
+            "state": "DONE" if res.ok else "ESCALOU",
+            "result": result,
+            "reason": res.reason,
+        }
+        self._resume_ctx = (team, intent, run_id) if res.escalated else None
         self._active = None
         self._progress = None
         return res

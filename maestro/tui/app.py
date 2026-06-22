@@ -21,8 +21,31 @@ maestro console 🎼
   [4] delegar tarefa (1 agente)
   [5] histórico
   [6] gerenciar teams
+  [7] retomar cadeia escalada
   [q] sair
 > """
+
+
+def _retomar(controller: TUIController) -> None:  # pragma: no cover - input
+    if not controller.can_resume():
+        print("não há cadeia escalada para retomar")
+        return
+    print("opções: [enter] retomar igual · [a]gente trocar · [r]eprompt")
+    op = input("> ").strip().lower()
+    swap = reprompt = None
+    if op == "a":
+        swap = input("  novo agente: ").strip() or None
+    elif op == "r":
+        reprompt = input("  instrução extra: ").strip() or None
+    try:
+        res = asyncio.run(controller.resume_last(swap_agent=swap, reprompt=reprompt))
+    except KeyboardInterrupt:
+        print("⛔ cancelado com segurança")
+        return
+    if res.ok:
+        print(f"✅ retomada concluída: {res.envelopes[-1].result}")
+    else:
+        print(f"⚠️ ainda escalou: {res.reason}")
 
 
 def _coletar_roles() -> list[tuple[str, str, str]]:  # pragma: no cover - input
@@ -140,5 +163,7 @@ def run(controller: TUIController) -> None:  # pragma: no cover - loop interativ
             print(controller.history_text())
         elif choice == "6":
             _gerenciar_teams(controller)
+        elif choice == "7":
+            _retomar(controller)
         else:
             print("opção inválida")
