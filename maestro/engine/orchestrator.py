@@ -127,29 +127,97 @@ class Orchestrator:
         task_id: str | None = None,
         on_step: ProgressFn | None = None,
     ) -> ChainResult:
-        """Executa a cadeia de um Team com progresso por etapa e cancelável.
+        """Executa a cadeia de um Team, com checkpoint por etapa e cancelável.
 
         Propaga CancelledError (o subprocesso é morto no runner) — cancelamento
         seguro: as etapas seguintes não rodam.
         """
         tid = task_id or str(uuid.uuid4())
+        if self._store is not None:
+            self._store.start_chain(tid, team.name, intent)
+        return await self._run_steps(
+            team, intent, run_id=tid, start_idx=0, carry=None, on_step=on_step
+        )
+
+    async def resume_chain(
+        self,
+        team: Team,
+        intent: str,
+        run_id: str,
+        *,
+        on_step: ProgressFn | None = None,
+        swap_agent: str | None = None,
+        reprompt: str | None = None,
+    ) -> ChainResult:
+        """Retoma uma cadeia da última etapa NÃO concluída (checkpoint).
+
+        Etapas já DONE são puladas (nunca repetidas). Opções para a etapa que
+        falhou: trocar agente (swap_agent) e/ou reprompt. Sem store, não há o
+        que retomar.
+        """
+        if self._store is None:
+            raise RuntimeError("resume_chain requer store (checkpoints)")
+        steps = self._store.get_steps(run_id)
+        done = [s for s in steps if s["state"] == "DONE"]
+        start_idx = len(done)  # 1ª etapa não concluída
+        carry = done[-1]["result"] if done else None
+        override = (
+            {"agent": swap_agent, "reprompt": reprompt} if start_idx < len(team.roles) else {}
+        )
+        self._store.set_chain_status(run_id, "running")
+        return await self._run_steps(
+            team,
+            intent,
+            run_id=run_id,
+            start_idx=start_idx,
+            carry=carry,
+            on_step=on_step,
+            override_idx=start_idx,
+            override=override,
+        )
+
+    async def _run_steps(
+        self,
+        team,
+        intent,
+        *,
+        run_id,
+        start_idx,
+        carry,
+        on_step,
+        override_idx: int = -1,
+        override: dict | None = None,
+    ) -> ChainResult:
         out = ChainResult()
-        carry: str | None = None
-        for i, role in enumerate(team.roles):
+        for i in range(start_idx, len(team.roles)):
+            role = team.roles[i]
+            agent = role.agent
+            extra = ""
+            if i == override_idx and override:
+                agent = override.get("agent") or agent
+                extra = ("\n" + override["reprompt"]) if override.get("reprompt") else ""
             if on_step:
-                on_step(StepProgress(i, role.name, role.agent, tid, "start"))
+                on_step(StepProgress(i, role.name, agent, run_id, "start"))
             t0 = time.monotonic()
-            env = await self.delegate(role.agent, self._role_task(role, intent, carry), task_id=tid)
+            env = await self.delegate(
+                agent, self._role_task(role, intent, carry) + extra, task_id=run_id
+            )
             dt = time.monotonic() - t0
             out.envelopes.append(env)
+            state = str(env.state) if env.state else None
+            if self._store is not None:
+                self._store.save_step(run_id, i, role.name, agent, state, env.result)
             if on_step:
-                state = str(env.state) if env.state else None
-                on_step(StepProgress(i, role.name, role.agent, tid, "done", state, dt))
+                on_step(StepProgress(i, role.name, agent, run_id, "done", state, dt))
             if env.state is not EnvelopeState.DONE:
                 out.escalated = True
-                out.reason = f"{role.name}({role.agent}) -> {env.state}: {env.note or env.result}"
+                out.reason = f"{role.name}({agent}) -> {env.state}: {env.note or env.result}"
+                if self._store is not None:
+                    self._store.set_chain_status(run_id, "escalated")
                 return out
             carry = env.result
+        if self._store is not None:
+            self._store.set_chain_status(run_id, "done")
         return out
 
 

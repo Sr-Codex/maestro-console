@@ -54,6 +54,22 @@ CREATE TABLE IF NOT EXISTS teams (
     roles_json TEXT NOT NULL,
     updated_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS chain_runs (
+    run_id     TEXT PRIMARY KEY,
+    team       TEXT,
+    intent     TEXT,
+    status     TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chain_steps (
+    run_id  TEXT NOT NULL,
+    idx     INTEGER NOT NULL,
+    role    TEXT,
+    agent   TEXT,
+    state   TEXT,
+    result  TEXT,
+    PRIMARY KEY (run_id, idx)
+);
 """
 
 
@@ -250,3 +266,52 @@ class Store:
     def delete_team(self, name: str) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM teams WHERE name=?", (name,))
+
+    # -- checkpoints de cadeia (V3-S3) ---------------------------------
+    def start_chain(self, run_id: str, team: str | None, intent: str | None) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO chain_runs(run_id, team, intent, status, updated_at) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET "
+                "team=excluded.team, intent=excluded.intent, updated_at=excluded.updated_at",
+                (run_id, team, intent, "running", time.time()),
+            )
+
+    def set_chain_status(self, run_id: str, status: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE chain_runs SET status=?, updated_at=? WHERE run_id=?",
+                (status, time.time(), run_id),
+            )
+
+    def save_step(
+        self,
+        run_id: str,
+        idx: int,
+        role: str,
+        agent: str,
+        state: str | None,
+        result: str | None,
+    ) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO chain_steps(run_id, idx, role, agent, state, result) "
+                "VALUES(?,?,?,?,?,?) ON CONFLICT(run_id, idx) DO UPDATE SET "
+                "role=excluded.role, agent=excluded.agent, state=excluded.state, "
+                "result=excluded.result",
+                (run_id, idx, role, agent, state, result),
+            )
+
+    def get_steps(self, run_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM chain_steps WHERE run_id=? ORDER BY idx", (run_id,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_chain(self, run_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM chain_runs WHERE run_id=?", (run_id,)
+            ).fetchone()
+        return dict(row) if row else None
