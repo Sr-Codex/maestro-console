@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 
 from ..engine.envelope import Envelope, EnvelopeState
 from ..engine.floor_run import commit_floor, run_agent_in_floor
 from ..engine.orchestrator import StepProgress
+from ..engine.scheduler import tick_once
 
 
 def run_team_in_thread(controller, team, intent: str, on_step) -> threading.Thread:
@@ -150,6 +152,36 @@ def run_floor_agent_in_thread(
         )
         committed = commit_floor(floor, f"floor {floor.name}: {prompt[:50]}")
         on_done(res, committed)
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    return t
+
+
+def run_routines_tick_in_thread(controller, routines, on_done=None) -> threading.Thread:
+    """Roda um tick do scheduler (dispara as routines vencidas) em thread (V10-S4).
+
+    on_done(fired: list[str]) com os ids disparados. Usa o relógio real.
+    """
+
+    def worker():
+        fired = asyncio.run(tick_once(controller, routines, now=time.time()))
+        if on_done is not None:
+            on_done(fired)
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    return t
+
+
+def run_one_routine_in_thread(controller, routine, routines, on_done=None) -> threading.Thread:
+    """Roda UMA routine imediatamente (V10-S4), em thread. on_done(RoutineRun)."""
+    from ..engine.routines import run_routine_once
+
+    def worker():
+        run = asyncio.run(run_routine_once(controller, routine, routines))
+        if on_done is not None:
+            on_done(run)
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()

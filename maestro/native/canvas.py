@@ -25,8 +25,11 @@ from .orchestrate import (  # noqa: E402
     run_edge_handoff_in_thread,
     run_floor_agent_in_thread,
     run_note_to_agent_in_thread,
+    run_one_routine_in_thread,
+    run_routines_tick_in_thread,
     run_team_in_thread,
 )
+from .routines_ui import parse_steps, routine_rows  # noqa: E402
 from .state import CanvasModel, EdgeModel, cable_segments  # noqa: E402
 
 BASE_W, BASE_H = 420, 220
@@ -71,6 +74,7 @@ class CanvasWindow:
         repo=None,
         notes=None,
         badges=None,
+        routines=None,
     ):
         self.model = model
         self.controller = controller
@@ -82,6 +86,7 @@ class CanvasWindow:
         self.notes = notes  # Notes | None — notas no canvas (V9-S3)
         self.badges = badges or {}  # agente -> cor do badge de papel (V9-S3)
         self.note_frames: dict[str, Gtk.Widget] = {}
+        self.routines = routines  # Routines | None — prompts agendados (V10-S4)
         self.terms: list[Vte.Terminal] = []
         self.heads: dict[str, Gtk.EventBox] = {}
         self.frames: dict[str, Gtk.Widget] = {}
@@ -149,6 +154,10 @@ class CanvasWindow:
             nb = Gtk.Button(label="📝 nota")
             nb.connect("clicked", lambda _b: self._create_note())
             bar.pack_start(nb, False, False, 0)
+        if self.routines is not None and self.controller is not None:
+            rtb = Gtk.Button(label="⏰ routines")
+            rtb.connect("clicked", lambda _b: self._open_routines_dialog())
+            bar.pack_end(rtb, False, False, 0)
         return bar
 
     def _add_node(self, nid, title, argv, default):
@@ -630,6 +639,123 @@ class CanvasWindow:
 
         run_note_to_agent_in_thread(self.controller, note, agent, self.notes, done)
 
+    # -- routines no canvas (V10-S4) --
+    def _routines_tick(self):
+        """Tick in-app: dispara as routines vencidas (enquanto o canvas está aberto)."""
+        if self.routines is not None and self.controller is not None:
+            run_routines_tick_in_thread(self.controller, self.routines)
+        return True  # repete
+
+    def _open_routines_dialog(self):
+        if self.routines is None or self.controller is None:
+            return
+        dlg = Gtk.Dialog(title="Routines (prompts agendados)", transient_for=self.win, modal=True)
+        dlg.add_button("Fechar", Gtk.ResponseType.CLOSE)
+        box = dlg.get_content_area()
+        box.set_spacing(6)
+
+        combo = Gtk.ComboBoxText()
+        out = Gtk.Label(label="")
+        out.set_xalign(0)
+        out.set_selectable(True)
+
+        def refresh():
+            combo.remove_all()
+            for row in routine_rows(self.routines):
+                combo.append_text(row["label"])
+            if self.routines.list():
+                combo.set_active(0)
+
+        def selected():
+            i = combo.get_active()
+            rs = self.routines.list()
+            return rs[i] if 0 <= i < len(rs) else None
+
+        refresh()
+        box.add(Gtk.Label(label="Routine:"))
+        box.add(combo)
+
+        # criar
+        agents = installed_agents()
+        crow = Gtk.Box(spacing=4)
+        name_e = Gtk.Entry()
+        name_e.set_placeholder_text("nome")
+        acombo = Gtk.ComboBoxText()
+        for a in agents:
+            acombo.append_text(a)
+        if agents:
+            acombo.set_active(0)
+        prompt_e = Gtk.Entry()
+        prompt_e.set_placeholder_text("prompt (use ' && ' p/ passos)")
+        int_e = Gtk.Entry()
+        int_e.set_text("600")
+        int_e.set_width_chars(6)
+        crow.pack_start(name_e, False, False, 0)
+        crow.pack_start(acombo, False, False, 0)
+        crow.pack_start(prompt_e, True, True, 0)
+        crow.pack_start(int_e, False, False, 0)
+
+        def do_create(_b):
+            name = name_e.get_text().strip()
+            agent = acombo.get_active_text()
+            steps = parse_steps(prompt_e.get_text())
+            if not name or not agent or not steps:
+                out.set_text("preencha nome, agente e prompt")
+                return
+            try:
+                interval = float(int_e.get_text())
+            except ValueError:
+                interval = 600.0
+            self.routines.create(name, agent, steps, interval)
+            name_e.set_text("")
+            prompt_e.set_text("")
+            refresh()
+            out.set_text(f"routine {name!r} criada")
+
+        cbtn = Gtk.Button(label="criar")
+        cbtn.connect("clicked", do_create)
+        crow.pack_start(cbtn, False, False, 0)
+        box.add(crow)
+
+        # ações
+        def do_toggle(_b):
+            r = selected()
+            if r is not None:
+                self.routines.set_enabled(r.id, not r.enabled)
+                refresh()
+                out.set_text(f"{r.name}: {'pausada' if r.enabled else 'habilitada'}")
+
+        def do_run(_b):
+            r = selected()
+            if r is None:
+                return
+            out.set_text(f"rodando {r.name}…")
+
+            def done(run):
+                GLib.idle_add(refresh)
+                status = "OK" if run.ok else f"parou no passo {run.stopped_at}"
+                GLib.idle_add(out.set_text, f"{r.name}: {status}")
+
+            run_one_routine_in_thread(self.controller, r, self.routines, done)
+
+        def do_rm(_b):
+            r = selected()
+            if r is not None:
+                self.routines.delete(r.id)
+                refresh()
+                out.set_text(f"{r.name}: removida")
+
+        arow = Gtk.Box(spacing=4)
+        for label, cb in (("on/off", do_toggle), ("▶ rodar agora", do_run), ("remover", do_rm)):
+            b = Gtk.Button(label=label)
+            b.connect("clicked", cb)
+            arow.pack_start(b, False, False, 0)
+        box.add(arow)
+        box.add(out)
+        dlg.show_all()
+        dlg.run()
+        dlg.destroy()
+
     def show(self):
         self.win.show_all()
 
@@ -638,6 +764,7 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
     from ..bootstrap import build_controller, default_home
     from ..engine.notes import Notes
     from ..engine.roles import agent_badges
+    from ..engine.routines import Routines
     from ..engine.session import SessionManager
     from .floors_ui import resolve_floors
 
@@ -654,7 +781,7 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
     floors = resolve_floors(store, f"{base}/floors")
     # badges de papel a partir do team default
     badges = agent_badges(controller.get_team("coder-reviewer"))
-    CanvasWindow(
+    win = CanvasWindow(
         CanvasModel(store),
         nodes,
         controller=controller,
@@ -664,7 +791,11 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         repo=str(floors.repo) if floors is not None else None,
         notes=Notes(store),
         badges=badges,
-    ).show()
+        routines=Routines(store),
+    )
+    win.show()
+    # tick in-app do scheduler: dispara as routines vencidas enquanto aberto (V10-S4)
+    GLib.timeout_add_seconds(30, win._routines_tick)
     try:
         Gtk.main()
     finally:
