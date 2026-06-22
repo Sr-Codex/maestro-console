@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Abre o app nativo (GTK+VTE) na tela do dispositivo.
+#
+# Usa o python do SISTEMA de proposito: o app nativo precisa do gi (GTK/VTE),
+# que NAO existe no .venv. Para a engine, o python do sistema tem jsonschema.
+set -euo pipefail
+
+# raiz do repo = pasta-pai deste script (funciona de qualquer diretorio)
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# manda a janela pra tela do uConsole se nenhum DISPLAY estiver setado
+export DISPLAY="${DISPLAY:-:0.0}"
+# acha o pacote maestro sem precisar instalar
+export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+
+exec python3 -m maestro canvas "$@"
