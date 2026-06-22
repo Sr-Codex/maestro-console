@@ -15,9 +15,17 @@ gi.require_version("Vte", "2.91")
 from gi.repository import Gdk, GLib, Gtk, Vte  # noqa: E402
 
 from ..engine.state.store import Store  # noqa: E402
+from ..engine.workspace import Workspace  # noqa: E402
+from .agents import STATE_COLORS, agent_argv, installed_agents  # noqa: E402
 from .state import CanvasModel  # noqa: E402
 
 BASE_W, BASE_H = 420, 220
+
+
+def _rgba(hex_color: str) -> Gdk.RGBA:
+    c = Gdk.RGBA()
+    c.parse(hex_color)
+    return c
 
 
 def make_terminal(argv: list[str]) -> Vte.Terminal:
@@ -42,6 +50,7 @@ class CanvasWindow:
     def __init__(self, model: CanvasModel, nodes: list[tuple[str, str, list[str]]]):
         self.model = model
         self.terms: list[Vte.Terminal] = []
+        self.heads: dict[str, Gtk.EventBox] = {}
         self.win = Gtk.Window(title="maestro console 🎼 — canvas (nativo)")
         self.win.set_default_size(1000, 600)
         self.win.connect("destroy", Gtk.main_quit)
@@ -90,6 +99,8 @@ class CanvasWindow:
         head.connect("button-press-event", self._drag_start, frame)
         head.connect("motion-notify-event", self._drag_move, frame)
         head.connect("button-release-event", self._drag_end, frame, nid)
+        self.heads[nid] = head
+        head.override_background_color(Gtk.StateFlags.NORMAL, _rgba(STATE_COLORS["idle"]))
         term = make_terminal(argv)
         self.terms.append(term)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -154,6 +165,14 @@ class CanvasWindow:
             t.set_size_request(int(BASE_W * z), int(BASE_H * z))
         self.zlabel.set_text(f"zoom {int(z * 100)}%")
 
+    def set_node_state(self, nid: str, state: str) -> None:
+        """Recolore o título do nó conforme o estado (idle/busy/blocked/failed/done)."""
+        head = self.heads.get(nid)
+        if head is not None:
+            head.override_background_color(
+                Gtk.StateFlags.NORMAL, _rgba(STATE_COLORS.get(state, STATE_COLORS["idle"]))
+            )
+
     def show(self):
         self.win.show_all()
 
@@ -162,9 +181,16 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
     from ..bootstrap import default_home
 
     owns = store is None
+    base = default_home()
     if owns:
-        store = Store(f"{default_home()}/maestro.db")
-    nodes = [("term1", "shell 1", ["/bin/bash"]), ("term2", "shell 2", ["/bin/bash"])]
+        store = Store(f"{base}/maestro.db")
+    # um terminal de AGENTE interativo (sandbox bwrap) por CLI instalado
+    ws = Workspace(f"{base}/workspaces")
+    nodes = []
+    for name, profile in installed_agents().items():
+        nodes.append((name, name, agent_argv(profile, str(ws.create(name)))))
+    if not nodes:  # nenhum agente instalado -> um shell de exemplo
+        nodes = [("term1", "shell", ["/bin/bash"])]
     CanvasWindow(CanvasModel(store), nodes).show()
     try:
         Gtk.main()
