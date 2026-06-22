@@ -27,6 +27,12 @@ class CanvasModel:
     def set_zoom(self, z: float) -> None:
         self._store.set_ui("native_zoom", max(0.3, min(3.0, float(z))))
 
+    def terminal_theme(self) -> str:
+        return self._store.get_ui("terminal_theme") or "default"
+
+    def set_terminal_theme(self, name: str) -> None:
+        self._store.set_ui("terminal_theme", name)
+
 
 class EdgeModel:
     """Cabos criados pelo usuário (src -> dst), persistidos no Store (V7-S1).

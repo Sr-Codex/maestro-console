@@ -33,6 +33,7 @@ from .orchestrate import (  # noqa: E402
 from .palette import build_palette_items, fuzzy  # noqa: E402
 from .routines_ui import parse_steps, routine_rows  # noqa: E402
 from .state import CanvasModel, EdgeModel, cable_segments  # noqa: E402
+from .themes import get_theme, theme_names  # noqa: E402
 
 BASE_W, BASE_H = 420, 220
 # estado do envelope (passo done) -> estado visual do nó
@@ -129,6 +130,7 @@ class CanvasWindow:
             for note in self.notes.list():
                 self._add_note_widget(note)
         self._apply_zoom()
+        self._apply_theme(self.model.terminal_theme())  # tema persistido (V11-S4)
         self._pan = None
 
     def _toolbar(self) -> Gtk.Widget:
@@ -141,6 +143,15 @@ class CanvasWindow:
         bar.pack_start(self.zlabel, False, False, 6)
         self._attn_label = Gtk.Label(label="")  # "⚠ N" quando algo precisa de você (V11-S1)
         bar.pack_start(self._attn_label, False, False, 6)
+        # seletor de tema dos terminais (V11-S4)
+        self._theme_combo = Gtk.ComboBoxText()
+        for tn in theme_names():
+            self._theme_combo.append_text(tn)
+        cur = self.model.terminal_theme()
+        names = theme_names()
+        self._theme_combo.set_active(names.index(cur) if cur in names else 0)
+        self._theme_combo.connect("changed", self._on_theme_changed)
+        bar.pack_start(self._theme_combo, False, False, 0)
         if self.edges is not None:
             self._connect_btn = Gtk.ToggleButton(label="🔌 conectar")
             self._connect_btn.connect("toggled", self._toggle_connect)
@@ -258,6 +269,20 @@ class CanvasWindow:
             t.set_font_scale(z)
             t.set_size_request(int(BASE_W * z), int(BASE_H * z))
         self.zlabel.set_text(f"zoom {int(z * 100)}%")
+
+    # -- tema dos terminais (V11-S4) --
+    def _apply_theme(self, name: str) -> None:
+        th = get_theme(name)
+        fg, bg = _rgba(th["fg"]), _rgba(th["bg"])
+        palette = [_rgba(c) for c in th["palette"]]
+        for t in self.terms:
+            t.set_colors(fg, bg, palette)
+
+    def _on_theme_changed(self, combo):
+        name = combo.get_active_text()
+        if name:
+            self.model.set_terminal_theme(name)
+            self._apply_theme(name)
 
     def set_node_state(self, nid: str, state: str) -> None:
         """Recolore o título do nó conforme o estado (idle/busy/blocked/failed/done)."""
