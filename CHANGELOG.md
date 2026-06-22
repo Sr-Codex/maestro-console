@@ -3,7 +3,7 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
-## [Não lançado] — Lapidação (v0.12.0)
+## [0.12.0] — Lapidação (polish/hardening)
 - **Polish/hardening** do que já existe (sem nova feature de produto):
   - Correção de bugs da revisão adversarial: **deadlock** de `asyncio.Lock` entre
     event loops (orquestração nativa agora usa um loop compartilhado); exceções de
