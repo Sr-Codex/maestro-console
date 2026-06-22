@@ -1,8 +1,9 @@
-"""Canvas nativo GTK3 + VTE (V6-S1 spike).
+"""Canvas nativo GTK3 + VTE (V6-S2): pan/zoom + nós-terminal arrastáveis.
 
-Janela com área rolável (Gtk.Layout = base do canvas infinito) contendo nós com
-terminais reais (Vte.Terminal). Aqui (spike) abre um shell; V6-S3 abre agentes
-em bwrap. Headless/engine não muda — VTE é a camada visual/interativa.
+Gtk.Layout = plano "infinito" (pan via arrastar o fundo); nós são molduras com
+título (arraste por ele) + Vte.Terminal real; zoom via font_scale + tamanho.
+Posições/zoom persistidos pelo CanvasModel (Store da engine). Headless/bwrap não
+muda — VTE é a camada visual/interativa.
 """
 
 from __future__ import annotations
@@ -11,53 +12,162 @@ import gi
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Vte", "2.91")
-from gi.repository import GLib, Gtk, Vte  # noqa: E402
+from gi.repository import Gdk, GLib, Gtk, Vte  # noqa: E402
+
+from ..engine.state.store import Store  # noqa: E402
+from .state import CanvasModel  # noqa: E402
+
+BASE_W, BASE_H = 420, 220
 
 
 def make_terminal(argv: list[str]) -> Vte.Terminal:
-    """Cria um Vte.Terminal real rodando ``argv`` num PTY."""
     term = Vte.Terminal()
-    term.set_size(80, 24)
     term.spawn_async(
         Vte.PtyFlags.DEFAULT,
-        None,  # cwd
+        None,
         argv,
-        None,  # env
+        None,
         GLib.SpawnFlags.DEFAULT,
         None,
-        None,  # child setup
-        -1,  # timeout
-        None,  # cancellable
         None,
-        None,  # callback
+        -1,
+        None,
+        None,
+        None,
     )
     return term
 
 
-def make_node(title: str, argv: list[str]) -> Gtk.Widget:
-    """Um 'nó' do canvas: moldura com título + terminal real."""
-    frame = Gtk.Frame(label=title)
-    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-    box.pack_start(make_terminal(argv), True, True, 0)
-    frame.add(box)
-    frame.set_size_request(420, 220)
-    return frame
+class CanvasWindow:
+    def __init__(self, model: CanvasModel, nodes: list[tuple[str, str, list[str]]]):
+        self.model = model
+        self.terms: list[Vte.Terminal] = []
+        self.win = Gtk.Window(title="maestro console 🎼 — canvas (nativo)")
+        self.win.set_default_size(1000, 600)
+        self.win.connect("destroy", Gtk.main_quit)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        root.pack_start(self._toolbar(), False, False, 0)
+        self.scrolled = Gtk.ScrolledWindow()
+        self.layout = Gtk.Layout()
+        self.layout.set_size(5000, 4000)
+        self.layout.add_events(
+            Gdk.EventMask.BUTTON_PRESS_MASK
+            | Gdk.EventMask.BUTTON_RELEASE_MASK
+            | Gdk.EventMask.POINTER_MOTION_MASK
+        )
+        self.layout.connect("button-press-event", self._pan_start)
+        self.layout.connect("motion-notify-event", self._pan_move)
+        self.layout.connect("button-release-event", self._pan_end)
+        self.scrolled.add(self.layout)
+        root.pack_start(self.scrolled, True, True, 0)
+        self.win.add(root)
+
+        for i, (nid, title, argv) in enumerate(nodes):
+            self._add_node(nid, title, argv, default=(60 + i * 460, 60))
+        self._apply_zoom()
+        self._pan = None
+
+    def _toolbar(self) -> Gtk.Widget:
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        for label, dz in (("−", -0.1), ("+", 0.1)):
+            b = Gtk.Button(label=label)
+            b.connect("clicked", lambda _b, d=dz: self._zoom(d))
+            bar.pack_start(b, False, False, 0)
+        self.zlabel = Gtk.Label(label="zoom 100%")
+        bar.pack_start(self.zlabel, False, False, 6)
+        return bar
+
+    def _add_node(self, nid, title, argv, default):
+        frame = Gtk.Frame()
+        head = Gtk.EventBox()
+        head.add(Gtk.Label(label=f"  {title}  "))
+        head.add_events(
+            Gdk.EventMask.BUTTON_PRESS_MASK
+            | Gdk.EventMask.BUTTON_RELEASE_MASK
+            | Gdk.EventMask.POINTER_MOTION_MASK
+        )
+        head.connect("button-press-event", self._drag_start, frame)
+        head.connect("motion-notify-event", self._drag_move, frame)
+        head.connect("button-release-event", self._drag_end, frame, nid)
+        term = make_terminal(argv)
+        self.terms.append(term)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.pack_start(head, False, False, 0)
+        box.pack_start(term, True, True, 0)
+        frame.add(box)
+        x, y = self.model.position(nid, default)
+        self.layout.put(frame, int(x), int(y))
+
+    # -- arrastar nó (por título) --
+    def _drag_start(self, _w, e, frame):
+        frame._d = (
+            e.x_root,
+            e.y_root,
+            self.layout.child_get_property(frame, "x"),
+            self.layout.child_get_property(frame, "y"),
+        )
+
+    def _drag_move(self, _w, e, frame):
+        d = getattr(frame, "_d", None)
+        if not d:
+            return
+        self.layout.move(frame, int(d[2] + (e.x_root - d[0])), int(d[3] + (e.y_root - d[1])))
+
+    def _drag_end(self, _w, _e, frame, nid):
+        if getattr(frame, "_d", None):
+            self.model.set_position(
+                nid,
+                self.layout.child_get_property(frame, "x"),
+                self.layout.child_get_property(frame, "y"),
+            )
+            frame._d = None
+
+    # -- pan (arrastar fundo) --
+    def _pan_start(self, _w, e):
+        if e.window == self.layout.get_bin_window():
+            self._pan = (
+                e.x_root,
+                e.y_root,
+                self.scrolled.get_hadjustment().get_value(),
+                self.scrolled.get_vadjustment().get_value(),
+            )
+
+    def _pan_move(self, _w, e):
+        if not self._pan:
+            return
+        self.scrolled.get_hadjustment().set_value(self._pan[2] - (e.x_root - self._pan[0]))
+        self.scrolled.get_vadjustment().set_value(self._pan[3] - (e.y_root - self._pan[1]))
+
+    def _pan_end(self, _w, _e):
+        self._pan = None
+
+    # -- zoom --
+    def _zoom(self, dz):
+        self.model.set_zoom(self.model.zoom() + dz)
+        self._apply_zoom()
+
+    def _apply_zoom(self):
+        z = self.model.zoom()
+        for t in self.terms:
+            t.set_font_scale(z)
+            t.set_size_request(int(BASE_W * z), int(BASE_H * z))
+        self.zlabel.set_text(f"zoom {int(z * 100)}%")
+
+    def show(self):
+        self.win.show_all()
 
 
-def build_window() -> Gtk.Window:
-    win = Gtk.Window(title="maestro console 🎼 — canvas (nativo)")
-    win.set_default_size(1000, 600)
-    layout = Gtk.Layout()  # base pannável do canvas (V6-S2 add pan/zoom)
-    layout.set_size(4000, 3000)  # área grande ("infinita")
-    scrolled = Gtk.ScrolledWindow()
-    scrolled.add(layout)
-    win.add(scrolled)
-    # spike: um nó com shell para provar VTE real na tela do uConsole
-    layout.put(make_node("shell", ["/bin/bash"]), 60, 60)
-    win.connect("destroy", Gtk.main_quit)
-    return win
+def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
+    from ..bootstrap import default_home
 
-
-def run() -> None:  # pragma: no cover - loop GTK interativo
-    build_window().show_all()
-    Gtk.main()
+    owns = store is None
+    if owns:
+        store = Store(f"{default_home()}/maestro.db")
+    nodes = [("term1", "shell 1", ["/bin/bash"]), ("term2", "shell 2", ["/bin/bash"])]
+    CanvasWindow(CanvasModel(store), nodes).show()
+    try:
+        Gtk.main()
+    finally:
+        if owns:
+            store.close()
