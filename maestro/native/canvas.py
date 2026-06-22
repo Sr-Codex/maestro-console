@@ -15,6 +15,7 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Vte", "2.91")
 from gi.repository import Gdk, GLib, Gtk, Vte  # noqa: E402
 
+from ..engine.attention import attention_items, notify  # noqa: E402
 from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
 from ..engine.state.store import Store  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
@@ -75,6 +76,7 @@ class CanvasWindow:
         notes=None,
         badges=None,
         routines=None,
+        store=None,
     ):
         self.model = model
         self.controller = controller
@@ -87,6 +89,8 @@ class CanvasWindow:
         self.badges = badges or {}  # agente -> cor do badge de papel (V9-S3)
         self.note_frames: dict[str, Gtk.Widget] = {}
         self.routines = routines  # Routines | None — prompts agendados (V10-S4)
+        self._store = store  # Store | None — p/ attention "precisa de você" (V11-S1)
+        self._notified: set = set()  # (agente, ts) já notificados no desktop
         self.terms: list[Vte.Terminal] = []
         self.heads: dict[str, Gtk.EventBox] = {}
         self.frames: dict[str, Gtk.Widget] = {}
@@ -134,6 +138,8 @@ class CanvasWindow:
             bar.pack_start(b, False, False, 0)
         self.zlabel = Gtk.Label(label="zoom 100%")
         bar.pack_start(self.zlabel, False, False, 6)
+        self._attn_label = Gtk.Label(label="")  # "⚠ N" quando algo precisa de você (V11-S1)
+        bar.pack_start(self._attn_label, False, False, 6)
         if self.edges is not None:
             self._connect_btn = Gtk.ToggleButton(label="🔌 conectar")
             self._connect_btn.connect("toggled", self._toggle_connect)
@@ -756,6 +762,21 @@ class CanvasWindow:
         dlg.run()
         dlg.destroy()
 
+    # -- attention: "o que precisa de você" (V11-S1) --
+    def _refresh_attention(self):
+        if self._store is None:
+            return True
+        items = attention_items(self._store)
+        for it in items:  # realça o nó conforme o estado acionável
+            self.set_node_state(it.agent, _ST_MAP.get(it.state, "blocked"))
+        self._attn_label.set_text(f"⚠ {len(items)}" if items else "")
+        for it in items:  # notificação de desktop só p/ itens novos
+            key = (it.agent, it.ts)
+            if key not in self._notified:
+                self._notified.add(key)
+                notify(f"maestro: {it.agent} precisa de você", it.state)
+        return True  # repete
+
     def show(self):
         self.win.show_all()
 
@@ -792,10 +813,14 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         notes=Notes(store),
         badges=badges,
         routines=Routines(store),
+        store=store,
     )
     win.show()
     # tick in-app do scheduler: dispara as routines vencidas enquanto aberto (V10-S4)
     GLib.timeout_add_seconds(30, win._routines_tick)
+    # attention: realça/notifica o que precisa de você (V11-S1)
+    GLib.timeout_add_seconds(10, win._refresh_attention)
+    win._refresh_attention()
     try:
         Gtk.main()
     finally:
