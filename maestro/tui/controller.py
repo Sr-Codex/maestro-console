@@ -136,8 +136,10 @@ class TUIController:
     def last_run_id(self) -> str | None:
         return self._last.get("task_id") if self._last else None
 
-    async def run_team(self, team: Team, intent: str, *, progress=None) -> ChainResult:
-        run_id = str(uuid.uuid4())  # task_id coerente em log/histórico/checkpoint
+    async def run_team(
+        self, team: Team, intent: str, *, run_id: str | None = None, progress=None
+    ) -> ChainResult:
+        run_id = run_id or str(uuid.uuid4())  # task_id coerente em log/histórico/checkpoint
         self._run_id = run_id
         self._active = {
             "task_id": run_id,
