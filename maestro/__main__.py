@@ -46,6 +46,10 @@ def main(argv: list[str] | None = None) -> int:
         from .cli_routine import routine_cli
 
         return routine_cli(argv[1:])
+    if argv and argv[0] in {"backup", "restore"}:
+        from .cli_backup import backup_cli
+
+        return backup_cli(argv)
     if argv and argv[0] == "tui":
         from .bootstrap import build_controller, log_path
         from .tui.app import run
@@ -70,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
         "  maestro canvas     app nativo (GTK+VTE) na tela do dispositivo\n"
         "  maestro floor ...  ambientes isolados (git worktree): create/list/preview/merge/rm/run\n"
         "  maestro routine .. prompts agendados: add/list/rm/run/enable/disable/serve\n"
+        "  maestro backup F   exporta o estado p/ JSON  ·  maestro restore F\n"
         "  maestro --version  mostra a versão"
     )
     return 0

@@ -135,6 +135,51 @@ class Store:
         with self._conn:
             self._conn.executescript(_SCHEMA)
 
+    # -- backup / restore (V11-S3) -------------------------------------
+    _BACKUP_TABLES = (
+        "sessions",
+        "tasks",
+        "envelope_log",
+        "agents",
+        "teams",
+        "chain_runs",
+        "chain_steps",
+        "node_positions",
+        "ui_state",
+        "edges",
+        "floors",
+        "floor_hooks",
+        "notes",
+        "routines",
+    )
+
+    def export_all(self) -> dict[str, list[dict[str, Any]]]:
+        """Snapshot de todas as tabelas (dict tabela -> linhas)."""
+        out: dict[str, list[dict[str, Any]]] = {}
+        with self._lock:
+            for t in self._BACKUP_TABLES:
+                rows = self._conn.execute(f"SELECT * FROM {t}").fetchall()  # noqa: S608 (nome fixo)
+                out[t] = [dict(r) for r in rows]
+        return out
+
+    def import_all(self, data: dict[str, list[dict[str, Any]]], *, replace: bool = True) -> None:
+        """Restaura o estado. replace=True limpa cada tabela presente antes de inserir."""
+        with self._lock, self._conn:
+            for t in self._BACKUP_TABLES:
+                rows = data.get(t)
+                if rows is None:
+                    continue
+                if replace:
+                    self._conn.execute(f"DELETE FROM {t}")  # noqa: S608 (nome fixo)
+                for row in rows:
+                    cols = list(row.keys())
+                    placeholders = ",".join("?" * len(cols))
+                    colnames = ",".join(cols)
+                    self._conn.execute(
+                        f"INSERT OR REPLACE INTO {t}({colnames}) VALUES({placeholders})",  # noqa: S608
+                        [row[c] for c in cols],
+                    )
+
     # -- infraestrutura -------------------------------------------------
     def close(self) -> None:
         with self._lock:
