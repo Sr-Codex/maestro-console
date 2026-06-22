@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 
 from .adapters.base import AgentProfile
 from .agent_run import run_agent
@@ -56,6 +56,7 @@ class SessionManager:
         timeout: float,
         run_fn: RunFn = run_agent,
         on_output=None,
+        shared_paths: Sequence[str] = (),
     ) -> RunResult:
         """Executa um turno na sessão do agente, serializado pelo mutex.
 
@@ -65,8 +66,12 @@ class SessionManager:
           (persistindo o id REAL), seguintes retomam exatamente essa sessão.
         Mutex por sessão preservado. ``on_output`` (opcional): stream ao vivo (V5).
         """
-        # passa on_output ao run_fn só quando há sink (mantém fakes de teste simples)
-        extra = {"on_output": on_output} if on_output is not None else {}
+        # passa extras ao run_fn só quando presentes (mantém fakes de teste simples)
+        extra: dict = {}
+        if on_output is not None:
+            extra["on_output"] = on_output
+        if shared_paths:
+            extra["shared_paths"] = tuple(shared_paths)
         async with self.session_lock(agent_id):
             assign = getattr(profile, "session_assign", "caller")
             if assign == "captured":
