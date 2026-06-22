@@ -1,0 +1,33 @@
+/* maestro console — Web UI (V4-S4/S5). Responsivo, leve, sem framework. */
+:root {
+  --bg: #14171c; --card: #1d2127; --fg: #e6e6e6; --muted: #8a93a0; --line: #2c323b;
+  --idle: #6b7280; --busy: #3b82f6; --blocked: #f59e0b; --failed: #ef4444; --done: #22c55e;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 14px/1.4 system-ui, sans-serif; }
+header, footer { display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
+footer { border-top: 1px solid var(--line); border-bottom: none; flex-wrap: wrap; }
+header h1 { font-size: 18px; margin: 0; flex: 1; }
+.pill { color: var(--failed); }
+.pill.on { color: var(--done); }
+main { display: grid; gap: 14px; padding: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+#canvas-sec { grid-column: 1 / -1; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+.card h2 { margin: 0 0 10px; font-size: 15px; color: var(--muted); }
+label { display: block; margin: 6px 0; }
+select, input { width: 100%; padding: 7px; background: var(--bg); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px; }
+.row { display: flex; gap: 8px; margin: 10px 0; }
+button { flex: 1; padding: 9px; border: 0; border-radius: 6px; cursor: pointer;
+  background: var(--busy); color: #fff; font-weight: 600; }
+button.warn { background: var(--failed); } button.alt { background: var(--blocked); }
+.mono { font-family: ui-monospace, monospace; white-space: pre-wrap; color: var(--muted); }
+#canvas { width: 100%; height: auto; background: #0e1116; border-radius: 8px; }
+.legend { color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; margin: 8px 0 0; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; }
+.dot.idle{background:var(--idle)} .dot.busy{background:var(--busy)} .dot.blocked{background:var(--blocked)}
+.dot.failed{background:var(--failed)} .dot.done{background:var(--done)}
+ul { margin: 0; padding-left: 18px; } footer small { color: var(--muted); }

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>maestro console 🎼</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>maestro console 🎼</h1>
+    <span id="conn" class="pill">●</span>
+  </header>
+
+  <main>
+    <section id="canvas-sec" class="card">
+      <h2>Canvas</h2>
+      <svg id="canvas" viewBox="0 0 800 320" preserveAspectRatio="xMidYMid meet"></svg>
+      <p class="legend">
+        <span class="dot idle"></span>idle
+        <span class="dot busy"></span>busy
+        <span class="dot blocked"></span>blocked
+        <span class="dot failed"></span>failed
+        <span class="dot done"></span>done
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Executar</h2>
+      <label>Team <select id="team"></select></label>
+      <label>Tarefa <input id="intent" placeholder="intenção..." /></label>
+      <div class="row">
+        <button id="run">Executar</button>
+        <button id="cancel" class="warn">Cancelar</button>
+        <button id="resume" class="alt">Retomar</button>
+      </div>
+      <pre id="active" class="mono">Tarefa ativa: (nenhuma)</pre>
+    </section>
+
+    <section class="card">
+      <h2>Agentes</h2>
+      <ul id="agents"></ul>
+    </section>
+
+    <section class="card">
+      <h2>Histórico</h2>
+      <pre id="history" class="mono"></pre>
+    </section>
+  </main>
+
+  <footer>
+    <input id="token" placeholder="token (apenas LAN)" />
+    <small>localhost dispensa token · LAN: prefira SSH port forwarding</small>
+  </footer>
+
+  <script src="/static/canvas.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

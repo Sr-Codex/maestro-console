@@ -16,6 +16,15 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] in {"-v", "--version"}:
         print(f"maestro console {__version__}")
         return 0
+    if argv and argv[0] == "web":
+        import os
+
+        from .web.server import serve
+
+        host = os.environ.get("MAESTRO_WEB_HOST", "127.0.0.1")
+        port = int(os.environ.get("MAESTRO_WEB_PORT", "8765"))
+        serve(host=host, port=port)
+        return 0
     if argv and argv[0] == "tui":
         from .bootstrap import build_controller, log_path
         from .tui.app import run
@@ -36,6 +45,7 @@ def main(argv: list[str] | None = None) -> int:
         f"maestro console {__version__}\n"
         "Uso:\n"
         "  maestro tui        inicia a interface de terminal\n"
+        "  maestro web        inicia a Web UI (http://127.0.0.1:8765)\n"
         "  maestro --version  mostra a versão"
     )
     return 0

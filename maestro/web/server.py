@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 from aiohttp import web
 
@@ -26,13 +27,23 @@ from .security import (
 @web.middleware
 async def security_mw(request: web.Request, handler):
     app = request.app
-    # CORS fechado: valida Origin (rejeita cross-origin não autorizado)
-    if not origin_allowed(request.headers.get("Origin"), app["allowed_origins"]):
-        return web.json_response({"error": "origin_not_allowed"}, status=403)
-    # token obrigatório fora de localhost (header, nunca query)
-    if app["require_token"] and not token_ok(request.headers.get(TOKEN_HEADER), app["token"]):
-        return web.json_response({"error": "unauthorized"}, status=401)
+    # Proteção aplica-se à superfície de DADOS/CONTROLE (/api/). O shell estático
+    # (HTML/JS/CSS) é servido livremente (sem segredos); token via header nas APIs.
+    if request.path.startswith("/api/"):
+        # CORS fechado: valida Origin (rejeita cross-origin não autorizado)
+        if not origin_allowed(request.headers.get("Origin"), app["allowed_origins"]):
+            return web.json_response({"error": "origin_not_allowed"}, status=403)
+        # token obrigatório fora de localhost (header, nunca query)
+        if app["require_token"] and not token_ok(request.headers.get(TOKEN_HEADER), app["token"]):
+            return web.json_response({"error": "unauthorized"}, status=401)
     return await handler(request)
+
+
+STATIC_DIR = Path(__file__).parent / "static"
+
+
+async def _index(request):
+    return web.FileResponse(STATIC_DIR / "index.html")
 
 
 async def _health(request: web.Request) -> web.Response:
@@ -169,4 +180,26 @@ def make_app(controller, *, host: str, port: int, token: str) -> web.Application
     app.router.add_post("/api/cancel", _cancel)
     app.router.add_post("/api/resume", _resume)
     app.router.add_get("/api/events", _events)
+    app.router.add_get("/", _index)
+    if STATIC_DIR.is_dir():
+        app.router.add_static("/static/", STATIC_DIR)
     return app
+
+
+def serve(*, host: str = "127.0.0.1", port: int = 8765, home=None) -> None:  # pragma: no cover
+    """Sobe o servidor reusando a engine (bootstrap). Bind padrão localhost."""
+    from ..bootstrap import build_controller, default_home
+    from .security import ensure_token, is_local
+
+    base = default_home() if home is None else home
+    controller, store = build_controller(home=base)
+    token = ensure_token(f"{base}/web_token")
+    app = make_app(controller, host=host, port=port, token=token)
+    if not is_local(host):
+        print(f"token (header {TOKEN_HEADER}): {token}")
+        print("⚠️ exposto na LAN — prefira SSH port forwarding p/ acesso remoto seguro")
+    print(f"maestro web em http://{host}:{port}")
+    try:
+        web.run_app(app, host=host, port=port, print=None)
+    finally:
+        store.close()
