@@ -20,6 +20,7 @@ from ..engine.state.store import Store  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from .agents import STATE_COLORS, agent_argv, installed_agents  # noqa: E402
 from .floors_ui import floor_rows, merge_text, preview_text  # noqa: E402
+from .notes_ui import note_title_display  # noqa: E402
 from .orchestrate import (  # noqa: E402
     run_edge_handoff_in_thread,
     run_floor_agent_in_thread,
@@ -67,6 +68,8 @@ class CanvasWindow:
         floors=None,
         session_manager=None,
         repo=None,
+        notes=None,
+        badges=None,
     ):
         self.model = model
         self.controller = controller
@@ -75,6 +78,9 @@ class CanvasWindow:
         self.floors = floors  # Floors | None — ambientes isolados (V8-S5)
         self.session_manager = session_manager  # p/ rodar agente num floor
         self.repo = repo  # path do repo de projeto (floors)
+        self.notes = notes  # Notes | None — notas no canvas (V9-S3)
+        self.badges = badges or {}  # agente -> cor do badge de papel (V9-S3)
+        self.note_frames: dict[str, Gtk.Widget] = {}
         self.terms: list[Vte.Terminal] = []
         self.heads: dict[str, Gtk.EventBox] = {}
         self.frames: dict[str, Gtk.Widget] = {}
@@ -108,6 +114,9 @@ class CanvasWindow:
 
         for i, (nid, title, argv) in enumerate(nodes):
             self._add_node(nid, title, argv, default=(60 + i * 460, 60))
+        if self.notes is not None:  # restaura notas salvas (V9-S3)
+            for note in self.notes.list():
+                self._add_note_widget(note)
         self._apply_zoom()
         self._pan = None
 
@@ -135,12 +144,24 @@ class CanvasWindow:
             fb = Gtk.Button(label="🧱 floors")
             fb.connect("clicked", lambda _b: self._open_floors_dialog())
             bar.pack_end(fb, False, False, 0)
+        if self.notes is not None:
+            nb = Gtk.Button(label="📝 nota")
+            nb.connect("clicked", lambda _b: self._create_note())
+            bar.pack_start(nb, False, False, 0)
         return bar
 
     def _add_node(self, nid, title, argv, default):
         frame = Gtk.Frame()
         head = Gtk.EventBox()
-        head.add(Gtk.Label(label=f"  {title}  "))
+        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        badge = self.badges.get(nid)
+        if badge:  # tira/coluna colorida = badge do papel (V9-S3)
+            sq = Gtk.Box()
+            sq.set_size_request(10, -1)
+            sq.override_background_color(Gtk.StateFlags.NORMAL, _rgba(badge))
+            hbox.pack_start(sq, False, False, 0)
+        hbox.pack_start(Gtk.Label(label=f"  {title}  "), True, True, 0)
+        head.add(hbox)
         head.add_events(
             Gdk.EventMask.BUTTON_PRESS_MASK
             | Gdk.EventMask.BUTTON_RELEASE_MASK
@@ -492,12 +513,91 @@ class CanvasWindow:
         dlg.run()
         dlg.destroy()
 
+    # -- sticky notes no canvas (V9-S3) --
+    def _create_note(self):
+        if self.notes is None:
+            return
+        n = len(self.note_frames)
+        note = self.notes.create("Nota", "", x=120 + n * 40, y=320 + n * 40)
+        self._add_note_widget(note)
+        self.win.show_all()
+
+    def _add_note_widget(self, note):
+        frame = Gtk.Frame()
+        frame._note_id = note.id
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        # barra de título (arraste + edição do título)
+        head = Gtk.EventBox()
+        head.override_background_color(Gtk.StateFlags.NORMAL, _rgba("#fde68a"))  # amarelo nota
+        title = Gtk.Entry()
+        title.set_text(note_title_display(note) if note.title else "Nota")
+        title.set_has_frame(False)
+        head.add(title)
+        head.add_events(
+            Gdk.EventMask.BUTTON_PRESS_MASK
+            | Gdk.EventMask.BUTTON_RELEASE_MASK
+            | Gdk.EventMask.POINTER_MOTION_MASK
+        )
+        head.connect("button-press-event", self._note_drag_start, frame)
+        head.connect("motion-notify-event", self._note_drag_move, frame)
+        head.connect("button-release-event", self._note_drag_end, frame)
+        # corpo (markdown editável)
+        body = Gtk.TextView()
+        body.set_wrap_mode(Gtk.WrapMode.WORD)
+        body.get_buffer().set_text(note.body)
+        body.set_size_request(200, 110)
+        # salvar ao perder foco
+        title.connect("focus-out-event", lambda *_: self._save_note(frame))
+        body.connect("focus-out-event", lambda *_: self._save_note(frame))
+        frame._title_entry = title
+        frame._body_view = body
+        box.pack_start(head, False, False, 0)
+        box.pack_start(body, True, True, 0)
+        frame.add(box)
+        self.layout.put(frame, int(note.x), int(note.y))
+        self.note_frames[note.id] = frame
+
+    def _save_note(self, frame):
+        if self.notes is None:
+            return
+        note = self.notes.get(frame._note_id)
+        if note is None:
+            return
+        buf = frame._body_view.get_buffer()
+        note.title = frame._title_entry.get_text().strip()
+        note.body = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+        note.x = self.layout.child_get_property(frame, "x")
+        note.y = self.layout.child_get_property(frame, "y")
+        self.notes.save(note)
+        return False
+
+    def _note_drag_start(self, _w, e, frame):
+        frame._nd = (
+            e.x_root,
+            e.y_root,
+            self.layout.child_get_property(frame, "x"),
+            self.layout.child_get_property(frame, "y"),
+        )
+
+    def _note_drag_move(self, _w, e, frame):
+        d = getattr(frame, "_nd", None)
+        if not d:
+            return
+        self.layout.move(frame, int(d[2] + (e.x_root - d[0])), int(d[3] + (e.y_root - d[1])))
+
+    def _note_drag_end(self, _w, _e, frame):
+        if getattr(frame, "_nd", None):
+            frame._nd = None
+            self._save_note(frame)  # persiste título/corpo/posição
+
     def show(self):
         self.win.show_all()
 
 
 def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
     from ..bootstrap import build_controller, default_home
+    from ..engine.notes import Notes
+    from ..engine.roles import agent_badges
     from ..engine.session import SessionManager
     from .floors_ui import resolve_floors
 
@@ -512,6 +612,8 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         nodes = [("term1", "shell", ["/bin/bash"])]
     # floors: só se o cwd (ou MAESTRO_PROJECT) for um repo git
     floors = resolve_floors(store, f"{base}/floors")
+    # badges de papel a partir do team default
+    badges = agent_badges(controller.get_team("coder-reviewer"))
     CanvasWindow(
         CanvasModel(store),
         nodes,
@@ -520,6 +622,8 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         floors=floors,
         session_manager=SessionManager(store) if floors is not None else None,
         repo=str(floors.repo) if floors is not None else None,
+        notes=Notes(store),
+        badges=badges,
     ).show()
     try:
         Gtk.main()

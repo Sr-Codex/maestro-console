@@ -19,6 +19,20 @@ def role_badge(role: Role) -> str:
     return role.badge()
 
 
+def agent_badges(team) -> dict[str, str]:
+    """Mapa agente -> cor do badge, a partir dos papéis de um team.
+
+    Se um agente tem mais de um papel no team, o PRIMEIRO papel vence (a ordem da
+    rota). `team` pode ser None -> {}.
+    """
+    badges: dict[str, str] = {}
+    if team is None:
+        return badges
+    for r in team.roles:
+        badges.setdefault(r.agent, r.badge())
+    return badges
+
+
 def role_sidecar(role: Role) -> dict:
     """Conteúdo portável do role.json (name, agent, color, prompt)."""
     return {
