@@ -63,6 +63,27 @@ class StepProgress:
 ProgressFn = Callable[[StepProgress], None]
 
 
+class OutputBus:
+    """Ponte do stdout AO VIVO dos agentes (agent_id, chunk) -> assinante.
+
+    A engine emite; o frontend (web) liga um callback. Sem assinante = no-op
+    (ex.: TUI). Não é caminho de dados (só visualização — V5).
+    """
+
+    def __init__(self) -> None:
+        self._cb = None
+
+    def set(self, cb) -> None:
+        self._cb = cb
+
+    def clear(self) -> None:
+        self._cb = None
+
+    def emit(self, agent_id: str, chunk: str) -> None:
+        if self._cb is not None:
+            self._cb(agent_id, chunk)
+
+
 class Orchestrator:
     def __init__(self, ask: Ask, *, store=None, logbook=None, max_retries: int = 2):
         self._ask = ask
@@ -227,14 +248,20 @@ def make_agent_ask(
     workspace: Workspace,
     *,
     timeout: float,
+    on_output=None,
 ) -> Ask:
-    """ask() real: roda o agente sob sessão (mutex/continuidade) + sandbox."""
+    """ask() real: roda o agente sob sessão (mutex/continuidade) + sandbox.
+
+    ``on_output(agent_id, chunk)``: se dado, recebe o stdout do agente AO VIVO
+    (terminais read-only no canvas — V5). Caminho de dados segue headless.
+    """
 
     async def ask(agent_id: str, prompt: str) -> str:
         profile = agents[agent_id]
         ws = str(workspace.create(agent_id))
+        sink = (lambda chunk: on_output(agent_id, chunk)) if on_output is not None else None
         res = await session_manager.run_in_session(
-            profile, agent_id, prompt, workspace=ws, timeout=timeout
+            profile, agent_id, prompt, workspace=ws, timeout=timeout, on_output=sink
         )
         return res.stdout
 

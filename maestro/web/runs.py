@@ -21,6 +21,14 @@ class RunManager:
         self._ctrl = controller
         self._task: asyncio.Task | None = None
         self._listeners: list[Callable] = []
+        # liga o stdout ao vivo dos agentes (OutputBus) aos eventos SSE "output"
+        bus = getattr(controller, "output_bus", None)
+        if bus is not None:
+            bus.set(
+                lambda agent_id, chunk: self._broadcast(
+                    {"type": "output", "agent": agent_id, "chunk": chunk}
+                )
+            )
 
     # -- SSE (V4-S3): assinantes recebem eventos (dict) -----------------
     def subscribe(self, cb: Callable) -> None:

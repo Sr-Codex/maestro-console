@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .engine.adapters.base import load_profiles
 from .engine.logbook import Logbook
-from .engine.orchestrator import Orchestrator, make_agent_ask
+from .engine.orchestrator import Orchestrator, OutputBus, make_agent_ask
 from .engine.registry import Registry
 from .engine.session import SessionManager
 from .engine.state.store import Store
@@ -46,7 +46,12 @@ def build_controller(*, home: str | Path | None = None, timeout: float = 180.0):
     for name in agents:
         registry.register(name, name)
 
+    output_bus = OutputBus()  # stream ao vivo dos agentes (web liga o SSE)
     orch = Orchestrator(
-        make_agent_ask(sm, agents, ws, timeout=timeout), store=store, logbook=logbook
+        make_agent_ask(sm, agents, ws, timeout=timeout, on_output=output_bus.emit),
+        store=store,
+        logbook=logbook,
     )
-    return TUIController(registry, store, orch), store
+    controller = TUIController(registry, store, orch)
+    controller.output_bus = output_bus
+    return controller, store

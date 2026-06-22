@@ -55,6 +55,7 @@ class SessionManager:
         workspace: str,
         timeout: float,
         run_fn: RunFn = run_agent,
+        on_output=None,
     ) -> RunResult:
         """Executa um turno na sessão do agente, serializado pelo mutex.
 
@@ -62,13 +63,15 @@ class SessionManager:
         - "caller" (claude): nós geramos o id — 1ª usa --session-id, seguintes --resume.
         - "captured" (codex): o agente gera; 1ª roda sem id e CAPTURAMOS da saída
           (persistindo o id REAL), seguintes retomam exatamente essa sessão.
-        Mutex por sessão preservado em ambos.
+        Mutex por sessão preservado. ``on_output`` (opcional): stream ao vivo (V5).
         """
+        # passa on_output ao run_fn só quando há sink (mantém fakes de teste simples)
+        extra = {"on_output": on_output} if on_output is not None else {}
         async with self.session_lock(agent_id):
             assign = getattr(profile, "session_assign", "caller")
             if assign == "captured":
                 return await self._run_captured(
-                    profile, agent_id, prompt, workspace, timeout, run_fn
+                    profile, agent_id, prompt, workspace, timeout, run_fn, extra
                 )
             sid, is_new = self.get_or_create_session(agent_id)
             return await run_fn(
@@ -78,14 +81,21 @@ class SessionManager:
                 session_id=sid,
                 resume=not is_new,
                 timeout=timeout,
+                **extra,
             )
 
-    async def _run_captured(self, profile, agent_id, prompt, workspace, timeout, run_fn):
+    async def _run_captured(self, profile, agent_id, prompt, workspace, timeout, run_fn, extra):
         sid = self._store.get_session(agent_id)
         if sid is None:
             # 1ª execução: sem id; o agente cria. Capturamos o id REAL da saída.
             res = await run_fn(
-                profile, prompt, workspace=workspace, session_id=None, resume=False, timeout=timeout
+                profile,
+                prompt,
+                workspace=workspace,
+                session_id=None,
+                resume=False,
+                timeout=timeout,
+                **extra,
             )
             captured = profile.extract_session_id(f"{res.stdout}\n{res.stderr}")
             if captured:
@@ -93,5 +103,11 @@ class SessionManager:
             return res
         # seguintes: retoma exatamente a sessão capturada
         return await run_fn(
-            profile, prompt, workspace=workspace, session_id=sid, resume=True, timeout=timeout
+            profile,
+            prompt,
+            workspace=workspace,
+            session_id=sid,
+            resume=True,
+            timeout=timeout,
+            **extra,
         )
