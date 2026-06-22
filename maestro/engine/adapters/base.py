@@ -11,6 +11,7 @@ sessão fica no Session Manager (E2-S3).
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,6 +48,11 @@ class AgentProfile:
     #                  evita que flags nargs (--allowedTools) engulam o prompt;
     #   "last"      -> no fim (ex.: codex exec ...flags PROMPT).
     prompt_position: str = "last"
+    # Quem atribui o session-id:
+    #   "caller"   -> nós geramos e passamos (claude --session-id);
+    #   "captured" -> o agente gera; capturamos da saída (codex) via session_capture.
+    session_assign: str = "caller"
+    session_capture: str = ""  # regex com 1 grupo p/ extrair o id (modo captured)
 
     @classmethod
     def from_dict(cls, data: dict) -> AgentProfile:
@@ -66,7 +72,16 @@ class AgentProfile:
             rw_paths=list(h.get("rw_paths", [])),
             stdin=h.get("stdin", "devnull"),
             prompt_position=h.get("prompt_position", "last"),
+            session_assign=sess.get("assign", "caller"),
+            session_capture=sess.get("capture", ""),
         )
+
+    def extract_session_id(self, text: str) -> str | None:
+        """Extrai o session-id da saída do agente (modo captured)."""
+        if not self.session_capture:
+            return None
+        m = re.search(self.session_capture, text)
+        return m.group(1) if m else None
 
     def build_command(
         self,
@@ -85,7 +100,10 @@ class AgentProfile:
                 tmpl = self.session_resume if resume else self.session_set
                 base += _subst(tmpl, id=session_id)
         flags = list(self.output_args)
-        if workspace:
+        # O resume por subcomando (codex) NÃO aceita flags de permissão
+        # (--sandbox/-C); o confinamento fica por conta do bwrap + cwd.
+        subcmd_resume = resume and self.session_mode == "subcommand"
+        if workspace and not subcmd_resume:
             flags += _subst(self.permission_args, workspace=workspace)
             flags += list(self.allowed_tools_args)
         # Posição do prompt evita que flags nargs (ex.: --allowedTools) o engulam.

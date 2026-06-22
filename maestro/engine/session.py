@@ -58,9 +58,18 @@ class SessionManager:
     ) -> RunResult:
         """Executa um turno na sessão do agente, serializado pelo mutex.
 
-        1ª execução: --session-id (cria); seguintes: --resume (continua).
+        Dois modos (do profile.session_assign):
+        - "caller" (claude): nós geramos o id — 1ª usa --session-id, seguintes --resume.
+        - "captured" (codex): o agente gera; 1ª roda sem id e CAPTURAMOS da saída
+          (persistindo o id REAL), seguintes retomam exatamente essa sessão.
+        Mutex por sessão preservado em ambos.
         """
         async with self.session_lock(agent_id):
+            assign = getattr(profile, "session_assign", "caller")
+            if assign == "captured":
+                return await self._run_captured(
+                    profile, agent_id, prompt, workspace, timeout, run_fn
+                )
             sid, is_new = self.get_or_create_session(agent_id)
             return await run_fn(
                 profile,
@@ -70,3 +79,19 @@ class SessionManager:
                 resume=not is_new,
                 timeout=timeout,
             )
+
+    async def _run_captured(self, profile, agent_id, prompt, workspace, timeout, run_fn):
+        sid = self._store.get_session(agent_id)
+        if sid is None:
+            # 1ª execução: sem id; o agente cria. Capturamos o id REAL da saída.
+            res = await run_fn(
+                profile, prompt, workspace=workspace, session_id=None, resume=False, timeout=timeout
+            )
+            captured = profile.extract_session_id(f"{res.stdout}\n{res.stderr}")
+            if captured:
+                self._store.set_session(agent_id, captured)
+            return res
+        # seguintes: retoma exatamente a sessão capturada
+        return await run_fn(
+            profile, prompt, workspace=workspace, session_id=sid, resume=True, timeout=timeout
+        )

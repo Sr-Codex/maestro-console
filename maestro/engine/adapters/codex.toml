@@ -11,6 +11,9 @@ rw_paths = ["~/.codex", "~/.config/codex"]
 [headless.session]
 mode = "subcommand"
 resume_cmd = ["codex", "exec", "--skip-git-repo-check", "resume", "{id}"]
+# Codex gera o proprio session-id e o imprime; capturamos para retomar (V3-S2).
+assign = "captured"
+capture = "session id: (\\S+)"
 
 # Sandbox workspace-write (ADR-6) — SEM --dangerously-bypass-*. Workspace isolado (E2-S2).
 [headless.permissions]
