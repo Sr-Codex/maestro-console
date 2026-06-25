@@ -3,6 +3,21 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.14.0] — Fechar nós/notas + atalho do modo conectar
+- **Botões ✕ de fechar:**
+  - **Nó-terminal:** ✕ no cabeçalho fecha o terminal nesta sessão — remove o widget,
+    fecha o PTY do agente (SIGHUP) e limpa o tracking (`terms`/`frames`/`order`/
+    `_base_pos`). Cabos para nós ausentes já são ignorados no desenho, então não sobra
+    cabo solto. Posição/cabos persistem no Store → relançar restaura o nó.
+  - **Nota:** ✕ apaga a nota de vez (`Notes.delete`, persistente) e remove o widget.
+- **Atalho do modo conectar — Ctrl+Shift+L:** alterna o modo conectar pelo teclado
+  (não usa Esc nem Ctrl-L para não conflitar com o terminal — Esc interrompe a IA,
+  Ctrl-L limpa a tela). Esc só cancela o modo quando ele está ativo; sem modo ativo,
+  o Esc é repassado ao terminal.
+- Verificado em runtime (8/8 checks: fechar nó/nota, terminal removido de `terms`, nó
+  vizinho intacto, nota apagada do Store, Ctrl+Shift+L liga, Esc cancela, Esc livre
+  quando ocioso). Suíte: 317 passed.
+
 ## [0.13.1] — Consertos do code review do canvas GTK4
 - **W1 — plano dinâmico:** o plano agora cresce (`_resize_plane`) para caber nós/notas
   no zoom atual; antes, arrastar um nó para longe e dar zoom o jogava para fora da
