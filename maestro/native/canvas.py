@@ -45,6 +45,7 @@ from .themes import get_theme, theme_names  # noqa: E402
 from .toolbar import action_menu_items  # noqa: E402
 
 BASE_W, BASE_H = 420, 220
+MIN_NODE_W, MIN_NODE_H = 240, 120  # piso ao redimensionar um card (arrastar a alça ⤡)
 # estado do envelope (passo done) -> estado visual do nó
 _ST_MAP = {"DONE": "done", "BLOCKED": "blocked", "FAILED": "failed", "NEEDS_INPUT": "blocked"}
 _log = logging.getLogger(__name__)
@@ -148,6 +149,7 @@ class CanvasWindow:
         # coords-base independentes do zoom; display = base * zoom (P5)
         self._base_pos: dict[str, tuple[float, float]] = {}
         self._note_base: dict[str, tuple[float, float]] = {}
+        self._node_size: dict[str, tuple[float, float]] = {}  # tamanho por card (resize)
         self.routines = routines  # Routines | None — prompts agendados (V10-S4)
         self._store = store  # Store | None — p/ attention "precisa de você" (V11-S1)
         self._notified: set = set()  # (agente, ts) já notificados no desktop
@@ -319,13 +321,29 @@ class CanvasWindow:
         self.heads[nid] = head
         term = make_terminal(argv)
         frame._term = term  # ref p/ remover de self.terms ao fechar o nó
+        sz = self.model.node_size(nid, (BASE_W, BASE_H))  # tamanho por nó (persistido)
+        self._node_size[nid] = sz
         term.set_hexpand(True)
         term.set_vexpand(True)
-        term.set_size_request(BASE_W, BASE_H)  # tamanho NATURAL; o zoom é por transform
+        # tamanho NATURAL (zoom é por transform); mudar isto reflui o PTY (cols/linhas)
+        term.set_size_request(int(sz[0]), int(sz[1]))
         self.terms.append(term)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(head)
         box.append(term)
+        # rodapé com alça de redimensionar: arraste o ⤡ p/ dar mais colunas/linhas
+        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        foot.set_halign(Gtk.Align.END)
+        grip = Gtk.Label(label="⤡")
+        grip.set_tooltip_text("arraste p/ redimensionar (mais colunas/linhas pro agente)")
+        grip.set_cursor(Gdk.Cursor.new_from_name("nwse-resize", None))
+        rg = Gtk.GestureDrag()
+        rg.connect("drag-begin", self._resize_node_begin, nid)
+        rg.connect("drag-update", self._resize_node_update, nid)
+        rg.connect("drag-end", self._resize_node_end, nid)
+        grip.add_controller(rg)
+        foot.append(grip)
+        box.append(foot)
         frame.set_child(box)
         bx, by = self.model.position(nid, default)
         self._base_pos[nid] = (bx, by)
@@ -371,6 +389,30 @@ class CanvasWindow:
         bx, by = self._base_pos.get(nid, (0.0, 0.0))
         self.model.set_position(nid, bx, by)  # persiste em coords-base
         self.plane.queue_draw()
+
+    # -- redimensionar um card (arrastar a alça ⤡) --
+    def _resize_node_begin(self, _g, _x, _y, nid):
+        self._resize_origin = self._node_size.get(nid, (BASE_W, BASE_H))
+
+    def _resize_node_update(self, _g, off_x, off_y, nid):
+        o = getattr(self, "_resize_origin", None)
+        if o is None:
+            return
+        # a alça vive na subárvore escalada por z -> off já vem em unidades-base (=/z)
+        w = max(MIN_NODE_W, o[0] + off_x)
+        h = max(MIN_NODE_H, o[1] + off_y)
+        self._node_size[nid] = (w, h)
+        frame = self.frames.get(nid)
+        term = getattr(frame, "_term", None) if frame is not None else None
+        if term is not None:
+            term.set_size_request(int(w), int(h))  # VTE reflui cols/linhas (PTY) sozinho
+        self._resize_plane()
+        self.plane.queue_draw()
+
+    def _resize_node_end(self, _g, _ox, _oy, nid):
+        self._resize_origin = None
+        w, h = self._node_size.get(nid, (BASE_W, BASE_H))
+        self.model.set_node_size(nid, w, h)  # persiste o tamanho
 
     def _close_node(self, nid: str) -> None:
         """Remove o nó-terminal do canvas NESTA sessão (widget + PTY do agente).
@@ -431,8 +473,10 @@ class CanvasWindow:
         bases = list(self._base_pos.values()) + list(self._note_base.values())
         max_bx = max((b[0] for b in bases), default=0.0)
         max_by = max((b[1] for b in bases), default=0.0)
-        need_w = max(5000, int(max_bx * z + BASE_W * z + 400))
-        need_h = max(4000, int(max_by * z + BASE_H * z + 400))
+        max_w = max((s[0] for s in self._node_size.values()), default=BASE_W)
+        max_h = max((s[1] for s in self._node_size.values()), default=BASE_H)
+        need_w = max(5000, int(max_bx * z + max_w * z + 400))
+        need_h = max(4000, int(max_by * z + max_h * z + 400))
         if (need_w, need_h) != self._plane_size:
             self._plane_size = (need_w, need_h)
             self.plane.set_size_request(need_w, need_h)
@@ -523,15 +567,16 @@ class CanvasWindow:
     # -- cabos (handoffs): desenhados no snapshot do _Plane --
     def _draw_cables_cr(self, cr):
         z = self.model.zoom()
-        w, h = BASE_W * z, BASE_H * z
 
-        def disp(nid):  # canto sup-esq no plano = base * zoom (mesma fonte do _place)
-            return to_display(self._base_pos.get(nid, (0.0, 0.0)), z)
+        def box(nid):  # (x,y,w,h) no plano = base*zoom + tamanho do nó * zoom
+            bx, by = to_display(self._base_pos.get(nid, (0.0, 0.0)), z)
+            nw, nh = self._node_size.get(nid, (BASE_W, BASE_H))
+            return (bx, by, nw * z, nh * z)
 
-        pos = [disp(n) for n in self.order if self.frames.get(n) is not None]
+        boxes = [box(n) for n in self.order if self.frames.get(n) is not None]
         cr.set_source_rgb(0.34, 0.38, 0.42)
         cr.set_line_width(2)
-        for x1, y1, x2, y2 in cable_segments(pos, w, h):
+        for x1, y1, x2, y2 in cable_segments(boxes):
             cr.move_to(x1, y1)
             cr.line_to(x2, y2)
             cr.stroke()
@@ -547,10 +592,10 @@ class CanvasWindow:
                     cr.set_source_rgb(c.red, c.green, c.blue)
                 else:
                     cr.set_source_rgb(0.23, 0.51, 0.96)
-                ax, ay = disp(src)
-                bx, by = disp(dst)
-                cr.move_to(ax + w, ay + h / 2)
-                cr.line_to(bx, by + h / 2)
+                ax, ay, aw, ah = box(src)
+                bx, by, _bw, bh = box(dst)
+                cr.move_to(ax + aw, ay + ah / 2)
+                cr.line_to(bx, by + bh / 2)
                 cr.stroke()
 
     # -- rodar time da engine (headless) refletindo nas cores --
@@ -1037,11 +1082,13 @@ class CanvasWindow:
         nid, note_id = getattr(frame, "_nid", None), getattr(frame, "_note_id", None)
         if nid is not None:
             x, y = to_display(self._base_pos.get(nid, (0.0, 0.0)), z)
+            nw, nh = self._node_size.get(nid, (BASE_W, BASE_H))
         elif note_id is not None:
             x, y = to_display(self._note_base.get(note_id, (0.0, 0.0)), z)
+            nw, nh = BASE_W, BASE_H
         else:
             return  # frame sem id: nada a centralizar (antes rolava pra origem)
-        cx, cy = x + (BASE_W * z) / 2, y + (BASE_H * z) / 2  # centro do nó escalado
+        cx, cy = x + (nw * z) / 2, y + (nh * z) / 2  # centro do nó escalado
         ha, va = self.scrolled.get_hadjustment(), self.scrolled.get_vadjustment()
         ha.set_value(max(0, cx - ha.get_page_size() / 2))
         va.set_value(max(0, cy - va.get_page_size() / 2))

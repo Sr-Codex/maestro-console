@@ -53,6 +53,14 @@ def test_to_display_arredonda_em_vez_de_truncar():
     assert to_display((3.0, 3.0), 0.5) == (2, 2)
 
 
+def test_node_size_default_e_persistencia(tmp_path):
+    with Store(tmp_path / "m.db") as s:
+        m = CanvasModel(s)
+        assert m.node_size("a1", (420, 220)) == (420, 220)  # default
+        m.set_node_size("a1", 600, 300)
+        assert m.node_size("a1", (0, 0)) == (600.0, 300.0)
+
+
 def test_persiste_entre_instancias(tmp_path):
     db = tmp_path / "m.db"
     with Store(db) as s:

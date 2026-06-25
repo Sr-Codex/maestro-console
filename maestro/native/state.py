@@ -27,6 +27,22 @@ class CanvasModel:
     def set_zoom(self, z: float) -> None:
         self._store.set_ui("native_zoom", max(0.3, min(3.0, float(z))))
 
+    def node_size(
+        self, node_id: str, default: tuple[float, float]
+    ) -> tuple[float, float]:
+        """Tamanho (w,h) do card do nó, independente do zoom; default se não salvo."""
+        s = self._store.get_ui(f"nodesize_{node_id}")
+        if not s:
+            return default
+        try:
+            w, h = str(s).split(",")
+            return (float(w), float(h))
+        except (ValueError, AttributeError):
+            return default
+
+    def set_node_size(self, node_id: str, w: float, h: float) -> None:
+        self._store.set_ui(f"nodesize_{node_id}", f"{float(w)},{float(h)}")
+
     def terminal_theme(self) -> str:
         return self._store.get_ui("terminal_theme") or "default"
 
@@ -69,14 +85,15 @@ def to_base(display: tuple[float, float], zoom: float) -> tuple[float, float]:
 
 
 def cable_segments(
-    positions: list[tuple[float, float]], w: float, h: float
+    boxes: list[tuple[float, float, float, float]],
 ) -> list[tuple[float, float, float, float]]:
     """Segmentos (x1,y1,x2,y2) ligando nós consecutivos da rota (handoffs).
 
-    Conecta a borda direita de um nó à borda esquerda do próximo (centro vertical).
-    `positions` são cantos superior-esquerdos; `w`,`h` o tamanho do nó.
+    Conecta a borda direita de um nó ao centro-esquerdo do próximo. `boxes` =
+    (x, y, w, h) por nó (canto sup-esq + tamanho) — permite tamanhos DIFERENTES
+    por nó (cada card pode ser redimensionado).
     """
     segs = []
-    for (ax, ay), (bx, by) in zip(positions, positions[1:], strict=False):
-        segs.append((ax + w, ay + h / 2, bx, by + h / 2))
+    for (ax, ay, aw, ah), (bx, by, _bw, bh) in zip(boxes, boxes[1:], strict=False):
+        segs.append((ax + aw, ay + ah / 2, bx, by + bh / 2))
     return segs
