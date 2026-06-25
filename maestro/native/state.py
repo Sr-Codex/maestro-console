@@ -59,12 +59,12 @@ class EdgeModel:
 
 def to_display(base: tuple[float, float], zoom: float) -> tuple[int, int]:
     """Coordenada-base (independente do zoom) -> posição no plano: display = base * zoom."""
-    return (int(base[0] * zoom), int(base[1] * zoom))
+    return (round(base[0] * zoom), round(base[1] * zoom))
 
 
 def to_base(display: tuple[float, float], zoom: float) -> tuple[float, float]:
     """Posição no plano -> coordenada-base: base = display / zoom (zoom<=0 cai p/ 1.0)."""
-    z = zoom or 1.0
+    z = zoom if zoom and zoom > 0 else 1.0  # 'or' deixava passar negativos
     return (display[0] / z, display[1] / z)
 
 

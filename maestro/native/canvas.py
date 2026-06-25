@@ -12,6 +12,8 @@ independentes do zoom: display = base * zoom (helpers `to_display`/`to_base`).
 
 from __future__ import annotations
 
+import logging
+
 import gi
 
 gi.require_version("Gdk", "4.0")
@@ -45,6 +47,7 @@ from .toolbar import action_menu_items  # noqa: E402
 BASE_W, BASE_H = 420, 220
 # estado do envelope (passo done) -> estado visual do nó
 _ST_MAP = {"DONE": "done", "BLOCKED": "blocked", "FAILED": "failed", "NEEDS_INPUT": "blocked"}
+_log = logging.getLogger(__name__)
 
 
 def _rgba(hex_color: str) -> Gdk.RGBA:
@@ -64,6 +67,20 @@ def _plane_xform(px: float, py: float, z: float) -> Gsk.Transform:
     return Gsk.Transform().translate(Graphene.Point().init(px, py)).scale(z, z)
 
 
+def _on_spawn_done(terminal, pid, error, argv):
+    """Vte.TerminalSpawnAsyncCallback (VTE 3.91): loga/sinaliza falha de spawn.
+
+    Sem isto (callback=None), um spawn que falha — agente fora do PATH, bwrap
+    ausente, argv inválido — deixava o nó em branco e mudo. Aqui registra no log e
+    escreve um aviso visível no próprio terminal.
+    """
+    if error is not None or pid == -1:
+        msg = error.message if error is not None else "spawn falhou (pid=-1)"
+        _log.error("falha ao iniciar terminal do nó (argv=%r): %s", argv, msg)
+        if terminal is not None:
+            terminal.feed(f"\r\n[maestro] falha ao iniciar agente: {msg}\r\n".encode())
+
+
 def make_terminal(argv: list[str]) -> Vte.Terminal:
     term = Vte.Terminal()
     term.spawn_async(
@@ -76,8 +93,8 @@ def make_terminal(argv: list[str]) -> Vte.Terminal:
         None,
         -1,
         None,
-        None,
-        None,
+        _on_spawn_done,
+        argv,
     )
     return term
 
@@ -160,7 +177,8 @@ class CanvasWindow:
         self.scrolled.set_vexpand(True)
         self.plane = _Plane()
         self.plane._owner = self
-        self.plane.set_size_request(5000, 4000)
+        self._plane_size = (5000, 4000)  # cresce dinamicamente (_resize_plane)
+        self.plane.set_size_request(*self._plane_size)
         # pan: arrastar o fundo do plano (ignora se cair sobre um nó/nota)
         pan = Gtk.GestureDrag()
         pan.connect("drag-begin", self._pan_begin)
@@ -332,6 +350,7 @@ class CanvasWindow:
         nb = (o[0] + off_x, o[1] + off_y)
         self._base_pos[frame._nid] = nb
         self._place(frame, nb, self.model.zoom())
+        self._resize_plane()
         self.plane.queue_draw()
 
     def _node_drag_end(self, _g, _ox, _oy, frame, nid):
@@ -371,8 +390,26 @@ class CanvasWindow:
         self.model.set_zoom(self.model.zoom() + dz)
         self._apply_zoom()
 
+    def _resize_plane(self) -> None:
+        """Cresce o plano p/ caber todos os nós/notas no zoom atual.
+
+        Com extensão fixa, arrastar um nó pra longe e dar zoom o jogava pra fora da
+        área rolável (inalcançável). Só cresce; nunca encolhe abaixo do piso inicial.
+        Compara com o tamanho atual p/ evitar relayout à toa durante o arrasto.
+        """
+        z = self.model.zoom()
+        bases = list(self._base_pos.values()) + list(self._note_base.values())
+        max_bx = max((b[0] for b in bases), default=0.0)
+        max_by = max((b[1] for b in bases), default=0.0)
+        need_w = max(5000, int(max_bx * z + BASE_W * z + 400))
+        need_h = max(4000, int(max_by * z + BASE_H * z + 400))
+        if (need_w, need_h) != self._plane_size:
+            self._plane_size = (need_w, need_h)
+            self.plane.set_size_request(need_w, need_h)
+
     def _apply_zoom(self):
         z = self.model.zoom()
+        self._resize_plane()
         for nid, frame in self.frames.items():
             self._place(frame, self._base_pos.get(nid, (0.0, 0.0)), z)
         for note_id, frame in self.note_frames.items():
@@ -560,6 +597,16 @@ class CanvasWindow:
         box.set_margin_start(8)
         box.set_margin_end(8)
         win.set_child(box)
+        # Esc fecha o diálogo (GTK4 não dá isso de graça como o antigo Dialog.run).
+        # Só afeta janelas modais (paleta/floors/routines); não rouba o Esc do terminal.
+        esc = Gtk.EventControllerKey()
+        esc.connect(
+            "key-pressed",
+            lambda _c, kv, _kc, _st, w=win: (w.destroy() or True)
+            if kv == Gdk.KEY_Escape
+            else False,
+        )
+        win.add_controller(esc)
         return win, box
 
     # -- floors no canvas (V8-S5) --
@@ -768,6 +815,7 @@ class CanvasWindow:
         nb = (o[0] + off_x, o[1] + off_y)  # base-delta = off (ver _node_drag_update)
         self._note_base[frame._note_id] = nb
         self._place(frame, nb, self.model.zoom())
+        self._resize_plane()
 
     def _note_drag_end(self, _g, _ox, _oy, frame):
         if getattr(frame, "_norigin_base", None) is not None:
@@ -934,10 +982,11 @@ class CanvasWindow:
         elif note_id is not None:
             x, y = to_display(self._note_base.get(note_id, (0.0, 0.0)), z)
         else:
-            x, y = 0, 0
+            return  # frame sem id: nada a centralizar (antes rolava pra origem)
+        cx, cy = x + (BASE_W * z) / 2, y + (BASE_H * z) / 2  # centro do nó escalado
         ha, va = self.scrolled.get_hadjustment(), self.scrolled.get_vadjustment()
-        ha.set_value(max(0, x - ha.get_page_size() / 2))
-        va.set_value(max(0, y - va.get_page_size() / 2))
+        ha.set_value(max(0, cx - ha.get_page_size() / 2))
+        va.set_value(max(0, cy - va.get_page_size() / 2))
 
     def _palette_act(self, item):
         if item.kind == "agent":

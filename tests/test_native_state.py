@@ -43,6 +43,16 @@ def test_to_base_zoom_zero_nao_divide_por_zero():
     assert to_base((100.0, 100.0), 0.0) == (100.0, 100.0)  # cai p/ 1.0
 
 
+def test_to_base_zoom_negativo_cai_para_um():
+    # P1: 'or' só pegava 0.0; zoom negativo agora também cai p/ 1.0 (sem inverter coords)
+    assert to_base((100.0, 100.0), -0.5) == (100.0, 100.0)
+
+
+def test_to_display_arredonda_em_vez_de_truncar():
+    # P3: round() (sem viés p/ origem) em vez de int() (trunca p/ zero). 3*0.5=1.5 -> 2, não 1
+    assert to_display((3.0, 3.0), 0.5) == (2, 2)
+
+
 def test_persiste_entre_instancias(tmp_path):
     db = tmp_path / "m.db"
     with Store(db) as s:
