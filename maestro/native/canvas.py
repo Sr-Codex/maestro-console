@@ -241,7 +241,9 @@ class CanvasWindow:
         bar.append(self._theme_combo)
         if self.edges is not None:  # modo conexão (persistente) direto na barra
             self._connect_btn = Gtk.ToggleButton(label="🔌 conectar")
-            self._connect_btn.set_tooltip_text("ligar agentes por cabo (clique A, depois B)")
+            self._connect_btn.set_tooltip_text(
+                "ligar agentes por cabo (clique A, depois B) · atalho: Ctrl+Shift+L"
+            )
             self._connect_btn.connect("toggled", self._toggle_connect)
             bar.append(self._connect_btn)
         # espaçador empurra o resto p/ a direita
@@ -303,6 +305,11 @@ class CanvasWindow:
         lbl = Gtk.Label(label=f"  {title}  ")
         lbl.set_hexpand(True)
         head.append(lbl)
+        nclose = Gtk.Button(label="✕")
+        nclose.set_has_frame(False)
+        nclose.set_tooltip_text("fechar este terminal (remove do canvas nesta sessão)")
+        nclose.connect("clicked", lambda _b, n=nid: self._close_node(n))
+        head.append(nclose)
         # arrastar o nó pelo título (ou, em modo conexão, escolher origem/destino)
         drag = Gtk.GestureDrag()
         drag.connect("drag-begin", self._node_drag_begin, frame)
@@ -311,6 +318,7 @@ class CanvasWindow:
         head.add_controller(drag)
         self.heads[nid] = head
         term = make_terminal(argv)
+        frame._term = term  # ref p/ remover de self.terms ao fechar o nó
         term.set_hexpand(True)
         term.set_vexpand(True)
         term.set_size_request(BASE_W, BASE_H)  # tamanho NATURAL; o zoom é por transform
@@ -362,6 +370,28 @@ class CanvasWindow:
         frame._origin_base = None
         bx, by = self._base_pos.get(nid, (0.0, 0.0))
         self.model.set_position(nid, bx, by)  # persiste em coords-base
+        self.plane.queue_draw()
+
+    def _close_node(self, nid: str) -> None:
+        """Remove o nó-terminal do canvas NESTA sessão (widget + PTY do agente).
+
+        Não apaga posição persistida nem cabos no Store — relançar restaura o nó.
+        O desenho de cabos já ignora nós fora de self.frames, então não sobra cabo
+        solto. Remove o terminal de self.terms p/ não vazar nem quebrar _apply_theme.
+        """
+        frame = self.frames.pop(nid, None)
+        if frame is None:
+            return
+        if nid in self.order:
+            self.order.remove(nid)
+        self.heads.pop(nid, None)
+        self._base_pos.pop(nid, None)
+        if self._connect_src == nid:
+            self._cancel_connect()
+        term = getattr(frame, "_term", None)
+        if term is not None and term in self.terms:
+            self.terms.remove(term)
+        self.plane.remove(frame)  # destrói a subárvore -> fecha o PTY (SIGHUP no filho)
         self.plane.queue_draw()
 
     # -- pan (arrastar fundo) --
@@ -471,10 +501,21 @@ class CanvasWindow:
             self._connect_src = None
 
     def _on_key(self, _c, keyval, _keycode, state):
-        if keyval == Gdk.KEY_Escape and self._connect_mode:
+        ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
+        shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
+        has_connect = getattr(self, "_connect_btn", None) is not None
+        # Ctrl+Shift+L: alterna o modo conectar. NÃO usamos Esc/Ctrl-L p/ não brigar
+        # com o terminal (Esc = interromper a IA; Ctrl-L = limpar a tela no shell).
+        if ctrl and shift and keyval in (Gdk.KEY_l, Gdk.KEY_L) and has_connect:
+            self._connect_btn.set_active(not self._connect_btn.get_active())
+            return True
+        # Esc cancela o modo conectar SOMENTE se ele está ativo. Só chega aqui quando
+        # o foco não está num terminal (o VTE consome o próprio Esc), então o Esc do
+        # terminal fica preservado. return True: não propaga depois de tratado.
+        if keyval == Gdk.KEY_Escape and self._connect_mode and has_connect:
             self._connect_btn.set_active(False)  # untoggle -> cancela
-            return False
-        if keyval == Gdk.KEY_p and (state & Gdk.ModifierType.CONTROL_MASK):
+            return True
+        if keyval == Gdk.KEY_p and ctrl:
             self._open_palette()  # Ctrl-P (V11-S2)
             return True
         return False
@@ -751,6 +792,11 @@ class CanvasWindow:
         title.set_text(note_title_display(note) if note.title else "Nota")
         title.set_hexpand(True)
         head.append(title)
+        nclose = Gtk.Button(label="✕")
+        nclose.set_has_frame(False)
+        nclose.set_tooltip_text("apagar esta nota")
+        nclose.connect("clicked", lambda _b, fr=frame: self._close_note(fr))
+        head.append(nclose)
         ndrag = Gtk.GestureDrag()
         ndrag.connect("drag-begin", self._note_drag_begin, frame)
         ndrag.connect("drag-update", self._note_drag_update, frame)
@@ -821,6 +867,18 @@ class CanvasWindow:
         if getattr(frame, "_norigin_base", None) is not None:
             frame._norigin_base = None
             self._save_note(frame)  # persiste título/corpo/posição (coords-base)
+
+    def _close_note(self, frame) -> None:
+        """Apaga a nota (persistente, via Notes.delete) e remove o widget do canvas."""
+        note_id = getattr(frame, "_note_id", None)
+        if note_id is None:
+            return
+        if self.notes is not None:
+            self.notes.delete(note_id)
+        self.note_frames.pop(note_id, None)
+        self._note_base.pop(note_id, None)
+        self.plane.remove(frame)
+        self.plane.queue_draw()
 
     def _run_note(self, frame, acombo):
         """agent-to-note: roda o agente escolhido com a nota; resposta volta à nota."""
