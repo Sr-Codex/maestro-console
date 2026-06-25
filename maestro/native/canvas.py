@@ -1143,6 +1143,11 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
     state: dict = {}
 
     def on_activate(_a):
+        if state.get("store") is not None:  # re-ativação: traz a janela existente, não reconstrói
+            win = state.get("win")  # (W5) evita vazar o store anterior em 2ª ativação
+            if win is not None:
+                win.show()  # show() já chama present() na janela criada
+            return
         base = default_home()
         controller, st = build_controller()
         state["store"] = st
@@ -1170,6 +1175,7 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
             store=st,
         )
         win.show()
+        state["win"] = win  # ref p/ re-ativação idempotente (W5)
         # tick in-app do scheduler: dispara routines vencidas enquanto aberto (V10-S4)
         GLib.timeout_add_seconds(30, win._routines_tick)
         # attention: realça/notifica o que precisa de você (V11-S1)
