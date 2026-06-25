@@ -3,6 +3,13 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.14.1] — Guard idempotente do on_activate (W5)
+- **`on_activate` idempotente:** numa 2ª ativação do `Gtk.Application`, a janela
+  existente é trazida à frente em vez de reconstruir `controller`+`store` — evitando
+  vazar a conexão SQLite anterior (fechada só no `shutdown`). Defesa em profundidade;
+  inalcançável hoje (`NON_UNIQUE`, sem `app.activate()`/D-Bus). Fecha o último deferred
+  do code review do canvas GTK4. Suíte: 317 passed.
+
 ## [0.14.0] — Fechar nós/notas + atalho do modo conectar
 - **Botões ✕ de fechar:**
   - **Nó-terminal:** ✕ no cabeçalho fecha o terminal nesta sessão — remove o widget,
