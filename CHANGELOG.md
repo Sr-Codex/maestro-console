@@ -3,6 +3,18 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.15.0] — Redimensionar cards no canvas (por nó)
+- **Redimensionar terminais arrastando a alça ⤡** no canto inferior-direito de cada
+  card. O ajuste muda o tamanho **real** do terminal (`set_size_request`), então o VTE
+  reflui as colunas/linhas e o PTV do agente (SIGWINCH) — mais espaço de verdade, não
+  só ampliação. Tamanho **por card**, com piso 240×120, **persistido** (volta igual ao
+  reabrir). Ortogonal ao zoom (zoom = escala visual do plano; tamanho = alocação real).
+- **Cabos** passam a conectar nas bordas reais de cada card, suportando tamanhos
+  diferentes (`cable_segments` agora recebe boxes `(x,y,w,h)` por nó); `_resize_plane` e
+  `_center_on` também respeitam o tamanho por nó.
+- Persistência via `CanvasModel.node_size`/`set_node_size`. Suíte: 319 passed; resize
+  verificado em runtime (tamanho/terminal/clamp/persistência).
+
 ## [0.14.1] — Guard idempotente do on_activate (W5)
 - **`on_activate` idempotente:** numa 2ª ativação do `Gtk.Application`, a janela
   existente é trazida à frente em vez de reconstruir `controller`+`store` — evitando
