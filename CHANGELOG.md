@@ -3,6 +3,22 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.13.1] — Consertos do code review do canvas GTK4
+- **W1 — plano dinâmico:** o plano agora cresce (`_resize_plane`) para caber nós/notas
+  no zoom atual; antes, arrastar um nó para longe e dar zoom o jogava para fora da
+  área rolável (inacessível). `_center_on` passou a centralizar no **centro** do nó
+  escalado (antes mirava o canto superior-esquerdo e era clampado).
+- **W2 — Esc fecha diálogos:** diálogos modais (paleta Ctrl-P, floors, routines) fecham
+  com Esc (o GTK4 não dá isso de graça como o antigo `Dialog.run`). Escopo modal — não
+  interfere no Esc dentro do terminal.
+- **W4 — falha de spawn visível:** `make_terminal` trata o callback de `spawn_async`
+  (antes `None`): falha ao iniciar o agente (fora do PATH, bwrap ausente, argv inválido)
+  agora é logada e avisada no próprio terminal, em vez de deixar o nó em branco e mudo.
+- **P3:** `to_display` usa `round()` (arredondamento sem viés) em vez de `int()` (que
+  truncava em direção à origem).
+- **P1:** `to_base` trata zoom negativo (o `or` só capturava `0.0`).
+- Testes: suíte em **317 passed**; novos casos para o guard de zoom negativo e round vs int.
+
 ## [0.13.0] — Canvas GTK4 + zoom real do plano
 - **Migração do canvas nativo de GTK3/VTE-2.91 → GTK4/VTE-3.91.**
 - **Zoom real do plano infinito** via `Gsk.Transform` (escala visual dos terminais
