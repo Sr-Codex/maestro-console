@@ -128,6 +128,27 @@ def cable_bezier(src_box, dst_box):
     return (x0, y0, x0 + dx, y0, x3 - dx, y3, x3, y3)
 
 
+def minimap_layout(rects, mm_w: float, mm_h: float, pad: float = 4.0):
+    """Escala+offset pra encaixar o 'mundo' (lista de rects (x,y,w,h) em coords-base)
+    dentro do minimapa mm_w×mm_h, centralizado. Devolve (scale, offx, offy) tal que
+    um ponto-mundo (x,y) vira (offx + x*scale, offy + y*scale). None se vazio (C1)."""
+    rects = [r for r in rects if r is not None]
+    if not rects:
+        return None
+    xs0 = min(r[0] for r in rects)
+    ys0 = min(r[1] for r in rects)
+    xs1 = max(r[0] + r[2] for r in rects)
+    ys1 = max(r[1] + r[3] for r in rects)
+    ww = max(xs1 - xs0, 1.0)
+    wh = max(ys1 - ys0, 1.0)
+    avail_w = max(mm_w - 2 * pad, 1.0)
+    avail_h = max(mm_h - 2 * pad, 1.0)
+    scale = min(avail_w / ww, avail_h / wh)
+    offx = pad + (avail_w - ww * scale) / 2 - xs0 * scale
+    offy = pad + (avail_h - wh * scale) / 2 - ys0 * scale
+    return (scale, offx, offy)
+
+
 def to_display(base: tuple[float, float], zoom: float) -> tuple[int, int]:
     """Coordenada-base (independente do zoom) -> posição no plano: display = base * zoom."""
     return (round(base[0] * zoom), round(base[1] * zoom))
