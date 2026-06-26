@@ -13,26 +13,12 @@ def test_completo_inclui_todos_na_ordem():
         team_name="coder-reviewer",
     )
     keys = [k for _, k in items]
-    assert keys == ["run_team", "handoff", "note", "floors", "routines"]
-    assert items[0][0] == "▶ rodar time (coder-reviewer)"
+    assert keys == ["newterm", "run_team", "handoff", "note", "floors", "routines"]
+    assert items[0] == ("➕ novo terminal", "newterm")  # sempre disponível
 
 
-def test_sem_controller_some_run_handoff_routines():
-    items = action_menu_items(
-        has_controller=False, has_edges=True, has_notes=True, has_floors=True, has_routines=True
-    )
-    keys = [k for _, k in items]
-    assert keys == ["note", "floors"]  # run_team/handoff/routines exigem controller
-
-
-def test_handoff_exige_controller_e_edges():
-    items = action_menu_items(
-        has_controller=True, has_edges=False, has_notes=False, has_floors=False, has_routines=False
-    )
-    assert [k for _, k in items] == ["run_team"]  # sem edges, sem handoff
-
-
-def test_vazio():
+def test_novo_terminal_sempre_presente():
+    # ➕ novo terminal não depende de nada (shell funciona sem controller)
     items = action_menu_items(
         has_controller=False,
         has_edges=False,
@@ -40,7 +26,22 @@ def test_vazio():
         has_floors=False,
         has_routines=False,
     )
-    assert items == []
+    assert items == [("➕ novo terminal", "newterm")]
+
+
+def test_sem_controller_some_run_handoff_routines():
+    items = action_menu_items(
+        has_controller=False, has_edges=True, has_notes=True, has_floors=True, has_routines=True
+    )
+    keys = [k for _, k in items]
+    assert keys == ["newterm", "note", "floors"]  # run_team/handoff/routines exigem controller
+
+
+def test_handoff_exige_controller_e_edges():
+    items = action_menu_items(
+        has_controller=True, has_edges=False, has_notes=False, has_floors=False, has_routines=False
+    )
+    assert [k for _, k in items] == ["newterm", "run_team"]  # sem edges, sem handoff
 
 
 def test_team_name_no_label():
@@ -52,4 +53,5 @@ def test_team_name_no_label():
         has_routines=False,
         team_name="meu-time",
     )
-    assert items[0][0] == "▶ rodar time (meu-time)"
+    label = next(lbl for lbl, k in items if k == "run_team")
+    assert label == "▶ rodar time (meu-time)"

@@ -54,4 +54,5 @@ def build_controller(*, home: str | Path | None = None, timeout: float = 180.0):
     )
     controller = TUIController(registry, store, orch)
     controller.output_bus = output_bus
+    controller.agents = agents  # mesmo dict do make_agent_ask: permite instâncias em runtime
     return controller, store

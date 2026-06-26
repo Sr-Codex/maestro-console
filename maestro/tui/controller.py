@@ -41,6 +41,21 @@ class TUIController:
         self._last: dict | None = None
         self._resume_ctx: tuple | None = None  # (team, intent, run_id) p/ retomar
         self._progress = None  # callback opcional do app para exibir progresso
+        self.agents: dict = {}  # id->profile (setado pelo bootstrap); p/ instâncias runtime
+
+    def add_agent_instance(self, new_id: str, base_id: str) -> None:
+        """Registra um novo agente reusando o profile de ``base_id`` (mesmo CLI).
+
+        Permite criar mais terminais de agente no canvas em runtime — o
+        ``delegate``/``maestro-ask`` passa a resolver ``new_id`` (workspace/sessão
+        próprios por id). Levanta se base desconhecido ou id já existente.
+        """
+        if not self.agents or base_id not in self.agents:
+            raise ValueError(f"agente base desconhecido: {base_id}")
+        if new_id in self.agents:
+            raise ValueError(f"id de agente já existe: {new_id}")
+        self.agents[new_id] = self.agents[base_id]  # mesma profile (mesmo binário)
+        self._registry.register(new_id, base_id)  # type = base (claude/codex)
 
     # -- consultas ------------------------------------------------------
     def list_agents(self) -> list[AgentRecord]:

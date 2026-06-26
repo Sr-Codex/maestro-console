@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from pathlib import Path
 
 import gi
 
@@ -169,6 +170,7 @@ class CanvasWindow:
         self._active_edge: tuple[str, str] | None = None
         self._pan: tuple[float, float] | None = None
         # cabos interativos (ADR-11): mailbox + router — só com controller + edges
+        self._ask_bus_dir = ask_bus_dir  # p/ criar novos terminais de agente em runtime
         self._ask_bus = None
         self._ask_router = None
         self._ask_inflight: set[str] = set()
@@ -283,6 +285,7 @@ class CanvasWindow:
             team_name=self.run_team_name,
         )
         cbmap = {
+            "newterm": self._open_new_terminal_dialog,
             "run_team": self._run_team,
             "handoff": self._open_handoff_dialog,
             "note": self._create_note,
@@ -918,6 +921,66 @@ class CanvasWindow:
         dlg.present()
 
     # -- sticky notes no canvas (V9-S3) --
+    # -- ➕ novo terminal em runtime (shell ou nova instância de agente) --
+    def _unique_nid(self, prefix: str) -> str:
+        i = 2
+        while f"{prefix}-{i}" in self.frames:
+            i += 1
+        return f"{prefix}-{i}"
+
+    def _next_node_default(self) -> tuple[int, int]:
+        n = len(self.order) + len(self.note_frames)
+        return (60 + (n % 6) * 80, 60 + (n % 6) * 70)  # cascata p/ não empilhar exato
+
+    def _open_new_terminal_dialog(self):
+        dlg, box = self._dialog("➕ novo terminal")
+        bsh = Gtk.Button(label="🐚 terminal shell (/bin/bash)")
+        bsh.connect("clicked", lambda _b: (self._new_shell_terminal(), dlg.destroy()))
+        box.append(bsh)
+        agents = list(installed_agents().keys())
+        if self.controller is not None and self._ask_bus_dir and agents:
+            box.append(Gtk.Label(label="ou nova instância de um agente:"))
+            combo = Gtk.ComboBoxText()
+            for a in agents:
+                combo.append_text(a)
+            combo.set_active(0)
+            box.append(combo)
+            bag = Gtk.Button(label="🤖 criar agente (participa de cabos)")
+            bag.connect(
+                "clicked",
+                lambda _b: (self._new_agent_terminal(combo.get_active_text()), dlg.destroy()),
+            )
+            box.append(bag)
+        dlg.present()
+
+    def _new_shell_terminal(self) -> str | None:
+        nid = self._unique_nid("shell")
+        self._add_node(nid, "shell", ["/bin/bash"], default=self._next_node_default())
+        self._resize_plane()
+        self.plane.queue_draw()
+        return nid
+
+    def _new_agent_terminal(self, base: str | None) -> str | None:
+        if not base or self.controller is None or not self._ask_bus_dir:
+            return None
+        profiles = installed_agents()
+        if base not in profiles:
+            return None
+        nid = self._unique_nid(base)
+        try:
+            self.controller.add_agent_instance(nid, base)  # delegate/maestro-ask resolve nid
+        except Exception as exc:
+            _log.error("add_agent_instance falhou: %s", exc)
+            return None
+        base_home = Path(self._ask_bus_dir).parent
+        wsp = Workspace(str(base_home / "workspaces")).create(nid)
+        install_ask_skill(wsp, nid)  # ensina o maestro-ask ao novo agente
+        argv = agent_argv(profiles[base], str(wsp), node=nid, ask_bus_dir=self._ask_bus_dir)
+        self._add_node(nid, nid, argv, default=self._next_node_default())
+        self._resize_plane()
+        self.plane.queue_draw()
+        return nid
+
     def _create_note(self):
         if self.notes is None:
             return
