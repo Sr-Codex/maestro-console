@@ -101,3 +101,5 @@ def test_agent_argv_monta_mailbox_e_env(tmp_path):
     joined = " ".join(argv)
     assert "MAESTRO_NODE" in argv and str(bus.resolve()) in joined
     assert "MAESTRO_ASK_BUS" in argv
+    # mailbox no PATH -> agente chama 'maestro-ask' direto (sem caminho absoluto)
+    assert "PATH" in argv and any(a.startswith(f"{bus}:") for a in argv)

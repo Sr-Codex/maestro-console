@@ -82,18 +82,3 @@ def to_base(display: tuple[float, float], zoom: float) -> tuple[float, float]:
     """Posição no plano -> coordenada-base: base = display / zoom (zoom<=0 cai p/ 1.0)."""
     z = zoom if zoom and zoom > 0 else 1.0  # 'or' deixava passar negativos
     return (display[0] / z, display[1] / z)
-
-
-def cable_segments(
-    boxes: list[tuple[float, float, float, float]],
-) -> list[tuple[float, float, float, float]]:
-    """Segmentos (x1,y1,x2,y2) ligando nós consecutivos da rota (handoffs).
-
-    Conecta a borda direita de um nó ao centro-esquerdo do próximo. `boxes` =
-    (x, y, w, h) por nó (canto sup-esq + tamanho) — permite tamanhos DIFERENTES
-    por nó (cada card pode ser redimensionado).
-    """
-    segs = []
-    for (ax, ay, aw, ah), (bx, by, _bw, bh) in zip(boxes, boxes[1:], strict=False):
-        segs.append((ax + aw, ay + ah / 2, bx, by + bh / 2))
-    return segs

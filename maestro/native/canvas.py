@@ -46,7 +46,7 @@ from .orchestrate import (  # noqa: E402
 )
 from .palette import build_palette_items, fuzzy  # noqa: E402
 from .routines_ui import parse_steps, routine_rows  # noqa: E402
-from .state import CanvasModel, EdgeModel, cable_segments, to_display  # noqa: E402
+from .state import CanvasModel, EdgeModel, to_display  # noqa: E402
 from .themes import get_theme, theme_names  # noqa: E402
 from .toolbar import action_menu_items  # noqa: E402
 
@@ -677,14 +677,8 @@ class CanvasWindow:
             nw, nh = self._node_size.get(nid, (BASE_W, BASE_H))
             return (bx, by, nw * z, nh * z)
 
-        boxes = [box(n) for n in self.order if self.frames.get(n) is not None]
-        cr.set_source_rgb(0.34, 0.38, 0.42)
-        cr.set_line_width(2)
-        for x1, y1, x2, y2 in cable_segments(boxes):
-            cr.move_to(x1, y1)
-            cr.line_to(x2, y2)
-            cr.stroke()
-        # cabos do usuário (V7-S2): azul; cor do estado durante o handoff (V7-S4)
+        # SÓ cabos EXPLÍCITOS do usuário (sem auto-conexão por ordem): o usuário
+        # decide se/quem conectar (modo conectar). Cor azul; estado durante handoff.
         if self.edges is not None:
             cr.set_line_width(2.5)
             for src, dst in self.edges.list():

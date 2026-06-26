@@ -7,6 +7,7 @@ nenhum bypass.
 
 from __future__ import annotations
 
+import os
 import shutil
 
 from ..engine.adapters.base import AgentProfile, load_profiles
@@ -43,7 +44,13 @@ def agent_argv(
     shared = [ask_bus_dir] if ask_bus_dir else []
     setenv = {}
     if node and ask_bus_dir:
-        setenv = {"MAESTRO_NODE": node, "MAESTRO_ASK_BUS": str(ask_bus_dir)}
+        base_path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+        setenv = {
+            "MAESTRO_NODE": node,
+            "MAESTRO_ASK_BUS": str(ask_bus_dir),
+            # mailbox no PATH -> o agente roda `maestro-ask <nó> "..."` direto
+            "PATH": f"{ask_bus_dir}:{base_path}",
+        }
     return sandbox_wrap(
         [profile.cmd[0]],
         workspace=workspace,
