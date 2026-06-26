@@ -31,11 +31,18 @@ def log_path(home: str | Path | None = None) -> Path:
     return base / "logs" / "handoffs.log"
 
 
-def build_controller(*, home: str | Path | None = None, timeout: float = 180.0):
-    """Retorna (TUIController, Store). Lembre de fechar o Store ao sair."""
+def build_controller(
+    *, home: str | Path | None = None, timeout: float = 180.0, db_path: str | Path | None = None
+):
+    """Retorna (TUIController, Store). Lembre de fechar o Store ao sair.
+
+    db_path: DB a usar (multi-workspace, Fase C). Default = ``<base>/maestro.db``.
+    """
     base = Path(home) if home is not None else default_home()
     base.mkdir(parents=True, exist_ok=True)
-    store = Store(base / "maestro.db")
+    db = Path(db_path) if db_path else base / "maestro.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = Store(db)
     registry = Registry(store)
     sm = SessionManager(store)
     ws = Workspace(base / "workspaces")

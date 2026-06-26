@@ -21,6 +21,7 @@ def action_menu_items(
     items: list[tuple[str, str]] = [
         ("➕ novo terminal", "newterm"),
         ("📁 árvore de arquivos", "filetree"),
+        ("🗂️ workspaces", "workspaces"),
     ]
     if has_controller:
         items.append((f"▶ rodar time ({team_name})", "run_team"))
