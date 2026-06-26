@@ -4,6 +4,26 @@
 > travou a renderização no uConsole CM4 (`MESA: Failed to allocate device memory for BO`).
 > Pesquisa em fontes ao vivo p/ entender a causa e achar o caminho certo (foco no CM5).
 
+> ## ⚠️ ATUALIZAÇÃO 2026-06-26 — RESOLVIDO no CM4 (a conclusão "foco no CM5" foi PREMATURA)
+>
+> O canvas infinito **roda no CM4** (entregue na **v0.24.0**, branch `feat/canvas-infinito`).
+> A conclusão original abaixo ("inviável no CM4, adiar pro CM5") estava **errada**, por dois motivos:
+>
+> 1. **O OOM de GPU não se repete com a GPU limpa.** O `MESA: Failed to allocate ... BO` veio
+>    do **1º crash** (plano CSS gigante 5000×4000 — já corrigido p/ plano=viewport). Esse crash
+>    **travou o CMA/compositor**, e os testes seguintes herdaram a GPU travada (falsos negativos).
+>    Após **reboot**, com o modelo-câmera (plano=viewport), o app roda 5+ min de pan/zoom **sem OOM**.
+> 2. **O verdadeiro bloqueador NÃO era GPU** — era um **bug de layout**: a janela inchava/saía da
+>    tela ao panar. Causa: `Gtk.Fixed` mede a caixa dos filhos (com a câmera assada no transform) e
+>    o `ScrolledWindow` em policy `NEVER` exigia o mínimo inteiro → empurrava o toplevel. **Fix:**
+>    policy **`EXTERNAL`** + `Viewport.set_scroll_to_focus(False)`. (Sobrescrever `do_measure` no
+>    `Gtk.Fixed` **não** resolve — é ignorado.) Ver **ADR-12** em `architecture.md`.
+>
+> O que continua válido abaixo: a análise de **CMA/IOMMU** (boa razão para *viewport culling* e nunca
+> criar render target gigante — diretrizes seguidas) e o **fallback `GSK_RENDERER`** como rede de
+> segurança. O CM5 segue desejável por folga de GPU/RAM ([[hardware-cm5-upgrade]]), mas **não é
+> pré-requisito** do canvas infinito.
+
 ## Causa-raiz (verificada)
 1. **CM4 = Broadcom VideoCore VI (V3D), SEM IOMMU.** Buffers da GPU (texturas, render
    targets) precisam ser **contíguos** → vêm do **CMA** (Contiguous Memory Allocator),

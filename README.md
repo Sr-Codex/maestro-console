@@ -12,7 +12,8 @@ passam trabalho entre si — com **isolamento de segurança** por padrão.
 ## O que dá pra fazer
 
 - 🖥️ **Canvas nativo** na tela do dispositivo: terminais reais dos agentes num
-  plano infinito (pan/zoom), confinados por sandbox.
+  plano infinito — **pan** (arrastar o fundo ou **SELECT + trackball**), **zoom** e
+  **seleção por clique** (borda azul tracejada) — confinados por sandbox.
 - 🔌 **Cabos que conversam**: ligar agente A → B e disparar um **handoff**
   (A trabalha, o resultado vai para B) — mediado, registrado e recuperável.
 - 🧱 **Floors**: ambientes isolados via **git worktree** (branches por agente, sem
