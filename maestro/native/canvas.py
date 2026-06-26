@@ -229,6 +229,7 @@ class CanvasWindow:
         self._group_color: dict[str, str] = {}
         self._group_title: dict[str, str] = {}
         self._group_user_sized: set[str] = set()  # grupos redimensionados de propósito (piso)
+        self._loading = False  # True só no startup: suspende auto-fit p/ restaurar tamanho EXATO
         self._group_resize = None  # estado do resize de grupo (alça canto inf-dir)
         self._edge_state: dict[tuple[str, str], str] = {}  # cor do cabo por handoff (V7-S4)
         self._active_edge: tuple[str, str] | None = None
@@ -279,7 +280,7 @@ class CanvasWindow:
         self.plane.set_hexpand(True)
         self.plane.set_vexpand(True)
         self._plane_size = (0, 0)  # legado (não mais usado p/ dimensionar o plano)
-        self._cam = (0.0, 0.0)  # câmera: tela = base*zoom + cam (sem limite -> infinito)
+        self._cam = (0.0, 0.0)  # câmera (tela = base*zoom + cam); ao abrir, _fit_view centraliza no conteúdo
         # gesto no scrolled (que NÃO rola -> referência estável, sem tremor)
         pan = Gtk.GestureDrag()
         pan.connect("drag-begin", self._pan_begin)
@@ -330,6 +331,7 @@ class CanvasWindow:
         root.append(self._hint_lbl)
         self.win.set_child(root)
 
+        self._loading = True  # suspende auto-fit no startup -> grupos voltam no tamanho EXATO salvo
         if self.groups is not None:  # carrega grupos (desenhados atrás dos nós) — C2
             for g in self.groups.list():
                 self._load_group(g)
@@ -338,6 +340,7 @@ class CanvasWindow:
         if self.notes is not None:  # restaura notas salvas (V9-S3)
             for note in self.notes.list():
                 self._add_note_widget(note)
+        self._loading = False  # fim do startup: auto-fit volta a valer (interações ao vivo)
         self._apply_zoom()
         self._apply_theme(self.model.terminal_theme())  # tema persistido (V11-S4)
 
@@ -659,15 +662,16 @@ class CanvasWindow:
         entry.grab_focus()
 
     def _close_node(self, nid: str) -> None:
-        """Remove o nó-terminal do canvas NESTA sessão (widget + PTY do agente).
+        """Fecha o nó-terminal: ✕ REMOVE DE VEZ (sai do roster -> não volta ao reabrir).
 
-        Não apaga posição persistida nem cabos no Store — relançar restaura o nó.
-        O desenho de cabos já ignora nós fora de self.frames, então não sobra cabo
-        solto. Remove o terminal de self.terms p/ não vazar nem quebrar _apply_theme.
+        Remove o widget + PTY do agente e tira o nó do roster persistido. Cabos órfãos
+        são ignorados no desenho (já filtra por self.frames). Remove o terminal de
+        self.terms p/ não vazar nem quebrar _apply_theme.
         """
         frame = self.frames.pop(nid, None)
         if frame is None:
             return
+        self.model.remove_from_roster(nid)  # ✕ = remoção permanente (decisão do usuário)
         if nid in self.order:
             self.order.remove(nid)
         self.heads.pop(nid, None)
@@ -883,9 +887,7 @@ class CanvasWindow:
             self._group_manual[gid] = (gx, gy, w, h)  # piso = retângulo manual atual
             self._group_user_sized.add(gid)  # a partir daqui o manual é piso (primeira opção)
             self._autofit_group(gid)  # ainda cresce se um nó passar do piso
-            m = self._group_manual[gid]
-            if self.groups is not None:
-                self.groups.set_rect(gid, m[0], m[1], m[2], m[3])
+            self._persist_group(gid)  # salva o tamanho EXIBIDO (WYSIWYG) -> reabre igual
             self._resize_plane()
             self.plane.queue_draw()
             self._mm_refresh()
@@ -906,8 +908,7 @@ class CanvasWindow:
                         self._save_note(fr)
                 # ft: posição não é persistida (efêmera)
             self._autofit_group(gid)
-            if self.groups is not None:
-                self.groups.set_rect(gid, gx, gy, gw, gh)  # persiste grupo (piso)
+            self._persist_group(gid)  # salva o tamanho EXIBIDO (WYSIWYG) -> reabre igual
             self._resize_plane()
             self.plane.queue_draw()
             self._mm_refresh()
@@ -945,6 +946,25 @@ class CanvasWindow:
         self._cam = (camx - dx * step, camy - dy * step)
         self._reposition_all()
         return True  # consome: nem o terminal nem o ScrolledWindow rolam
+
+    def _fit_view(self) -> bool:
+        """Centraliza a câmera no conteúdo (cards/notas/árvores) — mostra tudo ao abrir.
+        Chamado após a 1ª alocação da viewport (get_width real). One-shot p/ GLib."""
+        items, _vp = self._mm_items()  # itens em coords-base (x, y, w, h, cor)
+        z = self.model.zoom() or 1.0
+        vw = self.scrolled.get_width() or 1
+        vh = self.scrolled.get_height() or 1
+        if items:
+            xs0 = min(i[0] for i in items)
+            ys0 = min(i[1] for i in items)
+            xs1 = max(i[0] + i[2] for i in items)
+            ys1 = max(i[1] + i[3] for i in items)
+            cx, cy = (xs0 + xs1) / 2.0, (ys0 + ys1) / 2.0  # centro do conteúdo (base)
+            self._cam = (vw / 2 - cx * z, vh / 2 - cy * z)  # leva ao meio da tela
+        else:
+            self._cam = (0.0, 0.0)
+        self._reposition_all()
+        return False  # one-shot (GLib)
 
     def _zoom(self, dz):
         self.model.set_zoom(self.model.zoom() + dz)
@@ -1540,6 +1560,7 @@ class CanvasWindow:
     def _new_shell_terminal(self) -> str | None:
         nid = self._unique_nid("shell")
         self._add_node(nid, "shell", ["/bin/bash"], default=self._next_node_default())
+        self.model.add_to_roster(nid, "shell", None)  # persiste -> volta ao reabrir
         self._resize_plane()
         self.plane.queue_draw()
         return nid
@@ -1561,6 +1582,7 @@ class CanvasWindow:
         install_ask_skill(wsp, nid)  # ensina o maestro-ask ao novo agente
         argv = agent_argv(profiles[base], str(wsp), node=nid, ask_bus_dir=self._ask_bus_dir)
         self._add_node(nid, nid, argv, default=self._next_node_default())
+        self.model.add_to_roster(nid, "agent", base)  # persiste -> volta ao reabrir
         self._resize_plane()
         self.plane.queue_draw()
         return nid
@@ -1862,6 +1884,9 @@ class CanvasWindow:
         self._group_title[g.id] = g.title
         self._group_base[g.id] = (g.x, g.y)  # exibido (refinado pelo auto-fit)
         self._group_size[g.id] = (g.w, g.h)
+        # o retângulo salvo é a posição/tamanho que o usuário deixou -> tratar como PISO ao
+        # reabrir (senão o auto-fit encolhe o grupo pra abraçar só os nós e ele "não volta").
+        self._group_user_sized.add(g.id)
         self._autofit_group(g.id)
 
     def _create_group(self) -> None:
@@ -1879,6 +1904,8 @@ class CanvasWindow:
         lados — cresce E encolhe. Se o usuário redimensionou de propósito, esse tamanho
         vira piso (não encolhe abaixo dele). Vazio = volta ao tamanho manual/default."""
         if gid not in self._group_manual:
+            return
+        if self._loading:  # startup: não auto-fitar -> grupo fica no tamanho/posição EXATOS salvos
             return
         mx, my, mw, mh = self._group_manual[gid]
         members = self._group_members(gid)
@@ -1901,11 +1928,23 @@ class CanvasWindow:
         self._group_base[gid] = (left, top)
         self._group_size[gid] = (max(GROUP_MIN_W, right - left), max(GROUP_MIN_H, bottom - top))
 
+    def _persist_group(self, gid) -> None:
+        """Persiste o retângulo EXIBIDO do grupo (base+size pós auto-fit) — WYSIWYG: o que
+        está na tela é o que reabre. Antes salvava só o 'manual', que diferia do exibido."""
+        if self.groups is None or gid not in self._group_base:
+            return
+        bx, by = self._group_base[gid]
+        gw, gh = self._group_size[gid]
+        self.groups.set_rect(gid, bx, by, gw, gh)
+
     def _autofit_all_groups(self) -> None:
         if not self._group_base:
             return
         for gid in list(self._group_base):
             self._autofit_group(gid)
+        if not self._loading:  # persiste o tamanho EXIBIDO após abraçar o conteúdo
+            for gid in list(self._group_base):
+                self._persist_group(gid)
         self._resize_plane()
         self.plane.queue_draw()
         self._mm_refresh()
@@ -2369,20 +2408,43 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         ws = Workspace(f"{base}/workspaces")
         ask_bus_dir = f"{base}/ask-bus"
         install_client(ask_bus_dir)  # instala o maestro-ask no mailbox (montado nos agentes)
+        model = CanvasModel(st)
+        # ROSTER persistido: QUAIS terminais existem (abre igual fechou). 1ª vez = semeia
+        # com os agentes instalados; depois é a fonte da verdade (inclui shells/instâncias).
+        roster = model.node_roster()
+        if not roster:
+            roster = [{"nid": n, "kind": "agent", "base": n} for n in installed_agents()]
+            if not roster:
+                roster = [{"nid": "shell-1", "kind": "shell", "base": None}]
+            model.set_node_roster(roster)
         nodes = []
-        for name, profile in installed_agents().items():
-            wsp = ws.create(name)
-            install_ask_skill(wsp, name)  # ensina o agente a usar o maestro-ask
-            nodes.append(
-                (name, name, agent_argv(profile, str(wsp), node=name, ask_bus_dir=ask_bus_dir))
-            )
-        if not nodes:  # nenhum agente instalado -> um shell de exemplo
-            nodes = [("term1", "shell", ["/bin/bash"])]
+        for spec in roster:
+            nid = spec.get("nid")
+            if not nid:
+                continue
+            if spec.get("kind") == "shell":
+                nodes.append((nid, model.node_name(nid, "shell"), ["/bin/bash"]))
+                continue
+            base = spec.get("base") or nid
+            prof = installed_agents().get(base)
+            if prof is None:  # CLI base não instalado -> não dá pra recriar este card
+                continue
+            wsp = ws.create(nid)
+            install_ask_skill(wsp, nid)  # ensina o agente a usar o maestro-ask
+            if nid != base and nid not in controller.agents:  # instância extra (runtime)
+                try:
+                    controller.add_agent_instance(nid, base)
+                except Exception:
+                    controller.agents[nid] = prof  # já no registry: garante só o profile
+            argv = agent_argv(prof, str(wsp), node=nid, ask_bus_dir=ask_bus_dir)
+            nodes.append((nid, model.node_name(nid, nid), argv))
+        if not nodes:  # tudo removido / nada instalado -> um shell de exemplo
+            nodes = [("shell-1", "shell", ["/bin/bash"])]
         floors = resolve_floors(st, f"{base}/floors")
         badges = agent_badges(controller.get_team("coder-reviewer"))
         win = CanvasWindow(
             app,
-            CanvasModel(st),
+            model,
             nodes,
             controller=controller,
             edges=EdgeModel(st),
@@ -2399,6 +2461,7 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
             home_base=str(base),
         )
         win.show()
+        GLib.timeout_add(80, win._fit_view)  # centraliza a vista no conteúdo (viewport já com tamanho real)
         state["win"] = win  # ref p/ re-ativação idempotente (W5)
         win.start_ask_watcher()  # poll do mailbox dos cabos interativos (ADR-11)
         # tick in-app do scheduler: dispara routines vencidas enquanto aberto (V10-S4)

@@ -3,6 +3,18 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.25.0] — Canvas: abre igual fechou (persistência completa do estado)
+- **Roster de terminais persistido (a grande lacuna):** o startup recriava SÓ os agentes
+  instalados; terminais criados em runtime (➕ shell ou instância extra de agente) **sumiam**
+  ao reabrir. Agora a lista de terminais é persistida (`ui_state canvas_nodes`: nid/kind/base)
+  e **recriada ao abrir** — shells e instâncias extras voltam na posição/tamanho. 1ª vez
+  semeia com os agentes instalados. **✕ fecha = remove de vez** (sai do roster).
+- **Grupos — WYSIWYG:** o grupo agora reabre **exatamente** no tamanho/posição em que estava
+  (antes salvava o "manual" e o auto-fit encolhia/crescia ao reabrir). Persiste o retângulo
+  EXIBIDO (`_persist_group`) e o auto-fit fica suspenso no startup (`_loading`).
+- **Fit ao abrir:** a câmera **centraliza no conteúdo** — tudo visível, sem caçar card fora da tela.
+- Posições/tamanhos de cards, notas (texto/cor/pin), grupos, cabos e zoom já persistiam e continuam.
+
 ## [0.24.0] — Canvas infinito funcional no CM4 (pan por SELECT+trackball + seleção)
 - **Canvas infinito agora roda no CM4** (reverte o "adiado pro CM5"): a GPU aguenta o
   modelo-câmera (testado em runtime, sem OOM); os testes anteriores que "provaram"
