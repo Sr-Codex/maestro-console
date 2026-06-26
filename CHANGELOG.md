@@ -3,6 +3,15 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.21.0] — Minimapa (Fase 3a: navegação)
+- **C1 — Minimapa:** visão geral sobreposta no canto inferior-direito (estilo editores de
+  nó) mostrando todos os nós (azul), notas (amarelo) e árvores (verde) em miniatura, mais
+  um retângulo branco indicando **onde você está** (viewport). **Clicar** no minimapa
+  **move a vista** pra aquele ponto. Atualiza ao rolar/pan/zoom e ao criar/mover/fechar.
+- Helper gi-free testável `minimap_layout` (escala+offset pra encaixar o "mundo").
+- Validado por busca (DrawingArea+Overlay) + probe ao vivo. Suíte: 376 testes.
+- Fase 3 continua: C4 (notas cor/pin) e C2 (grupos) em PRs seguintes.
+
 ## [0.20.0] — Geometria do canvas (Fase 2: grid+snapping + cabos curvos)
 - **C3 — Grid + snapping:** grade de pontos sutil no fundo do canvas (desenhada só na
   viewport, leve no ARM); ao soltar um nó/nota ele **imanta** ao ponto mais próximo da

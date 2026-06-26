@@ -55,6 +55,7 @@ from .state import (  # noqa: E402
     CanvasModel,
     EdgeModel,
     cable_bezier,
+    minimap_layout,
     snap_point,
     snap_to_grid,
     state_activity,
@@ -245,7 +246,25 @@ class CanvasWindow:
         pan.connect("drag-end", self._pan_end)
         self.plane.add_controller(pan)
         self.scrolled.set_child(self.plane)
-        root.append(self.scrolled)
+        # C1: minimapa sobreposto (canto inf-direito) p/ navegar canvas grande
+        overlay = Gtk.Overlay()
+        overlay.set_child(self.scrolled)
+        self._minimap = Gtk.DrawingArea()
+        self._minimap.set_size_request(180, 120)
+        self._minimap.set_halign(Gtk.Align.END)
+        self._minimap.set_valign(Gtk.Align.END)
+        self._minimap.set_margin_end(8)
+        self._minimap.set_margin_bottom(8)
+        self._minimap.add_css_class("minimap")
+        self._minimap.set_draw_func(self._draw_minimap)
+        mmclick = Gtk.GestureClick()
+        mmclick.connect("pressed", self._minimap_click)
+        self._minimap.add_controller(mmclick)
+        overlay.add_overlay(self._minimap)
+        root.append(overlay)
+        # redesenha o minimapa quando a vista rola/pan (viewport muda)
+        self.scrolled.get_hadjustment().connect("value-changed", lambda *_: self._mm_refresh())
+        self.scrolled.get_vadjustment().connect("value-changed", lambda *_: self._mm_refresh())
         self._hint_lbl = Gtk.Label(label=hintbar_text(), xalign=0)  # B2: ensina atalhos
         self._hint_lbl.add_css_class("hintbar")
         root.append(self._hint_lbl)
@@ -280,6 +299,9 @@ class CanvasWindow:
             # B2: rodapé que ensina os atalhos (Zellij-like)
             ".hintbar { font-size: 10px; color: #9399b2; padding: 2px 8px;"
             " background-color: #181825; border-top: 1px solid #313244; }",
+            # C1: minimapa sobreposto
+            ".minimap { background-color: rgba(24,24,37,0.85); border: 1px solid #45475a;"
+            " border-radius: 6px; }",
         ]
         for st, hexc in STATE_COLORS.items():
             rules.append(f".dot-{st} {{ color: {hexc}; }}")
@@ -461,6 +483,7 @@ class CanvasWindow:
         self.frames[nid] = frame
         self.order.append(nid)
         self._renumber_nodes()  # atualiza os números de posição (Ctrl+Shift+N) [A.2]
+        self._mm_refresh()  # C1: novo nó aparece no minimapa
 
     def _place(self, child, base, z) -> None:
         """Posiciona+escala o child com UM transform único (ver _plane_xform)."""
@@ -554,6 +577,7 @@ class CanvasWindow:
             self._focused_nid = None
         self._renumber_nodes()
         self.plane.queue_draw()
+        self._mm_refresh()
 
     # -- foco rápido por teclado (A.2) --
     def _focus_node(self, nid: str) -> None:
@@ -673,6 +697,7 @@ class CanvasWindow:
                 self._save_note(frame)  # persiste posição da nota
             self._resize_plane()
             self.plane.queue_draw()
+            self._mm_refresh()
         self._pan = None
 
     # -- zoom: escala o PLANO (posição + transform); terminal mantém alocação/PTY --
@@ -714,6 +739,61 @@ class CanvasWindow:
             self._place(frame, self._ft_base.get(fid, (0.0, 0.0)), z)
         self.zlabel.set_text(f"zoom {int(z * 100)}%")
         self.plane.queue_draw()
+        self._mm_refresh()
+
+    # -- minimapa (C1): visão geral + clique navega --
+    def _mm_refresh(self) -> None:
+        mm = getattr(self, "_minimap", None)
+        if mm is not None:
+            mm.queue_draw()
+
+    def _mm_items(self):
+        """Itens do 'mundo' em coords-base: (x,y,w,h,(r,g,b)) + o retângulo da viewport."""
+        items = []
+        for nid, (bx, by) in self._base_pos.items():
+            nw, nh = self._node_size.get(nid, (BASE_W, BASE_H))
+            items.append((bx, by, nw, nh, (0.55, 0.60, 0.85)))  # nós: azulado
+        for _id, (bx, by) in self._note_base.items():
+            items.append((bx, by, 240, 160, (0.98, 0.89, 0.43)))  # notas: amarelo
+        for _id, (bx, by) in self._ft_base.items():
+            items.append((bx, by, 300, 360, (0.40, 0.70, 0.50)))  # árvore: verde
+        z = self.model.zoom() or 1.0
+        ha, va = self.scrolled.get_hadjustment(), self.scrolled.get_vadjustment()
+        vp = (
+            ha.get_value() / z,
+            va.get_value() / z,
+            (ha.get_page_size() or 1) / z,
+            (va.get_page_size() or 1) / z,
+        )
+        return items, vp
+
+    def _draw_minimap(self, _area, cr, w, h):  # pragma: no cover - precisa de GTK
+        items, vp = self._mm_items()
+        layout = minimap_layout([(i[0], i[1], i[2], i[3]) for i in items] + [vp], w, h)
+        if layout is None:
+            return
+        scale, offx, offy = layout
+        for x, y, rw, rh, col in items:
+            cr.set_source_rgba(col[0], col[1], col[2], 0.9)
+            cr.rectangle(offx + x * scale, offy + y * scale, max(rw * scale, 1.5), max(rh * scale, 1.5))
+            cr.fill()
+        cr.set_source_rgba(1, 1, 1, 0.9)  # viewport (onde você está)
+        cr.set_line_width(1.0)
+        cr.rectangle(offx + vp[0] * scale, offy + vp[1] * scale, max(vp[2] * scale, 2), max(vp[3] * scale, 2))
+        cr.stroke()
+
+    def _minimap_click(self, _g, _n, x, y):
+        items, vp = self._mm_items()
+        layout = minimap_layout([(i[0], i[1], i[2], i[3]) for i in items] + [vp], self._minimap.get_width(), self._minimap.get_height())
+        if layout is None:
+            return
+        scale, offx, offy = layout
+        z = self.model.zoom() or 1.0
+        world_x = (x - offx) / scale  # clique -> coord-mundo (base)
+        world_y = (y - offy) / scale
+        ha, va = self.scrolled.get_hadjustment(), self.scrolled.get_vadjustment()
+        ha.set_value(max(0.0, world_x * z - ha.get_page_size() / 2))  # centra a vista ali
+        va.set_value(max(0.0, world_y * z - va.get_page_size() / 2))
 
     # -- tema dos terminais (V11-S4) --
     def _apply_theme(self, name: str) -> None:
@@ -1333,6 +1413,7 @@ class CanvasWindow:
         self._ft_frames[fid] = frame
         self._resize_plane()
         self.plane.queue_draw()
+        self._mm_refresh()
 
     def _ft_build_dir(self, path: str) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -1370,6 +1451,7 @@ class CanvasWindow:
         self._ft_base.pop(fid, None)
         self.plane.remove(frame)
         self.plane.queue_draw()
+        self._mm_refresh()
 
     def _create_note(self):
         if self.notes is None:
@@ -1433,6 +1515,7 @@ class CanvasWindow:
         self.plane.put(frame, 0, 0)  # posição real vem no transform (_place)
         self._place(frame, (note.x, note.y), self.model.zoom())
         self.note_frames[note.id] = frame
+        self._mm_refresh()
 
     def _save_note(self, frame):
         if self.notes is None:
@@ -1458,6 +1541,7 @@ class CanvasWindow:
         self._note_base.pop(note_id, None)
         self.plane.remove(frame)
         self.plane.queue_draw()
+        self._mm_refresh()
 
     def _run_note(self, frame, acombo):
         """agent-to-note: roda o agente escolhido com a nota; resposta volta à nota."""

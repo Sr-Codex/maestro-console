@@ -5,12 +5,30 @@ from maestro.native.state import (
     GRID,
     CanvasModel,
     cable_bezier,
+    minimap_layout,
     snap_point,
     snap_to_grid,
     state_activity,
     to_base,
     to_display,
 )
+
+
+def test_minimap_layout_vazio_e_encaixe():
+    assert minimap_layout([], 180, 120) is None
+    # um único rect 100×100 cabe num minimapa 180×120 (com pad 4) -> escala < 1
+    scale, offx, offy = minimap_layout([(0, 0, 100, 100)], 180, 120, pad=4)
+    assert 0 < scale <= (120 - 8) / 100  # limitado pela menor dimensão (altura)
+    # o ponto-mundo (0,0) mapeia dentro do minimapa (tolera epsilon de float)
+    assert offx >= 4 - 1e-6 and offy >= 4 - 1e-6
+
+
+def test_minimap_layout_mapeia_dois_rects():
+    rects = [(0, 0, 50, 50), (150, 50, 50, 50)]  # mundo 200×100
+    scale, offx, offy = minimap_layout(rects, 200, 100, pad=0)
+    # extremos do mundo mapeiam dentro de [0, mm]
+    assert offx + 0 * scale >= -0.01
+    assert offx + 200 * scale <= 200.01
 
 
 def test_state_activity_por_estado():
