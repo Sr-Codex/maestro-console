@@ -553,8 +553,13 @@ class CanvasWindow:
         self.set_node_state(src, "idle")
         if src == dst:
             return
-        if (src, dst) in set(self.edges.list()):
-            self.edges.remove(src, dst)  # toggle: clicar de novo remove
+        pairs = set(self.edges.list())
+        if (src, dst) in pairs or (dst, src) in pairs:
+            # já conectados (em QUALQUER sentido) -> desconecta (toggle, sem depender da ordem)
+            self.edges.remove(src, dst)
+            self.edges.remove(dst, src)
+            self._edge_state.pop((src, dst), None)
+            self._edge_state.pop((dst, src), None)
         else:
             self.edges.add(src, dst)
             self._ask_hint(src, dst)  # avisa os terminais sobre o maestro-ask (ADR-11)
