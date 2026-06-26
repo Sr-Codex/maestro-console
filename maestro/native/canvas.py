@@ -68,6 +68,15 @@ BASE_W, BASE_H = 420, 220
 MIN_NODE_W, MIN_NODE_H = 240, 120  # piso ao redimensionar um card (arrastar a alça ⤡)
 # estado do envelope (passo done) -> estado visual do nó
 _ST_MAP = {"DONE": "done", "BLOCKED": "blocked", "FAILED": "failed", "NEEDS_INPUT": "blocked"}
+# C4: cores das notas (paleta enxuta, ~5; estilo catppuccin p/ casar com o tema)
+NOTE_COLORS = {
+    "yellow": "#f9e2af",
+    "green": "#a6e3a1",
+    "blue": "#89b4fa",
+    "pink": "#f5c2e7",
+    "mauve": "#cba6f7",
+}
+NOTE_COLOR_DEFAULT = "yellow"
 # estado: cor + FORMA + tooltip (acessibilidade: não depender só da cor) — UI-1
 _STATE_GLYPH = {"idle": "●", "busy": "◐", "blocked": "▲", "failed": "✕", "done": "✓"}
 _STATE_PT = {
@@ -203,6 +212,7 @@ class CanvasWindow:
         self._connect_src: str | None = None
         self._pan = None  # estado do pan da vista (fundo)
         self._drag = None  # estado do arrasto de nó (via gesto do plano, estável)
+        self._note_pinned: set[str] = set()  # notas fixadas (não arrastam) — C4
         self._edge_state: dict[tuple[str, str], str] = {}  # cor do cabo por handoff (V7-S4)
         self._active_edge: tuple[str, str] | None = None
         self._pan: tuple[float, float] | None = None
@@ -305,6 +315,8 @@ class CanvasWindow:
             ".minimap { background-color: rgba(24,24,37,0.85); border: 1px solid #45475a;"
             " border-radius: 6px; }",
         ]
+        for cname, hexc in NOTE_COLORS.items():  # C4: classes de cor das notas
+            rules.append(f".notecol-{cname} {{ background-color: {hexc}; color: #1e1e2e; }}")
         for st, hexc in STATE_COLORS.items():
             rules.append(f".dot-{st} {{ color: {hexc}; }}")
         provider = Gtk.CssProvider()
@@ -628,6 +640,8 @@ class CanvasWindow:
             for attr, kind in (("_drag_nid", "node"), ("_drag_note", "note"), ("_drag_ft", "ft")):
                 tid = getattr(w, attr, None)
                 if tid is not None:
+                    if kind == "note" and tid in self._note_pinned:
+                        return None  # nota fixada (pin) não arrasta — C4
                     return (kind, tid)
             w = w.get_parent()
         return None
@@ -1478,12 +1492,41 @@ class CanvasWindow:
         title.set_text(note_title_display(note) if note.title else "Nota")
         title.set_hexpand(True)
         head.append(title)
+        # 🎨 cor (C4): popover com swatches
+        colorbtn = Gtk.MenuButton(label="🎨")
+        colorbtn.set_has_frame(False)
+        colorbtn.set_tooltip_text("cor da nota")
+        cpop = Gtk.Popover()
+        crow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
+        for cname in NOTE_COLORS:
+            sw = Gtk.Button()
+            sw.add_css_class(f"notecol-{cname}")
+            sw.set_size_request(22, 22)
+            sw.connect(
+                "clicked",
+                lambda _b, fr=frame, c=cname, p=cpop: (p.popdown(), self._set_note_color(fr, c)),
+            )
+            crow.append(sw)
+        cpop.set_child(crow)
+        colorbtn.set_popover(cpop)
+        head.append(colorbtn)
+        # 📌 pin (C4): fixa a nota (não arrasta)
+        pinbtn = Gtk.ToggleButton(label="📌" if note.pinned else "📍")
+        pinbtn.set_has_frame(False)
+        pinbtn.set_tooltip_text("fixar a nota (não arrasta)")
+        pinbtn.set_active(note.pinned)
+        if note.pinned:
+            self._note_pinned.add(note.id)
+        pinbtn.connect("toggled", lambda b, fr=frame: self._toggle_note_pin(fr, b))
+        head.append(pinbtn)
         nclose = Gtk.Button(label="✕")
         nclose.set_has_frame(False)
         nclose.set_tooltip_text("apagar esta nota")
         nclose.connect("clicked", lambda _b, fr=frame: self._close_note(fr))
         head.append(nclose)
         head._drag_note = note.id  # arrasto via gesto do PLANO (estável) — ver _pan_*
+        frame._note_head = head
+        self._apply_note_color(frame, note.color)  # aplica a cor salva
         # corpo (markdown editável)
         body = Gtk.TextView()
         body.set_wrap_mode(Gtk.WrapMode.WORD)
@@ -1531,8 +1574,43 @@ class CanvasWindow:
         note.title = frame._title_entry.get_text().strip()
         note.body = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
         note.x, note.y = self._note_base.get(frame._note_id, (0.0, 0.0))  # coords-base
+        # cor/pin já persistem nos seus handlers; preserva-os (get traz do store)
         self.notes.save(note)
         return False
+
+    # -- C4: cor e pin da nota --
+    def _apply_note_color(self, frame, color: str) -> None:
+        head = getattr(frame, "_note_head", None)
+        if head is None:
+            return
+        for cname in NOTE_COLORS:
+            head.remove_css_class(f"notecol-{cname}")
+        head.add_css_class(f"notecol-{color if color in NOTE_COLORS else NOTE_COLOR_DEFAULT}")
+
+    def _set_note_color(self, frame, color: str) -> None:
+        if self.notes is None:
+            return
+        note = self.notes.get(frame._note_id)
+        if note is None:
+            return
+        note.color = color
+        self.notes.save(note)
+        self._apply_note_color(frame, color)
+        self._mm_refresh()
+
+    def _toggle_note_pin(self, frame, btn) -> None:
+        if self.notes is None:
+            return
+        note = self.notes.get(frame._note_id)
+        if note is None:
+            return
+        note.pinned = btn.get_active()
+        self.notes.save(note)
+        if note.pinned:
+            self._note_pinned.add(frame._note_id)
+        else:
+            self._note_pinned.discard(frame._note_id)
+        btn.set_label("📌" if note.pinned else "📍")
 
     def _close_note(self, frame) -> None:
         """Apaga a nota (persistente, via Notes.delete) e remove o widget do canvas."""
@@ -1543,6 +1621,7 @@ class CanvasWindow:
             self.notes.delete(note_id)
         self.note_frames.pop(note_id, None)
         self._note_base.pop(note_id, None)
+        self._note_pinned.discard(note_id)
         self.plane.remove(frame)
         self.plane.queue_draw()
         self._mm_refresh()

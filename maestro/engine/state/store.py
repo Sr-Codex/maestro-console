@@ -104,7 +104,9 @@ CREATE TABLE IF NOT EXISTS notes (
     body       TEXT NOT NULL,
     x          REAL NOT NULL,
     y          REAL NOT NULL,
-    updated_at REAL NOT NULL
+    updated_at REAL NOT NULL,
+    color      TEXT NOT NULL DEFAULT '',
+    pinned     INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS routines (
     id         TEXT PRIMARY KEY,
@@ -134,6 +136,21 @@ class Store:
         self._conn.execute("PRAGMA busy_timeout=5000;")
         with self._conn:
             self._conn.executescript(_SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Migrações idempotentes (sem framework): ALTER TABLE p/ DBs antigos. Cada
+        coluna nova é adicionada se ainda não existir (OperationalError = já existe)."""
+        alters = (
+            "ALTER TABLE notes ADD COLUMN color TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+        )
+        for ddl in alters:
+            try:
+                with self._conn:
+                    self._conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass  # coluna já existe (DB já migrado)
 
     # -- backup / restore (V11-S3) -------------------------------------
     _BACKUP_TABLES = (
@@ -485,13 +502,24 @@ class Store:
         return {"setup": row["setup"], "run": row["run"], "teardown": row["teardown"]}
 
     # -- notas no canvas (V9-S2) ---------------------------------------
-    def upsert_note(self, note_id: str, title: str, body: str, x: float, y: float) -> None:
+    def upsert_note(
+        self,
+        note_id: str,
+        title: str,
+        body: str,
+        x: float,
+        y: float,
+        color: str = "",
+        pinned: int = 0,
+    ) -> None:
         with self._lock, self._conn:
             self._conn.execute(
-                "INSERT INTO notes(id, title, body, x, y, updated_at) VALUES(?,?,?,?,?,?) "
+                "INSERT INTO notes(id, title, body, x, y, updated_at, color, pinned) "
+                "VALUES(?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(id) DO UPDATE SET title=excluded.title, body=excluded.body, "
-                "x=excluded.x, y=excluded.y, updated_at=excluded.updated_at",
-                (note_id, title, body, x, y, time.time()),
+                "x=excluded.x, y=excluded.y, updated_at=excluded.updated_at, "
+                "color=excluded.color, pinned=excluded.pinned",
+                (note_id, title, body, x, y, time.time(), color, int(pinned)),
             )
 
     def get_note(self, note_id: str) -> dict[str, Any] | None:
