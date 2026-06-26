@@ -13,6 +13,8 @@ independentes do zoom: display = base * zoom (helpers `to_display`/`to_base`).
 from __future__ import annotations
 
 import logging
+import os
+import sys
 import threading
 from pathlib import Path
 
@@ -32,6 +34,7 @@ from ..engine.ask_bus import AskBus, install_ask_skill, install_client  # noqa: 
 from ..engine.ask_router import AskRouter, policy_from_env  # noqa: E402
 from ..engine.envelope import EnvelopeState  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
+from ..engine.workspace_registry import WorkspaceRegistry  # noqa: E402
 from .agents import STATE_COLORS, agent_argv, installed_agents  # noqa: E402
 from .filetree import list_children  # noqa: E402
 from .floors_ui import floor_rows, merge_text, preview_text  # noqa: E402
@@ -143,8 +146,12 @@ class CanvasWindow:
         routines=None,
         store=None,
         ask_bus_dir=None,
+        project_dir=None,
+        home_base=None,
     ):
         self.model = model
+        self._project_dir = project_dir  # raiz do projeto (workspace atual) p/ File Tree
+        self._home_base = home_base  # base do app (p/ o registro de workspaces)
         self.controller = controller
         self.run_team_name = run_team_name
         self.edges = edges  # EdgeModel | None — cabos criados pelo usuário (V7-S2)
@@ -291,6 +298,7 @@ class CanvasWindow:
         cbmap = {
             "newterm": self._open_new_terminal_dialog,
             "filetree": self._create_file_tree,
+            "workspaces": self._open_workspaces_dialog,
             "run_team": self._run_team,
             "handoff": self._open_handoff_dialog,
             "note": self._create_note,
@@ -1033,9 +1041,62 @@ class CanvasWindow:
         self.plane.queue_draw()
         return nid
 
+    # -- workspaces / multi-projeto (Fase C) --
+    def _open_workspaces_dialog(self):
+        if not self._home_base:
+            return
+        reg = WorkspaceRegistry(self._home_base)
+        reg.ensure_default(str(self._home_base))
+        cur = reg.current()
+        dlg, box = self._dialog("🗂️ workspaces (projetos)")
+        for w in reg.list():
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            mark = "● " if w.name == cur else "○ "
+            lbl = Gtk.Label(label=f"{mark}{w.name}")
+            lbl.set_halign(Gtk.Align.START)
+            row.append(lbl)
+            sp = Gtk.Box()
+            sp.set_hexpand(True)
+            row.append(sp)
+            if w.name != cur:
+                b = Gtk.Button(label="abrir")
+                b.set_tooltip_text("relança o app neste workspace")
+                b.connect("clicked", lambda _b, n=w.name: self._switch_workspace(n))
+                row.append(b)
+            box.append(row)
+        box.append(Gtk.Label(label="— novo workspace —"))
+        ne = Gtk.Entry()
+        ne.set_placeholder_text("nome (ex.: backend)")
+        box.append(ne)
+        pe = Gtk.Entry()
+        pe.set_placeholder_text("caminho do projeto")
+        pe.set_text(str(Path.home()))
+        box.append(pe)
+        addb = Gtk.Button(label="criar")
+
+        def add(_b):
+            try:
+                reg.add(ne.get_text().strip(), pe.get_text().strip() or str(Path.home()))
+            except ValueError as exc:
+                _log.error("criar workspace: %s", exc)
+                return
+            dlg.destroy()
+            self._open_workspaces_dialog()  # reabre já com o novo
+
+        addb.connect("clicked", add)
+        box.append(addb)
+        dlg.present()
+
+    def _switch_workspace(self, name: str) -> None:
+        if not self._home_base:
+            return
+        WorkspaceRegistry(self._home_base).set_current(name)
+        # relança o app no workspace escolhido (estado/DB isolado, ADR/Fase C)
+        os.execv(sys.executable, [sys.executable, "-m", "maestro", "canvas"])
+
     # -- árvore de arquivos no canvas (Fase B) --
     def _ft_root(self) -> str:
-        return str(self.repo) if self.repo else str(Path.home())
+        return self._project_dir or (str(self.repo) if self.repo else str(Path.home()))
 
     def _create_file_tree(self):
         root = self._ft_root()
@@ -1508,7 +1569,12 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
                 win.show()  # show() já chama present() na janela criada
             return
         base = default_home()
-        controller, st = build_controller()
+        reg = WorkspaceRegistry(base)
+        reg.ensure_default(str(base))  # estado legado vira o workspace 'default'
+        cur = reg.current()
+        ws_meta = reg.get(cur)
+        project_dir = ws_meta.project_dir if (ws_meta and ws_meta.project_dir) else None
+        controller, st = build_controller(db_path=reg.db_path(cur))  # DB isolado por workspace
         state["store"] = st
         # um terminal de AGENTE interativo (sandbox bwrap) por CLI instalado
         ws = Workspace(f"{base}/workspaces")
@@ -1539,6 +1605,8 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
             routines=Routines(st),
             store=st,
             ask_bus_dir=ask_bus_dir,
+            project_dir=project_dir,
+            home_base=str(base),
         )
         win.show()
         state["win"] = win  # ref p/ re-ativação idempotente (W5)
