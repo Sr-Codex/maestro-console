@@ -18,7 +18,10 @@ def action_menu_items(
     has_routines: bool,
     team_name: str = "coder-reviewer",
 ) -> list[tuple[str, str]]:
-    items: list[tuple[str, str]] = [("➕ novo terminal", "newterm")]
+    items: list[tuple[str, str]] = [
+        ("➕ novo terminal", "newterm"),
+        ("📁 árvore de arquivos", "filetree"),
+    ]
     if has_controller:
         items.append((f"▶ rodar time ({team_name})", "run_team"))
     if has_controller and has_edges:

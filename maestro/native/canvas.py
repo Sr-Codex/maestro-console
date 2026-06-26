@@ -33,6 +33,7 @@ from ..engine.ask_router import AskRouter, policy_from_env  # noqa: E402
 from ..engine.envelope import EnvelopeState  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from .agents import STATE_COLORS, agent_argv, installed_agents  # noqa: E402
+from .filetree import list_children  # noqa: E402
 from .floors_ui import floor_rows, merge_text, preview_text  # noqa: E402
 from .notes_ui import note_title_display  # noqa: E402
 from .orchestrate import (  # noqa: E402
@@ -153,6 +154,8 @@ class CanvasWindow:
         self.notes = notes  # Notes | None — notas no canvas (V9-S3)
         self.badges = badges or {}  # agente -> cor do badge de papel (V9-S3)
         self.note_frames: dict[str, Gtk.Widget] = {}
+        self._ft_frames: dict[str, Gtk.Widget] = {}  # árvores de arquivos no canvas (Fase B)
+        self._ft_base: dict[str, tuple[float, float]] = {}
         # coords-base independentes do zoom; display = base * zoom (P5)
         self._base_pos: dict[str, tuple[float, float]] = {}
         self._note_base: dict[str, tuple[float, float]] = {}
@@ -287,6 +290,7 @@ class CanvasWindow:
         )
         cbmap = {
             "newterm": self._open_new_terminal_dialog,
+            "filetree": self._create_file_tree,
             "run_team": self._run_team,
             "handoff": self._open_handoff_dialog,
             "note": self._create_note,
@@ -527,7 +531,11 @@ class CanvasWindow:
         Compara com o tamanho atual p/ evitar relayout à toa durante o arrasto.
         """
         z = self.model.zoom()
-        bases = list(self._base_pos.values()) + list(self._note_base.values())
+        bases = (
+            list(self._base_pos.values())
+            + list(self._note_base.values())
+            + list(self._ft_base.values())
+        )
         max_bx = max((b[0] for b in bases), default=0.0)
         max_by = max((b[1] for b in bases), default=0.0)
         max_w = max((s[0] for s in self._node_size.values()), default=BASE_W)
@@ -545,6 +553,8 @@ class CanvasWindow:
             self._place(frame, self._base_pos.get(nid, (0.0, 0.0)), z)
         for note_id, frame in self.note_frames.items():
             self._place(frame, self._note_base.get(note_id, (0.0, 0.0)), z)
+        for fid, frame in self._ft_frames.items():
+            self._place(frame, self._ft_base.get(fid, (0.0, 0.0)), z)
         self.zlabel.set_text(f"zoom {int(z * 100)}%")
         self.plane.queue_draw()
 
@@ -1022,6 +1032,102 @@ class CanvasWindow:
         self._resize_plane()
         self.plane.queue_draw()
         return nid
+
+    # -- árvore de arquivos no canvas (Fase B) --
+    def _ft_root(self) -> str:
+        return str(self.repo) if self.repo else str(Path.home())
+
+    def _create_file_tree(self):
+        root = self._ft_root()
+        n = 1
+        while f"ft-{n}" in self._ft_frames:
+            n += 1
+        fid = f"ft-{n}"
+        frame = Gtk.Frame()
+        frame._ft_id = fid
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        head.add_css_class("nodehead")
+        head.append(Gtk.Label(label=f"  📁 {Path(root).name or root}  "))
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        head.append(spacer)
+        close = Gtk.Button(label="✕")
+        close.set_has_frame(False)
+        close.set_tooltip_text("fechar a árvore de arquivos")
+        close.connect("clicked", lambda _b, i=fid: self._close_file_tree(i))
+        head.append(close)
+        drag = Gtk.GestureDrag()
+        drag.connect("drag-begin", self._ft_drag_begin, frame)
+        drag.connect("drag-update", self._ft_drag_update, frame)
+        drag.connect("drag-end", self._ft_drag_end, frame)
+        head.add_controller(drag)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_vexpand(True)
+        scroller.set_size_request(280, 320)
+        scroller.set_child(self._ft_build_dir(root))
+        box.append(head)
+        box.append(scroller)
+        frame.set_child(box)
+        default = self._next_node_default()
+        self._ft_base[fid] = default
+        self.plane.put(frame, 0, 0)
+        self._place(frame, default, self.model.zoom())
+        self._ft_frames[fid] = frame
+        self._resize_plane()
+        self.plane.queue_draw()
+
+    def _ft_build_dir(self, path: str) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        for e in list_children(path):
+            if e.is_dir:
+                exp = Gtk.Expander(label=f"📁 {e.name}")
+                exp._ft_path = e.path
+                exp._ft_loaded = False
+                exp.connect("notify::expanded", self._ft_on_expand)  # lazy
+                box.append(exp)
+            else:
+                b = Gtk.Button(label=f"📄 {e.name}")
+                b.set_has_frame(False)
+                b.set_halign(Gtk.Align.START)
+                b.set_tooltip_text("clique p/ copiar o caminho")
+                b.connect("clicked", lambda _b, p=e.path: self._ft_copy_path(p))
+                box.append(b)
+        return box
+
+    def _ft_on_expand(self, exp, _param):
+        if exp.get_expanded() and not exp._ft_loaded:
+            exp._ft_loaded = True
+            exp.set_child(self._ft_build_dir(exp._ft_path))  # carrega filhos só ao abrir
+
+    def _ft_copy_path(self, path: str) -> None:
+        try:
+            self.win.get_clipboard().set(path)  # cola num prompt de agente depois
+        except Exception as exc:
+            _log.error("copiar caminho falhou: %s", exc)
+
+    def _ft_drag_begin(self, _g, _x, _y, frame):
+        frame._ft_origin = self._ft_base.get(frame._ft_id, (0.0, 0.0))
+
+    def _ft_drag_update(self, _g, off_x, off_y, frame):
+        o = getattr(frame, "_ft_origin", None)
+        if o is None:
+            return
+        nb = (o[0] + off_x, o[1] + off_y)
+        self._ft_base[frame._ft_id] = nb
+        self._place(frame, nb, self.model.zoom())
+        self._resize_plane()
+
+    def _ft_drag_end(self, _g, _ox, _oy, frame):
+        frame._ft_origin = None
+
+    def _close_file_tree(self, fid: str) -> None:
+        frame = self._ft_frames.pop(fid, None)
+        if frame is None:
+            return
+        self._ft_base.pop(fid, None)
+        self.plane.remove(frame)
+        self.plane.queue_draw()
 
     def _create_note(self):
         if self.notes is None:
