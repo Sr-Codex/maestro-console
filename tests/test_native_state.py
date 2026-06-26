@@ -1,7 +1,16 @@
 """Testes do CanvasModel (V6-S2) — persistência de posições/zoom (sem GTK)."""
 
 from maestro.engine.state.store import Store
-from maestro.native.state import CanvasModel, state_activity, to_base, to_display
+from maestro.native.state import (
+    GRID,
+    CanvasModel,
+    cable_bezier,
+    snap_point,
+    snap_to_grid,
+    state_activity,
+    to_base,
+    to_display,
+)
 
 
 def test_state_activity_por_estado():
@@ -10,6 +19,35 @@ def test_state_activity_por_estado():
     assert state_activity("done") == "concluído"
     assert state_activity("idle") == ""  # ocioso não mostra nada
     assert state_activity("desconhecido") == ""  # fallback seguro
+
+
+# -- C3: snapping à grade --
+def test_snap_to_grid_arredonda_pro_multiplo():
+    assert snap_to_grid(0, GRID) == 0
+    assert snap_to_grid(9, 20) == 0  # mais perto de 0
+    assert snap_to_grid(11, 20) == 20  # mais perto de 20
+    assert snap_to_grid(31, 20) == 40  # 31 -> 40 (mais perto)
+    assert snap_to_grid(123, 0) == 123  # grid inválido não trava
+
+
+def test_snap_point_imanta_xy():
+    assert snap_point((11, 9), 20) == (20, 0)
+
+
+# -- C5: geometria do cabo curvo --
+def test_cable_bezier_pontas_e_controles_horizontais():
+    # origem 0..100 (largura 100, altura 40), destino em x=300
+    x0, y0, c1x, c1y, c2x, c2y, x3, y3 = cable_bezier((0, 0, 100, 40), (300, 0, 100, 40))
+    assert (x0, y0) == (100, 20)  # direita-centro da origem
+    assert (x3, y3) == (300, 20)  # esquerda-centro do destino
+    assert c1y == y0 and c2y == y3  # controles HORIZONTAIS (saída/entrada retas)
+    assert c1x > x0 and c2x < x3  # curva "abre" pros lados
+
+
+def test_cable_bezier_piso_de_curvatura_quando_proximos():
+    # nós sobrepostos/colados: ainda gera curvatura mínima (piso 40)
+    _x0, _y0, c1x, _c1y, c2x, _c2y, _x3, _y3 = cable_bezier((0, 0, 100, 40), (100, 0, 100, 40))
+    assert c1x - 100 == 40 and 100 - c2x == 40  # piso aplicado dos dois lados
 
 
 def test_position_default_e_persistencia(tmp_path):

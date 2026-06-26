@@ -3,6 +3,25 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.20.0] — Geometria do canvas (Fase 2: grid+snapping + cabos curvos)
+- **C3 — Grid + snapping:** grade de pontos sutil no fundo do canvas (desenhada só na
+  viewport, leve no ARM); ao soltar um nó/nota ele **imanta** ao ponto mais próximo da
+  grade, e ao redimensionar o card o tamanho vira **múltiplo da grade**. Alinhamento
+  automático, sem cards "tortos".
+- **C5 — Cabos curvos (tipo corda):** os cabos viram **cubic bezier** (`cr.curve_to`) com
+  pontos de controle horizontais (direção do fluxo), em vez de linha reta — leitura de
+  quem→quem muito melhor. Cor por estado mantida. Ancorado à geometria do C3 (pontas
+  saem de nós já alinhados).
+- **Arrasto estável + magnético (correção de tremor):** o arrasto de nó/nota/árvore
+  passou a ser medido pelo **gesto do plano** (que não se move) em vez de um gesto preso
+  ao próprio cabeçalho — elimina a realimentação que fazia a janela **tremer** (agravado
+  pelo trackball). Padrão recomendado pela comunidade (gist KurtJacobson). Agora a janela
+  **anda de ponto magnético em ponto magnético** durante o arrasto (snap ao vivo).
+- **Desenho só da viewport:** o `do_snapshot` parou de criar uma superfície cairo do
+  plano inteiro (~80 MB) a cada frame; desenha só a parte visível — bem mais leve no ARM.
+- Helpers gi-free testáveis em `state.py`: `snap_to_grid`/`snap_point`/`cable_bezier`.
+- Validado por busca (bezier + drag jitter) + probes ao vivo. Suíte: 374 testes.
+
 ## [0.19.0] — Descoberta & velocidade (Fase 1: ideias de apps parecidos)
 Primeira fase do roadmap de melhorias com identidade própria (não cópia do Maestri),
 colhido de apps da categoria (Warp, Zellij, Linear/Raycast) — ver `docs/09`/`docs/10`.
