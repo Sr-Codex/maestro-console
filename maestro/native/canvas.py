@@ -330,6 +330,34 @@ class CanvasWindow:
             Gtk.StyleContext.add_provider_for_display(
                 display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
             )
+        # C3 (perf): grid como background CSS (composto na GPU) — sem cairo por frame.
+        # Provider próprio: background-size = 20·zoom, atualizado só no zoom.
+        self._grid_provider = Gtk.CssProvider()
+        if display is not None:
+            Gtk.StyleContext.add_provider_for_display(
+                display, self._grid_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1
+            )
+        self._apply_grid()
+
+    def _apply_grid(self) -> None:
+        """Grid de pontos via radial-gradient no CSS do plano (GPU; rola liso, sem lag).
+        Espaçamento = 20·zoom; some em zoom muito baixo."""
+        prov = getattr(self, "_grid_provider", None)
+        if prov is None:
+            return
+        s = GRID * self.model.zoom()
+        if s < 8:  # zoom muito longe: sem grid (evita poluir)
+            css = ".maestro-plane { background-image: none; }"
+        else:
+            css = (
+                ".maestro-plane { background-image: radial-gradient(circle, "
+                "rgba(128,133,159,0.5) 0px, rgba(128,133,159,0.5) 1.4px, transparent 1.8px); "
+                f"background-repeat: repeat; background-size: {s:.1f}px {s:.1f}px; }}"
+            )
+        if hasattr(prov, "load_from_string"):
+            prov.load_from_string(css)
+        else:  # GTK4 < 4.12
+            prov.load_from_data(css.encode())
 
     def _action_spec(self):
         """Ações do app (rótulo, chave) + mapa chave→callback. Reusado pela toolbar (☰)
@@ -756,6 +784,7 @@ class CanvasWindow:
         for fid, frame in self._ft_frames.items():
             self._place(frame, self._ft_base.get(fid, (0.0, 0.0)), z)
         self.zlabel.set_text(f"zoom {int(z * 100)}%")
+        self._apply_grid()  # espaçamento do grid acompanha o zoom
         self.plane.queue_draw()
         self._mm_refresh()
 
@@ -1011,29 +1040,10 @@ class CanvasWindow:
         return False
 
     # -- grid de pontos no fundo do canvas (C3) — só na viewport (leve no ARM) --
-    def _draw_grid_cr(self, cr):
-        z = self.model.zoom()
-        step = GRID * z
-        if step < 6:  # zoom muito longe: pontos colariam -> não desenha
-            return
-        ha, va = self.scrolled.get_hadjustment(), self.scrolled.get_vadjustment()
-        vx0, vy0 = ha.get_value(), va.get_value()
-        vx1 = vx0 + (ha.get_page_size() or self._plane_size[0])
-        vy1 = vy0 + (va.get_page_size() or self._plane_size[1])
-        cr.set_source_rgba(0.35, 0.36, 0.45, 0.45)  # ponto sutil
-        x = (int(vx0 // step)) * step
-        while x <= vx1:
-            y = (int(vy0 // step)) * step
-            while y <= vy1:
-                cr.rectangle(x, y, 1.0, 1.0)
-                y += step
-            x += step
-        cr.fill()
-
     # -- cabos (handoffs): desenhados no snapshot do _Plane --
     def _draw_cables_cr(self, cr):
         z = self.model.zoom()
-        self._draw_grid_cr(cr)  # C3: grid sob os cabos e os nós
+        # grid agora é background CSS (GPU), não cairo — ver _apply_grid()
 
         def box(nid):  # (x,y,w,h) no plano = base*zoom + tamanho do nó * zoom
             bx, by = to_display(self._base_pos.get(nid, (0.0, 0.0)), z)

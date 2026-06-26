@@ -11,7 +11,11 @@ versionamento incremental. Datas em 2026.
   sem querer); 📍↔📌 indica o estado. Persistido.
 - **Migração de schema:** colunas `color`/`pinned` adicionadas à tabela `notes` de forma
   idempotente (ALTER TABLE p/ DBs antigos; `_SCHEMA` p/ novos) — sem perder notas.
-- Validado por busca (color-coding 3–6 cores) + probe ao vivo. Suíte: 379 testes.
+- **Grid liso (cairo → CSS/GPU):** o grid de pontos saiu do desenho cairo por frame (que
+  dava **lag no pan** no ARM) para um **`radial-gradient` no fundo do plano**, composto na
+  **GPU** — rola junto com o canvas sem custo por frame. Espaçamento = 20·zoom (atualizado
+  só no zoom); pontos a 50% de opacidade; somem em zoom muito baixo.
+- Validado por busca (GTK4 GSK/GPU vs cairo) + probe ao vivo. Suíte: 379 testes.
 - Fase 3 quase fechada: falta **C2 (grupos)**.
 
 ## [0.21.0] — Minimapa (Fase 3a: navegação)
