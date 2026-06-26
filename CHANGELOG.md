@@ -3,6 +3,18 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.20.0] — Geometria do canvas (Fase 2: grid+snapping + cabos curvos)
+- **C3 — Grid + snapping:** grade de pontos sutil no fundo do canvas (desenhada só na
+  viewport, leve no ARM); ao soltar um nó/nota ele **imanta** ao ponto mais próximo da
+  grade, e ao redimensionar o card o tamanho vira **múltiplo da grade**. Alinhamento
+  automático, sem cards "tortos".
+- **C5 — Cabos curvos (tipo corda):** os cabos viram **cubic bezier** (`cr.curve_to`) com
+  pontos de controle horizontais (direção do fluxo), em vez de linha reta — leitura de
+  quem→quem muito melhor. Cor por estado mantida. Ancorado à geometria do C3 (pontas
+  saem de nós já alinhados).
+- Helpers gi-free testáveis em `state.py`: `snap_to_grid`/`snap_point`/`cable_bezier`.
+- Validado por busca (bezier de editores de nó) + probe ao vivo. Suíte: 374 testes.
+
 ## [0.19.0] — Descoberta & velocidade (Fase 1: ideias de apps parecidos)
 Primeira fase do roadmap de melhorias com identidade própria (não cópia do Maestri),
 colhido de apps da categoria (Warp, Zellij, Linear/Raycast) — ver `docs/09`/`docs/10`.

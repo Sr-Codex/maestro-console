@@ -96,6 +96,38 @@ def state_activity(state: str) -> str:
     return STATE_ACTIVITY.get(state, "")
 
 
+# C3 — grid + snapping (Fase 2). Passo do grid em coords-base (independe do zoom).
+GRID = 20
+
+
+def snap_to_grid(value: float, grid: int = GRID) -> float:
+    """Arredonda um valor pro múltiplo de `grid` mais próximo (imã do snapping)."""
+    if grid <= 0:
+        return value
+    return round(value / grid) * grid
+
+
+def snap_point(point: tuple[float, float], grid: int = GRID) -> tuple[float, float]:
+    """Imanta um ponto (x, y) à grade — usado ao soltar nó/nota."""
+    return (snap_to_grid(point[0], grid), snap_to_grid(point[1], grid))
+
+
+def cable_bezier(src_box, dst_box):
+    """Curva tipo corda (C5) entre dois nós: cubic bezier da DIREITA da origem
+    pra ESQUERDA do destino, com pontos de controle HORIZONTAIS (direção do fluxo).
+
+    Recebe boxes `(x, y, w, h)` (já em coords de tela/escaladas) e devolve
+    `(x0, y0, c1x, c1y, c2x, c2y, x3, y3)` p/ `cr.move_to`+`cr.curve_to`.
+    """
+    ax, ay, aw, ah = src_box
+    bx, by, _bw, bh = dst_box
+    x0, y0 = ax + aw, ay + ah / 2.0  # direita-centro da origem
+    x3, y3 = bx, by + bh / 2.0  # esquerda-centro do destino
+    # curvatura = metade da distância horizontal, com piso p/ nós próximos/sobrepostos
+    dx = max(abs(x3 - x0) * 0.5, 40.0)
+    return (x0, y0, x0 + dx, y0, x3 - dx, y3, x3, y3)
+
+
 def to_display(base: tuple[float, float], zoom: float) -> tuple[int, int]:
     """Coordenada-base (independente do zoom) -> posição no plano: display = base * zoom."""
     return (round(base[0] * zoom), round(base[1] * zoom))

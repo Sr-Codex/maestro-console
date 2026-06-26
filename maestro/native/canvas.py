@@ -50,7 +50,16 @@ from .orchestrate import (  # noqa: E402
 )
 from .palette import build_action_items, build_palette_items, fuzzy, hintbar_text  # noqa: E402
 from .routines_ui import parse_steps, routine_rows  # noqa: E402
-from .state import CanvasModel, EdgeModel, state_activity, to_display  # noqa: E402
+from .state import (  # noqa: E402
+    GRID,
+    CanvasModel,
+    EdgeModel,
+    cable_bezier,
+    snap_point,
+    snap_to_grid,
+    state_activity,
+    to_display,
+)
 from .themes import get_theme, theme_names  # noqa: E402
 from .toolbar import action_menu_items  # noqa: E402
 
@@ -480,7 +489,9 @@ class CanvasWindow:
         if getattr(frame, "_origin_base", None) is None:
             return
         frame._origin_base = None
-        bx, by = self._base_pos.get(nid, (0.0, 0.0))
+        bx, by = snap_point(self._base_pos.get(nid, (0.0, 0.0)), GRID)  # C3: imanta à grade
+        self._base_pos[nid] = (bx, by)
+        self._place(frame, (bx, by), self.model.zoom())  # reposiciona alinhado
         self.model.set_position(nid, bx, by)  # persiste em coords-base
         self.plane.queue_draw()
 
@@ -506,7 +517,16 @@ class CanvasWindow:
     def _resize_node_end(self, _g, _ox, _oy, nid):
         self._resize_origin = None
         w, h = self._node_size.get(nid, (BASE_W, BASE_H))
+        w = max(MIN_NODE_W, snap_to_grid(w, GRID))  # C3: tamanho imanta à grade
+        h = max(MIN_NODE_H, snap_to_grid(h, GRID))
+        self._node_size[nid] = (w, h)
+        frame = self.frames.get(nid)
+        term = getattr(frame, "_term", None) if frame is not None else None
+        if term is not None:
+            term.set_size_request(int(w), int(h))  # reflui VTE p/ o tamanho alinhado
         self.model.set_node_size(nid, w, h)  # persiste o tamanho
+        self._resize_plane()
+        self.plane.queue_draw()
 
     def _maybe_rename(self, _gesture, n_press, _x, _y, nid):
         if n_press >= 2:  # duplo-clique
@@ -846,9 +866,30 @@ class CanvasWindow:
             return True
         return False
 
+    # -- grid de pontos no fundo do canvas (C3) — só na viewport (leve no ARM) --
+    def _draw_grid_cr(self, cr):
+        z = self.model.zoom()
+        step = GRID * z
+        if step < 6:  # zoom muito longe: pontos colariam -> não desenha
+            return
+        ha, va = self.scrolled.get_hadjustment(), self.scrolled.get_vadjustment()
+        vx0, vy0 = ha.get_value(), va.get_value()
+        vx1 = vx0 + (ha.get_page_size() or self._plane_size[0])
+        vy1 = vy0 + (va.get_page_size() or self._plane_size[1])
+        cr.set_source_rgba(0.35, 0.36, 0.45, 0.45)  # ponto sutil
+        x = (int(vx0 // step)) * step
+        while x <= vx1:
+            y = (int(vy0 // step)) * step
+            while y <= vy1:
+                cr.rectangle(x, y, 1.0, 1.0)
+                y += step
+            x += step
+        cr.fill()
+
     # -- cabos (handoffs): desenhados no snapshot do _Plane --
     def _draw_cables_cr(self, cr):
         z = self.model.zoom()
+        self._draw_grid_cr(cr)  # C3: grid sob os cabos e os nós
 
         def box(nid):  # (x,y,w,h) no plano = base*zoom + tamanho do nó * zoom
             bx, by = to_display(self._base_pos.get(nid, (0.0, 0.0)), z)
@@ -857,6 +898,7 @@ class CanvasWindow:
 
         # SÓ cabos EXPLÍCITOS do usuário (sem auto-conexão por ordem): o usuário
         # decide se/quem conectar (modo conectar). Cor azul; estado durante handoff.
+        # C5: curva tipo corda (bezier) em vez de reta — leitura de direção/fluxo.
         if self.edges is not None:
             cr.set_line_width(2.5)
             for src, dst in self.edges.list():
@@ -868,10 +910,9 @@ class CanvasWindow:
                     cr.set_source_rgb(c.red, c.green, c.blue)
                 else:
                     cr.set_source_rgb(0.23, 0.51, 0.96)
-                ax, ay, aw, ah = box(src)
-                bx, by, _bw, bh = box(dst)
-                cr.move_to(ax + aw, ay + ah / 2)
-                cr.line_to(bx, by + bh / 2)
+                x0, y0, c1x, c1y, c2x, c2y, x3, y3 = cable_bezier(box(src), box(dst))
+                cr.move_to(x0, y0)
+                cr.curve_to(c1x, c1y, c2x, c2y, x3, y3)
                 cr.stroke()
 
     # -- rodar time da engine (headless) refletindo nas cores --
@@ -1398,6 +1439,9 @@ class CanvasWindow:
     def _note_drag_end(self, _g, _ox, _oy, frame):
         if getattr(frame, "_norigin_base", None) is not None:
             frame._norigin_base = None
+            nb = snap_point(self._note_base.get(frame._note_id, (0.0, 0.0)), GRID)  # C3
+            self._note_base[frame._note_id] = nb
+            self._place(frame, nb, self.model.zoom())  # reposiciona alinhado
             self._save_note(frame)  # persiste título/corpo/posição (coords-base)
 
     def _close_note(self, frame) -> None:
