@@ -140,9 +140,15 @@ class _Plane(Gtk.Fixed):
     def do_snapshot(self, snapshot):  # pragma: no cover - precisa de GTK
         o = self._owner
         if o is not None:
-            w, h = self.get_width(), self.get_height()
-            if w > 0 and h > 0:
-                cr = snapshot.append_cairo(Graphene.Rect().init(0, 0, w, h))
+            # Superfície cairo SÓ da viewport (não do plano inteiro 5000×4000): evita
+            # alocar ~80MB por frame e travar o arrasto no ARM. Desenho em coords-plano;
+            # o rect só limita/recorta a área rasterizada.
+            ha, va = o.scrolled.get_hadjustment(), o.scrolled.get_vadjustment()
+            vx, vy = ha.get_value(), va.get_value()
+            vw = ha.get_page_size() or self.get_width()
+            vh = va.get_page_size() or self.get_height()
+            if vw > 0 and vh > 0:
+                cr = snapshot.append_cairo(Graphene.Rect().init(vx, vy, vw, vh))
                 o._draw_cables_cr(cr)
         Gtk.Fixed.do_snapshot(self, snapshot)
 
@@ -194,6 +200,8 @@ class CanvasWindow:
         self.order: list[str] = []
         self._connect_mode = False
         self._connect_src: str | None = None
+        self._pan = None  # estado do pan da vista (fundo)
+        self._drag = None  # estado do arrasto de nó (via gesto do plano, estável)
         self._edge_state: dict[tuple[str, str], str] = {}  # cor do cabo por handoff (V7-S4)
         self._active_edge: tuple[str, str] | None = None
         self._pan: tuple[float, float] | None = None
@@ -234,6 +242,7 @@ class CanvasWindow:
         pan = Gtk.GestureDrag()
         pan.connect("drag-begin", self._pan_begin)
         pan.connect("drag-update", self._pan_update)
+        pan.connect("drag-end", self._pan_end)
         self.plane.add_controller(pan)
         self.scrolled.set_child(self.plane)
         root.append(self.scrolled)
@@ -411,12 +420,10 @@ class CanvasWindow:
         nclose.set_tooltip_text("fechar este terminal (remove do canvas nesta sessão)")
         nclose.connect("clicked", lambda _b, n=nid: self._close_node(n))
         head.append(nclose)
-        # arrastar o nó pelo título (ou, em modo conexão, escolher origem/destino)
-        drag = Gtk.GestureDrag()
-        drag.connect("drag-begin", self._node_drag_begin, frame)
-        drag.connect("drag-update", self._node_drag_update, frame)
-        drag.connect("drag-end", self._node_drag_end, frame, nid)
-        head.add_controller(drag)
+        # Arrastar o nó: tratado pelo gesto do PLANO (estável), NÃO por um gesto preso
+        # ao próprio cabeçalho — senão a referência se move junto e dá tremor (gist
+        # KurtJacobson). A tag _drag_nid identifica o head como alça de arrasto.
+        head._drag_nid = nid
         self.heads[nid] = head
         term = make_terminal(argv)
         frame._term = term  # ref p/ remover de self.terms ao fechar o nó
@@ -460,40 +467,7 @@ class CanvasWindow:
         px, py = to_display(base, z)
         self.plane.set_child_transform(child, _plane_xform(px, py, z))
 
-    # -- arrastar nó (por título) via GestureDrag --
-    def _node_drag_begin(self, _g, _x, _y, frame):
-        if self._connect_mode:
-            frame._connecting = True
-            self._connect_pick(frame._nid)
-            return
-        frame._connecting = False
-        frame._origin_base = self._base_pos.get(frame._nid, (0.0, 0.0))
-
-    def _node_drag_update(self, _g, off_x, off_y, frame):
-        if getattr(frame, "_connecting", False):
-            return
-        o = getattr(frame, "_origin_base", None)
-        if o is None:
-            return
-        # offset vem em coords do nó (escaladas por z); base-delta = (off*z)/z = off
-        nb = (o[0] + off_x, o[1] + off_y)
-        self._base_pos[frame._nid] = nb
-        self._place(frame, nb, self.model.zoom())
-        self._resize_plane()
-        self.plane.queue_draw()
-
-    def _node_drag_end(self, _g, _ox, _oy, frame, nid):
-        if getattr(frame, "_connecting", False):
-            frame._connecting = False
-            return
-        if getattr(frame, "_origin_base", None) is None:
-            return
-        frame._origin_base = None
-        bx, by = snap_point(self._base_pos.get(nid, (0.0, 0.0)), GRID)  # C3: imanta à grade
-        self._base_pos[nid] = (bx, by)
-        self._place(frame, (bx, by), self.model.zoom())  # reposiciona alinhado
-        self.model.set_position(nid, bx, by)  # persiste em coords-base
-        self.plane.queue_draw()
+    # (arrastar nó: agora via o gesto do PLANO — ver _pan_begin/_pan_update/_pan_end)
 
     # -- redimensionar um card (arrastar a alça ⤡) --
     def _resize_node_begin(self, _g, _x, _y, nid):
@@ -609,25 +583,97 @@ class CanvasWindow:
                 lbl.set_text(f"{i} " if i <= 9 else "")
 
     # -- pan (arrastar fundo) --
-    def _pan_begin(self, gesture, x, y):
-        picked = self.plane.pick(x, y, Gtk.PickFlags.DEFAULT)
+    # Arrasto unificado pelo gesto do PLANO (estável) — nó, nota e árvore de arquivos.
+    def _drag_store(self, kind):
+        return {"node": self._base_pos, "note": self._note_base, "ft": self._ft_base}[kind]
+
+    def _drag_frame(self, kind, tid):
+        maps = {"node": self.frames, "note": self.note_frames, "ft": self._ft_frames}
+        return maps[kind].get(tid)
+
+    def _drag_handle(self, picked):
+        """Sobe da widget escolhida até achar uma ALÇA de arrasto (head de nó/nota/árvore).
+        Devolve (kind, id) ou None. Botões (✕) e campos de texto não arrastam (deixam
+        fechar/editar)."""
         w = picked
-        while w is not None and w is not self.plane:  # caiu sobre um nó/nota? não faz pan
-            if getattr(w, "_nid", None) or getattr(w, "_note_id", None):
-                self._pan = None
+        while w is not None and w is not self.plane:
+            if isinstance(w, (Gtk.Button, Gtk.Entry, Gtk.Text)):
+                return None
+            for attr, kind in (("_drag_nid", "node"), ("_drag_note", "note"), ("_drag_ft", "ft")):
+                tid = getattr(w, attr, None)
+                if tid is not None:
+                    return (kind, tid)
+            w = w.get_parent()
+        return None
+
+    def _over_child(self, picked) -> bool:
+        """True se o ponto caiu sobre um nó/nota/árvore (não no fundo do plano)."""
+        w = picked
+        while w is not None and w is not self.plane:
+            if getattr(w, "_nid", None) or getattr(w, "_note_id", None) or getattr(w, "_ft_id", None):
+                return True
+            w = w.get_parent()
+        return False
+
+    def _pan_begin(self, gesture, x, y):
+        # x,y vêm em coords do PLANO (gesto preso ao plano, que NÃO se move) -> estável.
+        picked = self.plane.pick(x, y, Gtk.PickFlags.DEFAULT)
+        self._pan = None
+        self._drag = None
+        target = self._drag_handle(picked)
+        if target is not None:  # alça: conectar (nó, se no modo) ou mover
+            kind, tid = target
+            if kind == "node" and self._connect_mode:
+                self._connect_pick(tid)
                 gesture.set_state(Gtk.EventSequenceState.DENIED)
                 return
-            w = w.get_parent()
-        self._pan = (
+            self._drag = {"kind": kind, "id": tid, "base": self._drag_store(kind).get(tid, (0.0, 0.0))}
+            return
+        if self._over_child(picked):  # corpo do nó/nota/árvore: deixa o filho interagir
+            gesture.set_state(Gtk.EventSequenceState.DENIED)
+            return
+        self._pan = (  # fundo: pan da vista
             self.scrolled.get_hadjustment().get_value(),
             self.scrolled.get_vadjustment().get_value(),
         )
 
     def _pan_update(self, _g, off_x, off_y):
+        if self._drag is not None:  # mover: off em coords-PLANO (estável) -> base = off/z
+            z = self.model.zoom()
+            o = self._drag["base"]
+            # imanta À GRADE já durante o arrasto: a janela "anda" de ponto em ponto
+            nb = snap_point((o[0] + off_x / z, o[1] + off_y / z), GRID)
+            kind, tid = self._drag["kind"], self._drag["id"]
+            store = self._drag_store(kind)
+            if nb != store.get(tid):
+                store[tid] = nb
+                frame = self._drag_frame(kind, tid)
+                if frame is not None:
+                    self._place(frame, nb, z)
+                self.plane.queue_draw()
+            return
         if self._pan is None:
             return
         self.scrolled.get_hadjustment().set_value(self._pan[0] - off_x)
         self.scrolled.get_vadjustment().set_value(self._pan[1] - off_y)
+
+    def _pan_end(self, _g, _ox, _oy):
+        if self._drag is not None:  # soltou: imanta à grade + persiste (C3)
+            kind, tid = self._drag["kind"], self._drag["id"]
+            self._drag = None
+            store = self._drag_store(kind)
+            bx, by = snap_point(store.get(tid, (0.0, 0.0)), GRID)
+            store[tid] = (bx, by)
+            frame = self._drag_frame(kind, tid)
+            if frame is not None:
+                self._place(frame, (bx, by), self.model.zoom())
+            if kind == "node":
+                self.model.set_position(tid, bx, by)  # persiste posição do nó
+            elif kind == "note" and frame is not None:
+                self._save_note(frame)  # persiste posição da nota
+            self._resize_plane()
+            self.plane.queue_draw()
+        self._pan = None
 
     # -- zoom: escala o PLANO (posição + transform); terminal mantém alocação/PTY --
     def _zoom(self, dz):
@@ -1272,11 +1318,7 @@ class CanvasWindow:
         close.set_tooltip_text("fechar a árvore de arquivos")
         close.connect("clicked", lambda _b, i=fid: self._close_file_tree(i))
         head.append(close)
-        drag = Gtk.GestureDrag()
-        drag.connect("drag-begin", self._ft_drag_begin, frame)
-        drag.connect("drag-update", self._ft_drag_update, frame)
-        drag.connect("drag-end", self._ft_drag_end, frame)
-        head.add_controller(drag)
+        head._drag_ft = fid  # arrasto via gesto do PLANO (estável) — ver _pan_*
         scroller = Gtk.ScrolledWindow()
         scroller.set_vexpand(True)
         scroller.set_size_request(280, 320)
@@ -1321,21 +1363,6 @@ class CanvasWindow:
         except Exception as exc:
             _log.error("copiar caminho falhou: %s", exc)
 
-    def _ft_drag_begin(self, _g, _x, _y, frame):
-        frame._ft_origin = self._ft_base.get(frame._ft_id, (0.0, 0.0))
-
-    def _ft_drag_update(self, _g, off_x, off_y, frame):
-        o = getattr(frame, "_ft_origin", None)
-        if o is None:
-            return
-        nb = (o[0] + off_x, o[1] + off_y)
-        self._ft_base[frame._ft_id] = nb
-        self._place(frame, nb, self.model.zoom())
-        self._resize_plane()
-
-    def _ft_drag_end(self, _g, _ox, _oy, frame):
-        frame._ft_origin = None
-
     def _close_file_tree(self, fid: str) -> None:
         frame = self._ft_frames.pop(fid, None)
         if frame is None:
@@ -1370,11 +1397,7 @@ class CanvasWindow:
         nclose.set_tooltip_text("apagar esta nota")
         nclose.connect("clicked", lambda _b, fr=frame: self._close_note(fr))
         head.append(nclose)
-        ndrag = Gtk.GestureDrag()
-        ndrag.connect("drag-begin", self._note_drag_begin, frame)
-        ndrag.connect("drag-update", self._note_drag_update, frame)
-        ndrag.connect("drag-end", self._note_drag_end, frame)
-        head.add_controller(ndrag)
+        head._drag_note = note.id  # arrasto via gesto do PLANO (estável) — ver _pan_*
         # corpo (markdown editável)
         body = Gtk.TextView()
         body.set_wrap_mode(Gtk.WrapMode.WORD)
@@ -1423,26 +1446,6 @@ class CanvasWindow:
         note.x, note.y = self._note_base.get(frame._note_id, (0.0, 0.0))  # coords-base
         self.notes.save(note)
         return False
-
-    def _note_drag_begin(self, _g, _x, _y, frame):
-        frame._norigin_base = self._note_base.get(frame._note_id, (0.0, 0.0))
-
-    def _note_drag_update(self, _g, off_x, off_y, frame):
-        o = getattr(frame, "_norigin_base", None)
-        if o is None:
-            return
-        nb = (o[0] + off_x, o[1] + off_y)  # base-delta = off (ver _node_drag_update)
-        self._note_base[frame._note_id] = nb
-        self._place(frame, nb, self.model.zoom())
-        self._resize_plane()
-
-    def _note_drag_end(self, _g, _ox, _oy, frame):
-        if getattr(frame, "_norigin_base", None) is not None:
-            frame._norigin_base = None
-            nb = snap_point(self._note_base.get(frame._note_id, (0.0, 0.0)), GRID)  # C3
-            self._note_base[frame._note_id] = nb
-            self._place(frame, nb, self.model.zoom())  # reposiciona alinhado
-            self._save_note(frame)  # persiste título/corpo/posição (coords-base)
 
     def _close_note(self, frame) -> None:
         """Apaga a nota (persistente, via Notes.delete) e remove o widget do canvas."""
