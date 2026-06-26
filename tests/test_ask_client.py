@@ -103,3 +103,16 @@ def test_agent_argv_monta_mailbox_e_env(tmp_path):
     assert "MAESTRO_ASK_BUS" in argv
     # mailbox no PATH -> agente chama 'maestro-ask' direto (sem caminho absoluto)
     assert "PATH" in argv and any(a.startswith(f"{bus}:") for a in argv)
+    # IA roda DENTRO de um shell: ao sair dela, cai num shell normal
+    assert "/bin/bash" in argv and any("exec /bin/bash" in a for a in argv)
+
+
+@pytest.mark.skipif(not bwrap_available(), reason="bwrap ausente")
+def test_agent_argv_cai_no_shell_ao_sair_da_ia(tmp_path):
+    class _Prof:
+        cmd = ["claude"]
+        rw_paths = []
+
+    argv = agent_argv(_Prof(), str(tmp_path / "ws"))
+    inner = argv[argv.index("--") + 1 :]  # comando após o '--' do bwrap
+    assert inner == ["/bin/bash", "-c", "claude; exec /bin/bash -i"]
