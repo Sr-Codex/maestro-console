@@ -27,6 +27,19 @@ def test_completo_inclui_todos_na_ordem():
     assert ("🗂️ workspaces", "workspaces") in items
 
 
+def test_has_groups_adiciona_item():
+    sem = action_menu_items(
+        has_controller=False, has_edges=False, has_notes=False, has_floors=False,
+        has_routines=False, has_groups=False,
+    )
+    com = action_menu_items(
+        has_controller=False, has_edges=False, has_notes=False, has_floors=False,
+        has_routines=False, has_groups=True,
+    )
+    assert ("⬚ novo grupo", "group") not in sem
+    assert ("⬚ novo grupo", "group") in com
+
+
 def test_sempre_presentes_sem_nada():
     # ➕ novo terminal e 📁 árvore não dependem de nada (funcionam sem controller)
     items = action_menu_items(

@@ -3,6 +3,26 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.23.0] — Grupos/áreas (Fase 3c: C2) — fecha a Fase 3
+- **C2 — Grupos/áreas:** ☰ → **⬚ novo grupo** cria um retângulo rotulado e colorido
+  **atrás** dos nós (desenhado via cairo, sob cabos e nós). **Arrastar o grupo pela faixa
+  do título move os nós contidos junto** (estilo ComfyUI/Blender). Alça no canto inferior
+  direito **redimensiona**; **duplo-clique no título** abre o diálogo (renomear, escolher
+  **cor** entre 5, **apagar** — sem apagar os nós). Tudo imanta à grade e persiste.
+- Engine: `engine/groups.py` (Group + Groups CRUD) + tabela `groups` (no backup/restore).
+- Hit-test próprio (faixa do título arrasta, canto redimensiona, corpo deixa passar o
+  clique p/ nós/pan). Grupos também entram no cálculo da área rolável.
+- **Auto-fit (abraça o conteúdo):** o grupo **cresce E encolhe** pra envolver os itens
+  contidos com **margem** (16px laterais/topo + faixa do título; **50px na base**), ao
+  vivo durante o arrasto. Item conta como "dentro" ao **sobrepor ~25%** (não precisa 100%).
+  Mede o **card inteiro** (cabeçalho+corpo+rodapé), então a margem vale igual p/ terminal,
+  nota e árvore. Resize **manual** vira piso (primeira opção). **Alça de resize visível**
+  no canto.
+- **Fix de render no pan:** a superfície cairo passou a cobrir o **conteúdo** (grupos+cabos)
+  em vez da viewport — ao rolar não some mais metade do desenho (o GTK desloca o snapshot).
+- **+7 testes** (suíte **386**) + probe ao vivo. Validado por busca (UX de grupos em
+  editores de nó). **Conclui a Fase 3** (C1 minimapa + C4 notas + C2 grupos).
+
 ## [0.22.0] — Notas com cor e pin (Fase 3b: C4)
 - **C4 — Cor da nota:** botão 🎨 no cabeçalho abre uma paleta de **5 cores** (amarelo,
   verde, azul, rosa, lilás) pra categorizar visualmente (estilo Post-it). A cor pinta o

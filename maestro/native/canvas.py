@@ -77,6 +77,13 @@ NOTE_COLORS = {
     "mauve": "#cba6f7",
 }
 NOTE_COLOR_DEFAULT = "yellow"
+# C2: geometria dos grupos (coords-base; *zoom na hora de desenhar)
+GROUP_TITLE_H = 22  # faixa do título (alça de arrasto)
+GROUP_MIN_W, GROUP_MIN_H = 200, 140
+GROUP_CORNER = 16  # quadradinho de resize no canto inf-direito (px de tela)
+GROUP_PAD = 16  # respiro (margem) entre a borda do grupo e os itens contidos (auto-fit)
+GROUP_PAD_BOTTOM = 50  # margem inferior maior (equilibra com o topo, que tem a faixa do título)
+GROUP_MEMBER_FRAC = 0.25  # item conta como "dentro" ao sobrepor >=25% (não precisa 100%)
 # estado: cor + FORMA + tooltip (acessibilidade: não depender só da cor) — UI-1
 _STATE_GLYPH = {"idle": "●", "busy": "◐", "blocked": "▲", "failed": "✕", "done": "✓"}
 _STATE_PT = {
@@ -150,15 +157,13 @@ class _Plane(Gtk.Fixed):
     def do_snapshot(self, snapshot):  # pragma: no cover - precisa de GTK
         o = self._owner
         if o is not None:
-            # Superfície cairo SÓ da viewport (não do plano inteiro 5000×4000): evita
-            # alocar ~80MB por frame e travar o arrasto no ARM. Desenho em coords-plano;
-            # o rect só limita/recorta a área rasterizada.
-            ha, va = o.scrolled.get_hadjustment(), o.scrolled.get_vadjustment()
-            vx, vy = ha.get_value(), va.get_value()
-            vw = ha.get_page_size() or self.get_width()
-            vh = va.get_page_size() or self.get_height()
-            if vw > 0 and vh > 0:
-                cr = snapshot.append_cairo(Graphene.Rect().init(vx, vy, vw, vh))
+            # Superfície cairo cobre o CONTEÚDO (grupos+cabos), não a viewport: ao rolar,
+            # o GTK reaproveita/desloca o snapshot do plano, então limitar à viewport
+            # deixava metade em branco. Cobrir o conteúdo evita isso E não aloca o plano
+            # inteiro (5000×4000 ~80MB) — só a área onde há coisas.
+            b = o._cairo_bounds()
+            if b is not None:
+                cr = snapshot.append_cairo(Graphene.Rect().init(*b))
                 o._draw_cables_cr(cr)
         Gtk.Fixed.do_snapshot(self, snapshot)
 
@@ -182,6 +187,7 @@ class CanvasWindow:
         ask_bus_dir=None,
         project_dir=None,
         home_base=None,
+        groups=None,
     ):
         self.model = model
         self._project_dir = project_dir  # raiz do projeto (workspace atual) p/ File Tree
@@ -213,6 +219,14 @@ class CanvasWindow:
         self._pan = None  # estado do pan da vista (fundo)
         self._drag = None  # estado do arrasto de nó (via gesto do plano, estável)
         self._note_pinned: set[str] = set()  # notas fixadas (não arrastam) — C4
+        self.groups = groups  # Groups | None — grupos/áreas (C2), desenhados via cairo
+        self._group_base: dict[str, tuple[float, float]] = {}  # EXIBIDO (auto-fit)
+        self._group_size: dict[str, tuple[float, float]] = {}  # EXIBIDO (auto-fit)
+        self._group_manual: dict[str, tuple[float, float, float, float]] = {}  # piso (x,y,w,h)
+        self._group_color: dict[str, str] = {}
+        self._group_title: dict[str, str] = {}
+        self._group_user_sized: set[str] = set()  # grupos redimensionados de propósito (piso)
+        self._group_resize = None  # estado do resize de grupo (alça canto inf-dir)
         self._edge_state: dict[tuple[str, str], str] = {}  # cor do cabo por handoff (V7-S4)
         self._active_edge: tuple[str, str] | None = None
         self._pan: tuple[float, float] | None = None
@@ -257,6 +271,9 @@ class CanvasWindow:
         pan.connect("drag-update", self._pan_update)
         pan.connect("drag-end", self._pan_end)
         self.scrolled.add_controller(pan)
+        dbl = Gtk.GestureClick()  # C2: duplo-clique na faixa do grupo -> editar/renomear
+        dbl.connect("pressed", self._on_canvas_click)
+        self.scrolled.add_controller(dbl)
         self.scrolled.set_child(self.plane)
         # C1: minimapa sobreposto (canto inf-direito) p/ navegar canvas grande
         overlay = Gtk.Overlay()
@@ -282,6 +299,9 @@ class CanvasWindow:
         root.append(self._hint_lbl)
         self.win.set_child(root)
 
+        if self.groups is not None:  # carrega grupos (desenhados atrás dos nós) — C2
+            for g in self.groups.list():
+                self._load_group(g)
         for i, (nid, title, argv) in enumerate(nodes):
             self._add_node(nid, title, argv, default=(60 + i * 460, 60))
         if self.notes is not None:  # restaura notas salvas (V9-S3)
@@ -369,6 +389,7 @@ class CanvasWindow:
             has_floors=self.floors is not None,
             has_routines=self.routines is not None,
             team_name=self.run_team_name,
+            has_groups=self.groups is not None,
         )
         cbmap = {
             "newterm": self._open_new_terminal_dialog,
@@ -379,6 +400,7 @@ class CanvasWindow:
             "note": self._create_note,
             "floors": self._open_floors_dialog,
             "routines": self._open_routines_dialog,
+            "group": self._create_group,
         }
         return spec, cbmap
 
@@ -526,6 +548,7 @@ class CanvasWindow:
         self.order.append(nid)
         self._renumber_nodes()  # atualiza os números de posição (Ctrl+Shift+N) [A.2]
         self._mm_refresh()  # C1: novo nó aparece no minimapa
+        self._autofit_all_groups()  # C2: se o nó nasceu dentro de um grupo, ele abraça
 
     def _place(self, child, base, z) -> None:
         """Posiciona+escala o child com UM transform único (ver _plane_xform)."""
@@ -564,6 +587,7 @@ class CanvasWindow:
         if term is not None:
             term.set_size_request(int(w), int(h))  # reflui VTE p/ o tamanho alinhado
         self.model.set_node_size(nid, w, h)  # persiste o tamanho
+        self._autofit_all_groups()  # C2: grupo cresce se o nó ficou maior que ele
         self._resize_plane()
         self.plane.queue_draw()
 
@@ -683,13 +707,27 @@ class CanvasWindow:
             w = w.get_parent()
         return False
 
+    def _on_canvas_click(self, _g, n_press, x, y):
+        if n_press < 2:  # só duplo-clique
+            return
+        ha, va = self.scrolled.get_hadjustment(), self.scrolled.get_vadjustment()
+        px, py = x + ha.get_value(), y + va.get_value()
+        picked = self.plane.pick(px, py, Gtk.PickFlags.DEFAULT)
+        if self._drag_handle(picked) is not None or self._over_child(picked):
+            return  # clique sobre nó/nota/árvore: deixa eles tratarem (ex.: renomear nó)
+        gid = self._group_title_band_hit(px, py)
+        if gid is not None:
+            self._group_dialog(gid)
+
     def _pan_begin(self, gesture, x, y):
         # x,y vêm em coords da SCROLLEDWINDOW (não rola) -> referência estável (sem tremor).
         # Pro pick, traduz p/ coords do PLANO somando o scroll atual.
         ha, va = self.scrolled.get_hadjustment(), self.scrolled.get_vadjustment()
-        picked = self.plane.pick(x + ha.get_value(), y + va.get_value(), Gtk.PickFlags.DEFAULT)
+        px, py = x + ha.get_value(), y + va.get_value()  # coords do PLANO
+        picked = self.plane.pick(px, py, Gtk.PickFlags.DEFAULT)
         self._pan = None
         self._drag = None
+        self._group_resize = None
         target = self._drag_handle(picked)
         if target is not None:  # alça: conectar (nó, se no modo) ou mover
             kind, tid = target
@@ -702,14 +740,49 @@ class CanvasWindow:
         if self._over_child(picked):  # corpo do nó/nota/árvore: deixa o filho interagir
             gesture.set_state(Gtk.EventSequenceState.DENIED)
             return
+        # C2: grupos (cairo) — resize no canto tem prioridade sobre arrasto pela faixa
+        gid = self._group_corner_hit(px, py)
+        if gid is not None:
+            self._group_resize = {"id": gid, "size": self._group_size.get(gid, (600.0, 360.0))}
+            return
+        gid = self._group_title_band_hit(px, py)
+        if gid is not None:  # arrasta o grupo + os nós contidos (move junto)
+            self._drag = {
+                "kind": "group",
+                "id": gid,
+                "base": self._group_base.get(gid, (0.0, 0.0)),
+                "members": self._group_members(gid),
+            }
+            return
         self._pan = (  # fundo: pan da vista
             self.scrolled.get_hadjustment().get_value(),
             self.scrolled.get_vadjustment().get_value(),
         )
 
     def _pan_update(self, _g, off_x, off_y):
+        z = self.model.zoom()
+        if self._group_resize is not None:  # C2: redimensiona o grupo
+            gid, o = self._group_resize["id"], self._group_resize["size"]
+            w = max(GROUP_MIN_W, o[0] + off_x / z)
+            h = max(GROUP_MIN_H, o[1] + off_y / z)
+            self._group_size[gid] = (w, h)
+            self.plane.queue_draw()
+            return
+        if self._drag is not None and self._drag["kind"] == "group":  # C2: move grupo+membros
+            o, gid = self._drag["base"], self._drag["id"]
+            nb = snap_point((o[0] + off_x / z, o[1] + off_y / z), GRID)
+            if nb != self._group_base.get(gid):
+                dx, dy = nb[0] - o[0], nb[1] - o[1]
+                self._group_base[gid] = nb
+                for (kind, iid), mbase in self._drag["members"].items():
+                    mb = (mbase[0] + dx, mbase[1] + dy)
+                    self._drag_store(kind)[iid] = mb
+                    fr = self._drag_frame(kind, iid)
+                    if fr is not None:
+                        self._place(fr, mb, z)
+                self.plane.queue_draw()
+            return
         if self._drag is not None:  # mover: off em coords-PLANO (estável) -> base = off/z
-            z = self.model.zoom()
             o = self._drag["base"]
             # imanta À GRADE já durante o arrasto: a janela "anda" de ponto em ponto
             nb = snap_point((o[0] + off_x / z, o[1] + off_y / z), GRID)
@@ -720,6 +793,8 @@ class CanvasWindow:
                 frame = self._drag_frame(kind, tid)
                 if frame is not None:
                     self._place(frame, nb, z)
+                for gid in self._group_base:  # C2: grupo abraça AO VIVO durante o arrasto
+                    self._autofit_group(gid)
                 self.plane.queue_draw()
             return
         if self._pan is None:
@@ -728,6 +803,45 @@ class CanvasWindow:
         self.scrolled.get_vadjustment().set_value(self._pan[1] - off_y)
 
     def _pan_end(self, _g, _ox, _oy):
+        if self._group_resize is not None:  # C2: fim do resize MANUAL do grupo (vira o piso)
+            gid = self._group_resize["id"]
+            self._group_resize = None
+            w, h = self._group_size.get(gid, (600.0, 360.0))
+            w = max(GROUP_MIN_W, snap_to_grid(w, GRID))
+            h = max(GROUP_MIN_H, snap_to_grid(h, GRID))
+            gx, gy = self._group_base.get(gid, (0.0, 0.0))
+            self._group_manual[gid] = (gx, gy, w, h)  # piso = retângulo manual atual
+            self._group_user_sized.add(gid)  # a partir daqui o manual é piso (primeira opção)
+            self._autofit_group(gid)  # ainda cresce se um nó passar do piso
+            m = self._group_manual[gid]
+            if self.groups is not None:
+                self.groups.set_rect(gid, m[0], m[1], m[2], m[3])
+            self._resize_plane()
+            self.plane.queue_draw()
+            self._mm_refresh()
+            return
+        if self._drag is not None and self._drag["kind"] == "group":  # C2: fim do move do grupo
+            gid = self._drag["id"]
+            members = self._drag.get("members", {})
+            self._drag = None
+            gx, gy = self._group_base.get(gid, (0.0, 0.0))
+            gw, gh = self._group_size.get(gid, (600.0, 360.0))
+            self._group_manual[gid] = (gx, gy, gw, gh)  # piso acompanha o move
+            for kind, iid in members:  # persiste cada item que moveu junto
+                if kind == "node" and iid in self._base_pos:
+                    self.model.set_position(iid, *self._base_pos[iid])
+                elif kind == "note":
+                    fr = self.note_frames.get(iid)
+                    if fr is not None:
+                        self._save_note(fr)
+                # ft: posição não é persistida (efêmera)
+            self._autofit_group(gid)
+            if self.groups is not None:
+                self.groups.set_rect(gid, gx, gy, gw, gh)  # persiste grupo (piso)
+            self._resize_plane()
+            self.plane.queue_draw()
+            self._mm_refresh()
+            return
         if self._drag is not None:  # soltou: imanta à grade + persiste (C3)
             kind, tid = self._drag["kind"], self._drag["id"]
             self._drag = None
@@ -741,6 +855,7 @@ class CanvasWindow:
                 self.model.set_position(tid, bx, by)  # persiste posição do nó
             elif kind == "note" and frame is not None:
                 self._save_note(frame)  # persiste posição da nota
+            self._autofit_all_groups()  # C2: grupo abraça quem entrou/saiu/moveu
             self._resize_plane()
             self.plane.queue_draw()
             self._mm_refresh()
@@ -768,6 +883,10 @@ class CanvasWindow:
         max_by = max((b[1] for b in bases), default=0.0)
         max_w = max((s[0] for s in self._node_size.values()), default=BASE_W)
         max_h = max((s[1] for s in self._node_size.values()), default=BASE_H)
+        for gid, (gx, gy) in self._group_base.items():  # C2: grupos também alargam o plano
+            gw, gh = self._group_size.get(gid, (600.0, 360.0))
+            max_bx = max(max_bx, gx + gw - max_w)
+            max_by = max(max_by, gy + gh - max_h)
         need_w = max(5000, int(max_bx * z + max_w * z + 400))
         need_h = max(4000, int(max_by * z + max_h * z + 400))
         if (need_w, need_h) != self._plane_size:
@@ -1040,10 +1159,33 @@ class CanvasWindow:
         return False
 
     # -- grid de pontos no fundo do canvas (C3) — só na viewport (leve no ARM) --
+    def _cairo_bounds(self):
+        """Bbox (coords-tela) do conteúdo cairo (grupos + cabos entre nós), com folga.
+        Dimensiona a superfície do snapshot pra cobrir tudo (sem clipar ao rolar) sem
+        alocar o plano inteiro. None se não há nada."""
+        z = self.model.zoom()
+        rects = []
+        for nid, (bx, by) in self._base_pos.items():
+            nw, nh = self._node_size.get(nid, (BASE_W, BASE_H))
+            dx, dy = to_display((bx, by), z)
+            rects.append((dx, dy, dx + nw * z, dy + nh * z))
+        for gid in self._group_base:
+            gx, gy, gw, gh = self._group_disp_rect(gid)
+            rects.append((gx, gy, gx + gw, gy + gh))
+        if not rects:
+            return None
+        x0 = min(r[0] for r in rects)
+        y0 = min(r[1] for r in rects)
+        x1 = max(r[2] for r in rects)
+        y1 = max(r[3] for r in rects)
+        pad = 60.0
+        return (x0 - pad, y0 - pad, (x1 - x0) + 2 * pad, (y1 - y0) + 2 * pad)
+
     # -- cabos (handoffs): desenhados no snapshot do _Plane --
     def _draw_cables_cr(self, cr):
         z = self.model.zoom()
         # grid agora é background CSS (GPU), não cairo — ver _apply_grid()
+        self._draw_groups_cr(cr)  # C2: grupos/áreas, atrás dos cabos e dos nós
 
         def box(nid):  # (x,y,w,h) no plano = base*zoom + tamanho do nó * zoom
             bx, by = to_display(self._base_pos.get(nid, (0.0, 0.0)), z)
@@ -1442,6 +1584,7 @@ class CanvasWindow:
         self._resize_plane()
         self.plane.queue_draw()
         self._mm_refresh()
+        self._autofit_all_groups()  # C2
 
     def _ft_build_dir(self, path: str) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -1573,6 +1716,7 @@ class CanvasWindow:
         self._place(frame, (note.x, note.y), self.model.zoom())
         self.note_frames[note.id] = frame
         self._mm_refresh()
+        self._autofit_all_groups()  # C2
 
     def _save_note(self, frame):
         if self.notes is None:
@@ -1633,6 +1777,208 @@ class CanvasWindow:
         self._note_base.pop(note_id, None)
         self._note_pinned.discard(note_id)
         self.plane.remove(frame)
+        self.plane.queue_draw()
+        self._mm_refresh()
+
+    # -- grupos/áreas (C2): desenhados via cairo (atrás dos nós) + hit-test --
+    def _load_group(self, g) -> None:
+        self._group_manual[g.id] = (g.x, g.y, g.w, g.h)  # piso persistido (manual)
+        self._group_color[g.id] = g.color
+        self._group_title[g.id] = g.title
+        self._group_base[g.id] = (g.x, g.y)  # exibido (refinado pelo auto-fit)
+        self._group_size[g.id] = (g.w, g.h)
+        self._autofit_group(g.id)
+
+    def _create_group(self) -> None:
+        if self.groups is None:
+            return
+        x, y = self._next_node_default()
+        g = self.groups.create(x=float(x), y=float(y))
+        self._load_group(g)
+        self._resize_plane()
+        self.plane.queue_draw()
+        self._mm_refresh()
+
+    def _autofit_group(self, gid) -> None:
+        """Tamanho EXIBIDO: ABRAÇA o conteúdo justinho, com margem (GROUP_PAD) em todos os
+        lados — cresce E encolhe. Se o usuário redimensionou de propósito, esse tamanho
+        vira piso (não encolhe abaixo dele). Vazio = volta ao tamanho manual/default."""
+        if gid not in self._group_manual:
+            return
+        mx, my, mw, mh = self._group_manual[gid]
+        members = self._group_members(gid)
+        if not members:  # vazio: usa o manual/default
+            self._group_base[gid] = (mx, my)
+            self._group_size[gid] = (max(GROUP_MIN_W, mw), max(GROUP_MIN_H, mh))
+            return
+        left = top = right = bottom = None
+        for (kind, iid), (bx, by) in members.items():  # bbox dos itens + margem
+            nw, nh = self._item_size(kind, iid)
+            ml, mt = bx - GROUP_PAD, by - GROUP_PAD - GROUP_TITLE_H  # topo: espaço p/ título
+            mr, mb = bx + nw + GROUP_PAD, by + nh + GROUP_PAD_BOTTOM  # base: margem maior
+            left = ml if left is None else min(left, ml)
+            top = mt if top is None else min(top, mt)
+            right = mr if right is None else max(right, mr)
+            bottom = mb if bottom is None else max(bottom, mb)
+        if gid in self._group_user_sized:  # piso manual só se redimensionou de propósito
+            left, top = min(left, mx), min(top, my)
+            right, bottom = max(right, mx + mw), max(bottom, my + mh)
+        self._group_base[gid] = (left, top)
+        self._group_size[gid] = (max(GROUP_MIN_W, right - left), max(GROUP_MIN_H, bottom - top))
+
+    def _autofit_all_groups(self) -> None:
+        if not self._group_base:
+            return
+        for gid in list(self._group_base):
+            self._autofit_group(gid)
+        self._resize_plane()
+        self.plane.queue_draw()
+        self._mm_refresh()
+
+    def _group_disp_rect(self, gid):
+        """Retângulo do grupo em coords de TELA (plano): base*zoom + tamanho*zoom."""
+        z = self.model.zoom()
+        gx, gy = to_display(self._group_base.get(gid, (0.0, 0.0)), z)
+        gw, gh = self._group_size.get(gid, (600.0, 360.0))
+        return (gx, gy, gw * z, gh * z)
+
+    def _draw_groups_cr(self, cr):
+        z = self.model.zoom()
+        for gid in self._group_base:
+            x, y, w, h = self._group_disp_rect(gid)
+            c = _rgba(NOTE_COLORS.get(self._group_color.get(gid, "blue"), NOTE_COLORS["blue"]))
+            cr.set_source_rgba(c.red, c.green, c.blue, 0.10)  # corpo translúcido
+            cr.rectangle(x, y, w, h)
+            cr.fill()
+            cr.set_source_rgba(c.red, c.green, c.blue, 0.70)  # borda
+            cr.set_line_width(1.5)
+            cr.rectangle(x, y, w, h)
+            cr.stroke()
+            band = GROUP_TITLE_H * z  # faixa do título
+            cr.set_source_rgba(c.red, c.green, c.blue, 0.85)
+            cr.rectangle(x, y, w, band)
+            cr.fill()
+            cr.set_source_rgb(0.12, 0.12, 0.18)  # texto do título
+            cr.select_font_face("sans-serif")
+            cr.set_font_size(max(9.0, 13.0 * z))
+            cr.move_to(x + 6, y + band - 5)
+            cr.show_text(self._group_title.get(gid, "Grupo"))
+            # alça de resize VISÍVEL (canto inf-direito): 3 risquinhos diagonais
+            cr.set_source_rgba(c.red, c.green, c.blue, 0.95)
+            cr.set_line_width(1.5)
+            for d in (4, 8, 12):
+                cr.move_to(x + w - d, y + h - 2)
+                cr.line_to(x + w - 2, y + h - d)
+            cr.stroke()
+
+    def _group_title_band_hit(self, px, py):
+        """gid do grupo cuja FAIXA DE TÍTULO contém (px,py) em coords-plano (topo p/ baixo)."""
+        z = self.model.zoom()
+        for gid in reversed(list(self._group_base)):
+            x, y, w, _h = self._group_disp_rect(gid)
+            if x <= px <= x + w and y <= py <= y + GROUP_TITLE_H * z:
+                return gid
+        return None
+
+    def _group_corner_hit(self, px, py):
+        """gid do grupo cujo canto inf-direito (resize) contém (px,py)."""
+        for gid in reversed(list(self._group_base)):
+            x, y, w, h = self._group_disp_rect(gid)
+            if (x + w - GROUP_CORNER) <= px <= x + w and (y + h - GROUP_CORNER) <= py <= y + h:
+                return gid
+        return None
+
+    def _item_size(self, kind, iid):
+        """Tamanho-base REAL do item (frame inteiro: cabeçalho+corpo+rodapé). Mede o
+        widget alocado (natural, sem zoom); cai p/ nominal antes da 1ª alocação."""
+        fr = self._drag_frame(kind, iid)
+        if fr is not None:
+            w, h = fr.get_width(), fr.get_height()
+            if w > 0 and h > 0:
+                return (float(w), float(h))
+        if kind == "node":
+            return self._node_size.get(iid, (BASE_W, BASE_H))
+        if kind == "note":
+            return (240.0, 160.0)
+        return (300.0, 360.0)  # ft
+
+    def _group_members(self, gid):
+        """Itens (nó/nota/árvore) que SOBREPÕEM o grupo o bastante (>=25% da área do item)
+        -> contam como dentro (não precisa 100%) e movem/abraçam junto.
+        Devolve dict {(kind, id): (base_x, base_y)}."""
+        gx, gy = self._group_base.get(gid, (0.0, 0.0))
+        gw, gh = self._group_size.get(gid, (600.0, 360.0))
+        members = {}
+        for kind in ("node", "note", "ft"):
+            for iid, (bx, by) in self._drag_store(kind).items():
+                w, h = self._item_size(kind, iid)
+                ix = max(0.0, min(bx + w, gx + gw) - max(bx, gx))  # interseção em x
+                iy = max(0.0, min(by + h, gy + gh) - max(by, gy))  # interseção em y
+                inter = ix * iy
+                if inter > 0 and inter >= GROUP_MEMBER_FRAC * (w * h):
+                    members[(kind, iid)] = (bx, by)
+        return members
+
+    def _group_dialog(self, gid):
+        """Renomear / recolorir / apagar o grupo (duplo-clique na faixa do título)."""
+        if self.groups is None:
+            return
+        g = self.groups.get(gid)
+        if g is None:
+            return
+        dlg, box = self._dialog("Grupo")
+        entry = Gtk.Entry()
+        entry.set_text(g.title)
+        box.append(entry)
+        swatches = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
+        for cname in NOTE_COLORS:
+            sw = Gtk.Button()
+            sw.add_css_class(f"notecol-{cname}")
+            sw.set_size_request(24, 24)
+            sw.connect("clicked", lambda _b, c=cname: self._set_group_color(gid, c))
+            swatches.append(sw)
+        box.append(swatches)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        okb = Gtk.Button(label="OK")
+        delb = Gtk.Button(label="🗑 apagar")
+
+        def save(_w=None):
+            self._group_title[gid] = entry.get_text().strip() or "Grupo"
+            cur = self.groups.get(gid)
+            if cur is not None:
+                cur.title = self._group_title[gid]
+                cur.color = self._group_color.get(gid, cur.color)
+                self.groups.save(cur)
+            self.plane.queue_draw()
+            dlg.destroy()
+
+        def remove(_w=None):
+            self._close_group(gid)
+            dlg.destroy()
+
+        entry.connect("activate", save)
+        okb.connect("clicked", save)
+        delb.connect("clicked", remove)
+        row.append(okb)
+        row.append(delb)
+        box.append(row)
+        dlg.present()
+        entry.grab_focus()
+
+    def _set_group_color(self, gid, color):
+        self._group_color[gid] = color
+        g = self.groups.get(gid) if self.groups is not None else None
+        if g is not None:
+            g.color = color
+            self.groups.save(g)
+        self.plane.queue_draw()
+
+    def _close_group(self, gid):
+        if self.groups is not None:
+            self.groups.delete(gid)
+        for d in (self._group_base, self._group_size, self._group_color, self._group_title, self._group_manual):
+            d.pop(gid, None)
+        self._group_user_sized.discard(gid)
         self.plane.queue_draw()
         self._mm_refresh()
 
@@ -1917,6 +2263,7 @@ class CanvasWindow:
 
 def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
     from ..bootstrap import build_controller, default_home
+    from ..engine.groups import Groups
     from ..engine.notes import Notes
     from ..engine.roles import agent_badges
     from ..engine.routines import Routines
@@ -1969,6 +2316,7 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
             notes=Notes(st),
             badges=badges,
             routines=Routines(st),
+            groups=Groups(st),
             store=st,
             ask_bus_dir=ask_bus_dir,
             project_dir=project_dir,
