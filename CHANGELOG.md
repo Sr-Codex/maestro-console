@@ -12,6 +12,14 @@ versionamento incremental. Datas em 2026.
 - Engine: `engine/groups.py` (Group + Groups CRUD) + tabela `groups` (no backup/restore).
 - Hit-test próprio (faixa do título arrasta, canto redimensiona, corpo deixa passar o
   clique p/ nós/pan). Grupos também entram no cálculo da área rolável.
+- **Auto-fit (abraça o conteúdo):** o grupo **cresce E encolhe** pra envolver os itens
+  contidos com **margem** (16px laterais/topo + faixa do título; **50px na base**), ao
+  vivo durante o arrasto. Item conta como "dentro" ao **sobrepor ~25%** (não precisa 100%).
+  Mede o **card inteiro** (cabeçalho+corpo+rodapé), então a margem vale igual p/ terminal,
+  nota e árvore. Resize **manual** vira piso (primeira opção). **Alça de resize visível**
+  no canto.
+- **Fix de render no pan:** a superfície cairo passou a cobrir o **conteúdo** (grupos+cabos)
+  em vez da viewport — ao rolar não some mais metade do desenho (o GTK desloca o snapshot).
 - **+7 testes** (suíte **386**) + probe ao vivo. Validado por busca (UX de grupos em
   editores de nó). **Conclui a Fase 3** (C1 minimapa + C4 notas + C2 grupos).
 
