@@ -66,6 +66,7 @@ from .toolbar import action_menu_items  # noqa: E402
 
 BASE_W, BASE_H = 420, 220
 MIN_NODE_W, MIN_NODE_H = 240, 120  # piso ao redimensionar um card (arrastar a alça ⤡)
+PAN_SCROLL_STEP = 90.0  # px de pan por unidade de scroll (SELECT + trackball) — velocidade do pan
 # estado do envelope (passo done) -> estado visual do nó
 _ST_MAP = {"DONE": "done", "BLOCKED": "blocked", "FAILED": "failed", "NEEDS_INPUT": "blocked"}
 # C4: cores das notas (paleta enxuta, ~5; estilo catppuccin p/ casar com o tema)
@@ -233,6 +234,8 @@ class CanvasWindow:
         self._active_edge: tuple[str, str] | None = None
         self._pan: tuple[float, float] | None = None
         self._focused_nid: str | None = None  # terminal em foco (p/ fechar via teclado)
+        self._selected: tuple[str, str] | None = None  # (kind, id) selecionado (borda azul)
+        self._ptr_over: tuple[str, str] | None = None  # (kind, id) sob o cursor (p/ roteio de scroll)
         # cabos interativos (ADR-11): mailbox + router — só com controller + edges
         self._ask_bus_dir = ask_bus_dir  # p/ criar novos terminais de agente em runtime
         self._ask_bus = None
@@ -259,7 +262,13 @@ class CanvasWindow:
         # CANVAS INFINITO: ScrolledWindow só dá a viewport (NEVER = sem rolagem/parede);
         # o pan é por CÂMERA (self._cam), sem limite — ver _pan_*/_place.
         self.scrolled = Gtk.ScrolledWindow()
-        self.scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER)
+        # EXTERNAL (não NEVER): com NEVER o ScrolledWindow não rola e por isso EXIGE o
+        # mínimo INTEIRO do filho -> como o _Plane (Gtk.Fixed) mede a caixa dos filhos com a
+        # câmera assada nos transforms, o mínimo crescia e EMPURRAVA a janela (inchava/saía
+        # da tela; maximizar quebrava). EXTERNAL permite rolar programaticamente (sem barra
+        # visível), então o ScrolledWindow pede mínimo pequeno e RECORTA o conteúdo na
+        # viewport — a câmera (self._cam) dá o alcance infinito sem crescer a janela.
+        self.scrolled.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.EXTERNAL)
         self.scrolled.set_hexpand(True)
         self.scrolled.set_vexpand(True)
         self.plane = _Plane()
@@ -280,7 +289,26 @@ class CanvasWindow:
         dbl = Gtk.GestureClick()  # C2: duplo-clique na faixa do grupo -> editar/renomear
         dbl.connect("pressed", self._on_canvas_click)
         self.scrolled.add_controller(dbl)
+        # SELECT + trackball no uConsole vira eventos de SCROLL (ver INVENTARIO: trackball
+        # natural-scroll). Tratamos scroll como PAN da câmera -> segurar SELECT e girar a
+        # bola move o canvas, suave (deltas fracionários do scroll).
+        scroll = Gtk.EventControllerScroll()
+        scroll.set_flags(Gtk.EventControllerScrollFlags.BOTH_AXES)
+        scroll.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)  # intercepta ANTES do VTE
+        scroll.connect("scroll", self._on_scroll)
+        self.scrolled.add_controller(scroll)
+        motion = Gtk.EventControllerMotion()  # rastreia o elemento sob o cursor (roteio do scroll)
+        motion.connect("motion", self._on_motion)
+        self.scrolled.add_controller(motion)
         self.scrolled.set_child(self.plane)
+        # Canvas é CÂMERA, não rola: o ScrolledWindow embrulha o Gtk.Fixed num GtkViewport
+        # interno cujo scroll-to-focus (default LIGADO) desloca TODO o conteúdo quando um
+        # filho focável (VTE/Entry) ganha foco fora da viewport -> o canvas "anda sozinho"
+        # depois de um tempo, sem o usuário rolar. Desligar mantém a câmera (self._cam) como
+        # única fonte de deslocamento.
+        _vp = self.scrolled.get_child()
+        if isinstance(_vp, Gtk.Viewport):
+            _vp.set_scroll_to_focus(False)
         # C1: minimapa sobreposto (canto inf-direito) p/ navegar canvas grande
         overlay = Gtk.Overlay()
         overlay.set_child(self.scrolled)
@@ -337,6 +365,10 @@ class CanvasWindow:
             # C1: minimapa sobreposto
             ".minimap { background-color: rgba(24,24,37,0.85); border: 1px solid #45475a;"
             " border-radius: 6px; }",
+            # seleção: borda azul tracejada (outline não desloca o layout) p/ saber qual
+            # nó/nota/árvore está selecionado (e recebe scroll do SELECT+trackball)
+            ".selected { outline-color: #89b4fa; outline-style: dashed; outline-width: 2px;"
+            " outline-offset: -2px; }",
         ]
         for cname, hexc in NOTE_COLORS.items():  # C4: classes de cor das notas
             rules.append(f".notecol-{cname} {{ background-color: {hexc}; color: #1e1e2e; }}")
@@ -707,12 +739,42 @@ class CanvasWindow:
 
     def _over_child(self, picked) -> bool:
         """True se o ponto caiu sobre um nó/nota/árvore (não no fundo do plano)."""
+        return self._elem_at(picked) is not None
+
+    def _elem_at(self, picked):
+        """(kind, id) do nó/nota/árvore sob a widget escolhida, ou None (fundo do plano)."""
         w = picked
         while w is not None and w is not self.plane:
-            if getattr(w, "_nid", None) or getattr(w, "_note_id", None) or getattr(w, "_ft_id", None):
-                return True
+            for attr, kind in (("_nid", "node"), ("_note_id", "note"), ("_ft_id", "ft")):
+                tid = getattr(w, attr, None)
+                if tid is not None:
+                    return (kind, tid)
             w = w.get_parent()
-        return False
+        return None
+
+    def _frame_of(self, sel):
+        """Widget-frame de um (kind, id) selecionado, ou None."""
+        if sel is None:
+            return None
+        kind, tid = sel
+        store = {"node": self.frames, "note": self.note_frames, "ft": self._ft_frames}.get(kind, {})
+        return store.get(tid)
+
+    def _select(self, sel) -> None:
+        """Marca (kind, id) como selecionado: borda azul tracejada. None = limpa seleção."""
+        if sel == self._selected:
+            return
+        old = self._frame_of(self._selected)
+        if old is not None:
+            old.remove_css_class("selected")
+        self._selected = sel
+        new = self._frame_of(sel)
+        if new is not None:
+            new.add_css_class("selected")
+
+    def _on_motion(self, _c, x, y):
+        """Rastreia qual elemento está sob o cursor (p/ rotear o scroll do SELECT+trackball)."""
+        self._ptr_over = self._elem_at(self.plane.pick(x, y, Gtk.PickFlags.DEFAULT))
 
     def _on_canvas_click(self, _g, n_press, x, y):
         if n_press < 2:  # só duplo-clique
@@ -728,6 +790,7 @@ class CanvasWindow:
     def _pan_begin(self, gesture, x, y):
         # x,y vêm em coords do scrolled (que NÃO rola) = coords de TELA -> estável.
         picked = self.plane.pick(x, y, Gtk.PickFlags.DEFAULT)
+        self._select(self._elem_at(picked))  # pressionar seleciona o nó/nota/árvore (ou limpa no fundo)
         camx, camy = self._cam
         px, py = x - camx, y - camy  # coords base*zoom (p/ hit-test de grupo)
         self._pan = None
@@ -869,6 +932,20 @@ class CanvasWindow:
         self._pan = None
 
     # -- zoom: escala o PLANO (posição + transform); terminal mantém alocação/PTY --
+    def _on_scroll(self, _c, dx, dy):
+        # SELECT + trackball vira SCROLL no uConsole. Regra: o scroll só "entra" num nó/nota
+        # se ele for o SELECIONADO **e** estiver sob o cursor; caso contrário PANA o canvas.
+        # Como o controller está na fase CAPTURE, interceptamos ANTES do terminal (VTE) —
+        # então o pan nunca é "roubado" ao passar por cima de uma janela.
+        if self._selected is not None and self._ptr_over == self._selected:
+            return False  # deixa o scroll ir pro selecionado (ex.: scrollback do terminal)
+        # Pan por scroll: move a câmera pelos deltas (sinal negativo = conteúdo segue a bola).
+        step = PAN_SCROLL_STEP
+        camx, camy = self._cam
+        self._cam = (camx - dx * step, camy - dy * step)
+        self._reposition_all()
+        return True  # consome: nem o terminal nem o ScrolledWindow rolam
+
     def _zoom(self, dz):
         self.model.set_zoom(self.model.zoom() + dz)
         self._apply_zoom()
