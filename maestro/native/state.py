@@ -43,6 +43,14 @@ class CanvasModel:
     def set_node_size(self, node_id: str, w: float, h: float) -> None:
         self._store.set_ui(f"nodesize_{node_id}", f"{float(w)},{float(h)}")
 
+    def node_name(self, node_id: str, default: str) -> str:
+        """Nome de exibição do terminal (renomeável); default se não salvo."""
+        n = self._store.get_ui(f"nodename_{node_id}")
+        return str(n) if n else default
+
+    def set_node_name(self, node_id: str, name: str) -> None:
+        self._store.set_ui(f"nodename_{node_id}", name)
+
     def terminal_theme(self) -> str:
         return self._store.get_ui("terminal_theme") or "default"
 
