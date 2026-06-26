@@ -61,6 +61,14 @@ def test_node_size_default_e_persistencia(tmp_path):
         assert m.node_size("a1", (0, 0)) == (600.0, 300.0)
 
 
+def test_node_name_default_e_persistencia(tmp_path):
+    with Store(tmp_path / "m.db") as s:
+        m = CanvasModel(s)
+        assert m.node_name("a1", "a1") == "a1"  # default = o próprio id
+        m.set_node_name("a1", "Backend")
+        assert m.node_name("a1", "x") == "Backend"  # persistido
+
+
 def test_persiste_entre_instancias(tmp_path):
     db = tmp_path / "m.db"
     with Store(db) as s:

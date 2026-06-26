@@ -169,6 +169,7 @@ class CanvasWindow:
         self._edge_state: dict[tuple[str, str], str] = {}  # cor do cabo por handoff (V7-S4)
         self._active_edge: tuple[str, str] | None = None
         self._pan: tuple[float, float] | None = None
+        self._focused_nid: str | None = None  # terminal em foco (p/ fechar via teclado)
         # cabos interativos (ADR-11): mailbox + router — só com controller + edges
         self._ask_bus_dir = ask_bus_dir  # p/ criar novos terminais de agente em runtime
         self._ask_bus = None
@@ -324,8 +325,13 @@ class CanvasWindow:
 
             sq.set_draw_func(_draw_badge)
             head.append(sq)
+        title = self.model.node_name(nid, title)  # nome de exibição (renomeável/persistido)
         lbl = Gtk.Label(label=f"  {title}  ")
         lbl.set_hexpand(True)
+        frame._title_lbl = lbl
+        rn = Gtk.GestureClick()
+        rn.connect("pressed", self._maybe_rename, nid)  # duplo-clique no título renomeia
+        lbl.add_controller(rn)
         head.append(lbl)
         nclose = Gtk.Button(label="✕")
         nclose.set_has_frame(False)
@@ -341,6 +347,9 @@ class CanvasWindow:
         self.heads[nid] = head
         term = make_terminal(argv)
         frame._term = term  # ref p/ remover de self.terms ao fechar o nó
+        fc = Gtk.EventControllerFocus()
+        fc.connect("enter", lambda _c, n=nid: setattr(self, "_focused_nid", n))
+        term.add_controller(fc)  # rastreia o terminal em foco (fechar via Ctrl+Shift+W)
         sz = self.model.node_size(nid, (BASE_W, BASE_H))  # tamanho por nó (persistido)
         self._node_size[nid] = sz
         term.set_hexpand(True)
@@ -433,6 +442,34 @@ class CanvasWindow:
         self._resize_origin = None
         w, h = self._node_size.get(nid, (BASE_W, BASE_H))
         self.model.set_node_size(nid, w, h)  # persiste o tamanho
+
+    def _maybe_rename(self, _gesture, n_press, _x, _y, nid):
+        if n_press >= 2:  # duplo-clique
+            self._rename_node(nid)
+
+    def _rename_node(self, nid: str) -> None:
+        frame = self.frames.get(nid)
+        if frame is None:
+            return
+        dlg, box = self._dialog("Renomear terminal")
+        entry = Gtk.Entry()
+        entry.set_text(self.model.node_name(nid, nid))
+        box.append(entry)
+
+        def save(_w=None):
+            name = entry.get_text().strip() or nid
+            self.model.set_node_name(nid, name)  # persiste
+            lbl = getattr(frame, "_title_lbl", None)
+            if lbl is not None:
+                lbl.set_text(f"  {name}  ")
+            dlg.destroy()
+
+        entry.connect("activate", save)
+        b = Gtk.Button(label="OK")
+        b.connect("clicked", save)
+        box.append(b)
+        dlg.present()
+        entry.grab_focus()
 
     def _close_node(self, nid: str) -> None:
         """Remove o nó-terminal do canvas NESTA sessão (widget + PTY do agente).
@@ -661,6 +698,12 @@ class CanvasWindow:
         # com o terminal (Esc = interromper a IA; Ctrl-L = limpar a tela no shell).
         if ctrl and shift and keyval in (Gdk.KEY_l, Gdk.KEY_L) and has_connect:
             self._connect_btn.set_active(not self._connect_btn.get_active())
+            return True
+        # Ctrl+Shift+W: fecha o terminal em foco (Ctrl+W puro é "apagar palavra" no shell)
+        if ctrl and shift and keyval in (Gdk.KEY_w, Gdk.KEY_W):
+            nid = self._focused_nid
+            if nid and nid in self.frames:
+                self._close_node(nid)
             return True
         # Esc cancela o modo conectar SOMENTE se ele está ativo. Só chega aqui quando
         # o foco não está num terminal (o VTE consome o próprio Esc), então o Esc do
