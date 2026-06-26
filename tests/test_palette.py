@@ -2,7 +2,14 @@
 
 from types import SimpleNamespace
 
-from maestro.native.palette import PaletteItem, build_palette_items, fuzzy, fuzzy_score
+from maestro.native.palette import (
+    PaletteItem,
+    build_action_items,
+    build_palette_items,
+    fuzzy,
+    fuzzy_score,
+    hintbar_text,
+)
 
 
 def test_fuzzy_score_subsequencia():
@@ -53,3 +60,26 @@ def test_build_note_sem_titulo_usa_id():
     notes = [SimpleNamespace(id="abcdef123456", title="")]
     item = build_palette_items(notes=notes)[0]
     assert "abcdef" in item.label  # prefixo do id
+
+
+# -- D1: ações na paleta (com atalho) --
+def test_build_action_items_com_atalho():
+    items = build_action_items(
+        [("🔌 Conectar cabo", "__connect", "Ctrl+Shift+L"), ("➕ novo terminal", "newterm", "")]
+    )
+    assert [i.kind for i in items] == ["action", "action"]
+    assert items[0].ref == "__connect" and items[0].hint == "Ctrl+Shift+L"
+    assert items[1].hint == ""  # sem atalho
+
+
+def test_acao_aparece_na_busca_fuzzy():
+    items = build_action_items([("🔌 Conectar cabo", "__connect", "Ctrl+Shift+L")])
+    assert fuzzy("conect", items)  # acha por pedaço do nome
+
+
+# -- B2: rodapé que ensina atalhos --
+def test_hintbar_texto_por_modo():
+    base = hintbar_text()
+    assert "Ctrl+P" in base and "conectar" in base
+    assert "ORIGEM" in hintbar_text(connect=True)
+    assert "DESTINO" in hintbar_text(connect=True, picking=True)

@@ -1,7 +1,15 @@
 """Testes do CanvasModel (V6-S2) — persistência de posições/zoom (sem GTK)."""
 
 from maestro.engine.state.store import Store
-from maestro.native.state import CanvasModel, to_base, to_display
+from maestro.native.state import CanvasModel, state_activity, to_base, to_display
+
+
+def test_state_activity_por_estado():
+    assert state_activity("busy") == "trabalhando…"
+    assert state_activity("blocked") == "esperando você"
+    assert state_activity("done") == "concluído"
+    assert state_activity("idle") == ""  # ocioso não mostra nada
+    assert state_activity("desconhecido") == ""  # fallback seguro
 
 
 def test_position_default_e_persistencia(tmp_path):

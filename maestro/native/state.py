@@ -81,6 +81,21 @@ class EdgeModel:
         return self._store.get_edges()
 
 
+# E3 — status proativo: texto curto do que o agente está fazendo agora (por estado).
+STATE_ACTIVITY = {
+    "idle": "",
+    "busy": "trabalhando…",
+    "blocked": "esperando você",
+    "failed": "falhou",
+    "done": "concluído",
+}
+
+
+def state_activity(state: str) -> str:
+    """Rótulo de atividade exibido no card (E3); vazio quando ocioso/desconhecido."""
+    return STATE_ACTIVITY.get(state, "")
+
+
 def to_display(base: tuple[float, float], zoom: float) -> tuple[int, int]:
     """Coordenada-base (independente do zoom) -> posição no plano: display = base * zoom."""
     return (round(base[0] * zoom), round(base[1] * zoom))

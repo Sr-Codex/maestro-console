@@ -11,9 +11,10 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class PaletteItem:
-    kind: str  # agent | team | floor | note | routine
+    kind: str  # action | agent | team | floor | note | routine
     label: str
     ref: str
+    hint: str = ""  # atalho exibido à direita (ex.: "Ctrl+Shift+L"); só p/ ações
 
 
 def fuzzy_score(query: str, text: str) -> int | None:
@@ -49,6 +50,30 @@ def fuzzy(query: str, items, key=lambda i: i.label):
             scored.append((s, key(it), it))
     scored.sort(key=lambda x: (-x[0], x[1]))
     return [it for _, _, it in scored]
+
+
+def build_action_items(actions=()) -> list[PaletteItem]:
+    """Itens de AÇÃO (D1): cada `actions` é (label, ref, hint). hint = atalho exibido."""
+    out: list[PaletteItem] = []
+    for label, ref, hint in actions:
+        out.append(PaletteItem("action", label, ref, hint))
+    return out
+
+
+# B2 — texto do rodapé que ENSINA atalhos (muda conforme o modo atual).
+_HINTS_BASE = (
+    "Ctrl+P paleta · Ctrl+Shift+L conectar · Ctrl+Shift+W fechar · "
+    "Ctrl+Shift+A atenção · Ctrl+Shift+1-9 focar"
+)
+
+
+def hintbar_text(*, connect: bool = False, picking: bool = False) -> str:
+    """Dica contextual do rodapé (Zellij-like). connect/picking = modo conectar."""
+    if connect:
+        if picking:
+            return "CONECTAR: clique no DESTINO · Esc cancela"
+        return "CONECTAR: clique no nó de ORIGEM · Esc cancela"
+    return _HINTS_BASE
 
 
 def build_palette_items(
