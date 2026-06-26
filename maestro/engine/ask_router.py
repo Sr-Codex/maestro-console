@@ -11,7 +11,8 @@ Puro e testável: sem GTK e sem I/O de arquivo (isso é do ``AskBus``). As depen
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from .ask_bus import AskRequest, AskResponse
@@ -22,6 +23,23 @@ class AskPolicy:
     max_turns_per_pair: int = 6  # comprimento da conversa A<->B (echoing começa ~turno 7)
     max_depth: int = 3  # anti-loop em cadeia A->B->A...
     identity_refresh_every: int = 3  # reforço extra de identidade a cada N turnos
+
+
+def policy_from_env(env: Mapping[str, str] | None = None) -> AskPolicy:
+    """AskPolicy calibrável por ambiente (default seguro se ausente/ inválido)."""
+    env = os.environ if env is None else env
+
+    def _int(key: str, default: int) -> int:
+        try:
+            return max(1, int(env[key]))
+        except (KeyError, ValueError, TypeError):
+            return default
+
+    return AskPolicy(
+        max_turns_per_pair=_int("MAESTRO_ASK_MAX_TURNS", 6),
+        max_depth=_int("MAESTRO_ASK_MAX_DEPTH", 3),
+        identity_refresh_every=_int("MAESTRO_ASK_IDENTITY_EVERY", 3),
+    )
 
 
 def _pair(a: str, b: str) -> tuple[str, str]:

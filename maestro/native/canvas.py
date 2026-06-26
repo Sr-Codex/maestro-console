@@ -27,8 +27,8 @@ from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Vte  # noqa: E402
 from ..engine.attention import attention_items, notify  # noqa: E402
 from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
 from ..engine.state.store import Store  # noqa: E402
-from ..engine.ask_bus import AskBus, install_client  # noqa: E402
-from ..engine.ask_router import AskRouter  # noqa: E402
+from ..engine.ask_bus import AskBus, install_ask_skill, install_client  # noqa: E402
+from ..engine.ask_router import AskRouter, policy_from_env  # noqa: E402
 from ..engine.envelope import EnvelopeState  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from .agents import STATE_COLORS, agent_argv, installed_agents  # noqa: E402
@@ -175,7 +175,9 @@ class CanvasWindow:
         if ask_bus_dir and controller is not None and edges is not None:
             self._ask_bus = AskBus(ask_bus_dir)
             self._ask_router = AskRouter(
-                edge_allowed=self._ask_edge_allowed, delegate=self._ask_delegate
+                edge_allowed=self._ask_edge_allowed,
+                delegate=self._ask_delegate,
+                policy=policy_from_env(),  # limites calibráveis por ambiente
             )
 
         self._install_css()
@@ -1303,12 +1305,10 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         install_client(ask_bus_dir)  # instala o maestro-ask no mailbox (montado nos agentes)
         nodes = []
         for name, profile in installed_agents().items():
+            wsp = ws.create(name)
+            install_ask_skill(wsp, name)  # ensina o agente a usar o maestro-ask
             nodes.append(
-                (
-                    name,
-                    name,
-                    agent_argv(profile, str(ws.create(name)), node=name, ask_bus_dir=ask_bus_dir),
-                )
+                (name, name, agent_argv(profile, str(wsp), node=name, ask_bus_dir=ask_bus_dir))
             )
         if not nodes:  # nenhum agente instalado -> um shell de exemplo
             nodes = [("term1", "shell", ["/bin/bash"])]

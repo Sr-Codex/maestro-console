@@ -66,6 +66,37 @@ def install_client(bus_dir: str | Path) -> Path:
     return dest
 
 
+ASK_SKILL_MARKER = "<!-- maestro-ask -->"
+
+
+def ask_skill_text(node: str) -> str:
+    """Instrução que ensina o agente a USAR o maestro-ask (ADR-11, Fase 4)."""
+    return (
+        f"{ASK_SKILL_MARKER}\n"
+        "## Ferramenta: maestro-ask (falar com agentes conectados por cabo)\n\n"
+        f"Você é o agente '{node}'. Quando um terminal estiver ligado a você por um "
+        "CABO, você pode CONSULTAR esse outro agente rodando, no seu shell:\n\n"
+        '    maestro-ask <nó> "<sua pergunta>"\n\n'
+        'Ele bloqueia até o outro agente responder e imprime "Answer from <nó>: ...". '
+        "Use para delegar ou checar algo (ex.: pedir revisão). Use só os nós que "
+        'aparecem na dica "[maestro] cabo ligado a \'X\'". Ao receber perguntas de '
+        "outro agente, mantenha o SEU papel e responda objetivamente."
+    )
+
+
+def install_ask_skill(workspace: str | Path, node: str) -> None:
+    """Acrescenta (idempotente) a instrução do maestro-ask ao CLAUDE.md/AGENTS.md do ws."""
+    text = ask_skill_text(node)
+    for fname in ("CLAUDE.md", "AGENTS.md"):
+        p = Path(workspace) / fname
+        existing = p.read_text(encoding="utf-8") if p.exists() else ""
+        if ASK_SKILL_MARKER in existing:
+            continue  # já instalado
+        sep = "" if not existing or existing.endswith("\n") else "\n"
+        with p.open("a", encoding="utf-8") as f:
+            f.write(f"{sep}\n{text}\n")
+
+
 def _check_id(rid: object) -> str:
     if not isinstance(rid, str) or not _SAFE_ID.match(rid):
         raise AskBusError(f"id inválido: {rid!r}")

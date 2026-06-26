@@ -74,7 +74,11 @@ def main(argv: list[str] | None = None, env: dict | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    resp = ask(bus, frm, to, prompt)
+    try:
+        timeout = float(env.get("MAESTRO_ASK_TIMEOUT", DEFAULT_TIMEOUT))
+    except (TypeError, ValueError):
+        timeout = DEFAULT_TIMEOUT
+    resp = ask(bus, frm, to, prompt, timeout=timeout)
     if resp.get("ok"):
         print(f"Answer from {to}:\n{resp.get('answer', '')}")
         return 0
