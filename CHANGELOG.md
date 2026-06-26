@@ -3,6 +3,26 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.24.0] — Canvas infinito funcional no CM4 (pan por SELECT+trackball + seleção)
+- **Canvas infinito agora roda no CM4** (reverte o "adiado pro CM5"): a GPU aguenta o
+  modelo-câmera (testado em runtime, sem OOM); os testes anteriores que "provaram"
+  inviabilidade estavam contaminados por GPU travada.
+- **Fix do crescimento da janela no pan:** o `_Plane` (`Gtk.Fixed`) mede a caixa dos
+  filhos incluindo o `set_child_transform` (câmera assada), então ao panar o mínimo
+  crescia e, com `ScrolledWindow` em policy **NEVER** (que exige o mínimo inteiro do
+  filho), **empurrava o toplevel** (janela inchava/descia/saía da tela; maximizar
+  quebrava). Trocado para policy **EXTERNAL** (rola programaticamente, sem barra, e
+  **recorta** na viewport) + `Viewport.set_scroll_to_focus(False)` (evita deslize ao focar
+  um filho). Diagnóstico ancorado em medição ao vivo (`xprop`/`xwininfo` + log de `measure`).
+- **Pan por SELECT + trackball:** no uConsole, SELECT+bola gera eventos de **scroll**; um
+  `EventControllerScroll` traduz os deltas em movimento da câmera — pan suave sem clicar.
+- **Seleção + borda azul tracejada:** clicar num nó/nota/árvore o seleciona (outline azul
+  `#89b4fa`); clicar no fundo limpa. Indica qual elemento está ativo.
+- **Roteamento do scroll (fase CAPTURE):** SELECT+track **sempre pana** — o scroll é
+  interceptado antes do VTE, então passar o cursor por cima de uma janela **não rouba** o
+  pan. O scroll só **entra** num elemento quando ele é o **selecionado e está sob o cursor**
+  (ex.: scrollback do terminal).
+
 ## [0.23.0] — Grupos/áreas (Fase 3c: C2) — fecha a Fase 3
 - **C2 — Grupos/áreas:** ☰ → **⬚ novo grupo** cria um retângulo rotulado e colorido
   **atrás** dos nós (desenhado via cairo, sob cabos e nós). **Arrastar o grupo pela faixa
