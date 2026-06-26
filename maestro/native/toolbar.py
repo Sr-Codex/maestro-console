@@ -17,6 +17,7 @@ def action_menu_items(
     has_floors: bool,
     has_routines: bool,
     team_name: str = "coder-reviewer",
+    has_groups: bool = False,
 ) -> list[tuple[str, str]]:
     items: list[tuple[str, str]] = [
         ("➕ novo terminal", "newterm"),
@@ -29,6 +30,8 @@ def action_menu_items(
         items.append(("▶ disparar handoff", "handoff"))
     if has_notes:
         items.append(("📝 nova nota", "note"))
+    if has_groups:
+        items.append(("⬚ novo grupo", "group"))
     if has_floors:
         items.append(("🧱 floors…", "floors"))
     if has_routines and has_controller:

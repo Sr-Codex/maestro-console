@@ -118,6 +118,16 @@ CREATE TABLE IF NOT EXISTS routines (
     run_count  INTEGER NOT NULL DEFAULT 0,
     last_run   REAL
 );
+CREATE TABLE IF NOT EXISTS groups (
+    id         TEXT PRIMARY KEY,
+    title      TEXT NOT NULL,
+    color      TEXT NOT NULL,
+    x          REAL NOT NULL,
+    y          REAL NOT NULL,
+    w          REAL NOT NULL,
+    h          REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
 """
 
 
@@ -168,6 +178,7 @@ class Store:
         "floor_hooks",
         "notes",
         "routines",
+        "groups",
     )
 
     def export_all(self) -> dict[str, list[dict[str, Any]]]:
@@ -535,6 +546,34 @@ class Store:
     def remove_note(self, note_id: str) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM notes WHERE id=?", (note_id,))
+
+    # -- grupos/áreas no canvas (C2) -----------------------------------
+    def upsert_group(
+        self, group_id: str, title: str, color: str, x: float, y: float, w: float, h: float
+    ) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO groups(id, title, color, x, y, w, h, updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET title=excluded.title, color=excluded.color, "
+                "x=excluded.x, y=excluded.y, w=excluded.w, h=excluded.h, "
+                "updated_at=excluded.updated_at",
+                (group_id, title, color, x, y, w, h, time.time()),
+            )
+
+    def get_group(self, group_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM groups WHERE id=?", (group_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_groups(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM groups ORDER BY updated_at").fetchall()
+        return [dict(r) for r in rows]
+
+    def remove_group(self, group_id: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM groups WHERE id=?", (group_id,))
 
     # -- routines (prompts agendados) (V10-S1) -------------------------
     def upsert_routine(
