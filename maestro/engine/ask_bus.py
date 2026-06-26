@@ -49,6 +49,23 @@ def new_id() -> str:
     return uuid.uuid4().hex
 
 
+def install_client(bus_dir: str | Path) -> Path:
+    """Copia o cliente ``ask_client.py`` como ``<bus>/maestro-ask`` (executável).
+
+    O mailbox é montado rw no sandbox (shared_paths), então o agente roda
+    ``"$MAESTRO_ASK_BUS/maestro-ask" <nó> "<prompt>"``. Stdlib-only no cliente.
+    """
+    import shutil
+
+    bus = Path(bus_dir)
+    bus.mkdir(parents=True, exist_ok=True)
+    src = Path(__file__).with_name("ask_client.py")
+    dest = bus / "maestro-ask"
+    shutil.copyfile(src, dest)
+    dest.chmod(0o755)
+    return dest
+
+
 def _check_id(rid: object) -> str:
     if not isinstance(rid, str) or not _SAFE_ID.match(rid):
         raise AskBusError(f"id inválido: {rid!r}")

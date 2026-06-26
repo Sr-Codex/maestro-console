@@ -14,7 +14,7 @@ Se o bwrap não existir, **falha de forma segura** (não roda sem sandbox).
 from __future__ import annotations
 
 import shutil
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 
@@ -32,12 +32,14 @@ def wrap(
     workspace: str | Path,
     rw_paths: Sequence[str] = (),
     shared_paths: Sequence[str] = (),
+    setenv: Mapping[str, str] | None = None,
     allow_network: bool = True,
 ) -> list[str]:
     """Retorna o argv do agente envelopado em bwrap. Levanta se bwrap ausente.
 
     rw_paths: config/sessão do agente (ex.: ~/.claude).
     shared_paths: diretórios de artefatos compartilhados entre agentes (rw).
+    setenv: variáveis de ambiente a injetar no sandbox (ex.: MAESTRO_NODE).
     """
     if not bwrap_available():
         raise SandboxUnavailable("bwrap não encontrado; recusando rodar sem sandbox")
@@ -70,6 +72,8 @@ def wrap(
         sp = str(Path(p).resolve())
         if Path(sp).exists():
             args += ["--bind", sp, sp]  # artefatos compartilhados: rw
+    for k, v in (setenv or {}).items():
+        args += ["--setenv", str(k), str(v)]  # ex.: MAESTRO_NODE / MAESTRO_ASK_BUS
     args.append("--")
     args.extend(inner_argv)
     return args
