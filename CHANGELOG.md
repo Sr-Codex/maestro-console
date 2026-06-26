@@ -3,6 +3,21 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.22.0] — Notas com cor e pin (Fase 3b: C4)
+- **C4 — Cor da nota:** botão 🎨 no cabeçalho abre uma paleta de **5 cores** (amarelo,
+  verde, azul, rosa, lilás) pra categorizar visualmente (estilo Post-it). A cor pinta o
+  cabeçalho e é persistida.
+- **C4 — Pin (📌):** botão fixa a nota — quando fixada, ela **não arrasta** (evita mover
+  sem querer); 📍↔📌 indica o estado. Persistido.
+- **Migração de schema:** colunas `color`/`pinned` adicionadas à tabela `notes` de forma
+  idempotente (ALTER TABLE p/ DBs antigos; `_SCHEMA` p/ novos) — sem perder notas.
+- **Grid liso (cairo → CSS/GPU):** o grid de pontos saiu do desenho cairo por frame (que
+  dava **lag no pan** no ARM) para um **`radial-gradient` no fundo do plano**, composto na
+  **GPU** — rola junto com o canvas sem custo por frame. Espaçamento = 20·zoom (atualizado
+  só no zoom); pontos a 50% de opacidade; somem em zoom muito baixo.
+- Validado por busca (GTK4 GSK/GPU vs cairo) + probe ao vivo. Suíte: 379 testes.
+- Fase 3 quase fechada: falta **C2 (grupos)**.
+
 ## [0.21.0] — Minimapa (Fase 3a: navegação)
 - **C1 — Minimapa:** visão geral sobreposta no canto inferior-direito (estilo editores de
   nó) mostrando todos os nós (azul), notas (amarelo) e árvores (verde) em miniatura, mais

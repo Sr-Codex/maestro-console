@@ -23,6 +23,8 @@ class Note:
     body: str
     x: float
     y: float
+    color: str = ""  # cor da nota (C4); "" = padrão (amarelo)
+    pinned: bool = False  # fixada: não arrasta (C4)
 
 
 def render_markdown(note: Note) -> str:
@@ -59,7 +61,15 @@ def file_to_note(note: Note, directory: str | Path, filename: str = NOTE_FILENAM
         return note
     title, body = parse_markdown(p.read_text())
     # se o arquivo não tinha H1, preserva o título atual da nota
-    return Note(id=note.id, title=title or note.title, body=body, x=note.x, y=note.y)
+    return Note(
+        id=note.id,
+        title=title or note.title,
+        body=body,
+        x=note.x,
+        y=note.y,
+        color=note.color,
+        pinned=note.pinned,
+    )
 
 
 class Notes:
@@ -70,28 +80,38 @@ class Notes:
 
     def create(self, title: str, body: str = "", x: float = 0.0, y: float = 0.0) -> Note:
         note = Note(id=str(uuid.uuid4()), title=title, body=body, x=x, y=y)
-        self._store.upsert_note(note.id, note.title, note.body, note.x, note.y)
+        self.save(note)
         return note
+
+    @staticmethod
+    def _row_to_note(row) -> Note:
+        return Note(
+            id=row["id"],
+            title=row["title"],
+            body=row["body"],
+            x=row["x"],
+            y=row["y"],
+            color=row["color"] if "color" in row.keys() else "",
+            pinned=bool(row["pinned"]) if "pinned" in row.keys() else False,
+        )
 
     def get(self, note_id: str) -> Note | None:
         row = self._store.get_note(note_id)
-        if row is None:
-            return None
-        return Note(id=row["id"], title=row["title"], body=row["body"], x=row["x"], y=row["y"])
+        return self._row_to_note(row) if row is not None else None
 
     def list(self) -> list[Note]:
-        return [
-            Note(id=r["id"], title=r["title"], body=r["body"], x=r["x"], y=r["y"])
-            for r in self._store.list_notes()
-        ]
+        return [self._row_to_note(r) for r in self._store.list_notes()]
 
     def save(self, note: Note) -> None:
-        self._store.upsert_note(note.id, note.title, note.body, note.x, note.y)
+        self._store.upsert_note(
+            note.id, note.title, note.body, note.x, note.y, note.color, int(note.pinned)
+        )
 
     def set_position(self, note_id: str, x: float, y: float) -> None:
         n = self.get(note_id)
         if n is not None:
-            self._store.upsert_note(n.id, n.title, n.body, x, y)
+            n.x, n.y = x, y
+            self.save(n)
 
     def delete(self, note_id: str) -> None:
         self._store.remove_note(note_id)

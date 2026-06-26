@@ -16,6 +16,51 @@ def _notes(tmp_path):
     return Notes(store), store
 
 
+# -- C4: cor e pin ------------------------------------------------------
+def test_cor_e_pin_default_e_persistencia(tmp_path):
+    n, store = _notes(tmp_path)
+    a = n.create("t", "b")
+    assert a.color == "" and a.pinned is False  # defaults
+    a.color = "green"
+    a.pinned = True
+    n.save(a)
+    got = n.get(a.id)
+    assert got.color == "green" and got.pinned is True
+    assert n.list()[0].pinned is True  # também vem no list
+    store.close()
+
+
+def test_set_position_preserva_cor_pin(tmp_path):
+    n, store = _notes(tmp_path)
+    a = n.create("t", "b")
+    a.color = "blue"
+    a.pinned = True
+    n.save(a)
+    n.set_position(a.id, 99, 88)  # mover não pode perder cor/pin
+    got = n.get(a.id)
+    assert (got.x, got.y) == (99, 88)
+    assert got.color == "blue" and got.pinned is True
+    store.close()
+
+
+def test_migracao_db_antigo_sem_colunas(tmp_path):
+    # simula DB legado: cria tabela notes SEM color/pinned, depois abre com Store (migra)
+    import sqlite3
+
+    db = tmp_path / "legacy.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE notes (id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL,"
+        " x REAL NOT NULL, y REAL NOT NULL, updated_at REAL NOT NULL)"
+    )
+    con.execute("INSERT INTO notes VALUES('n1','t','b',1,2,0)")
+    con.commit()
+    con.close()
+    n = Notes(Store(db))  # Store.__init__ roda _migrate (ALTER TABLE)
+    got = n.get("n1")
+    assert got is not None and got.color == "" and got.pinned is False  # migrou sem perder
+
+
 # -- CRUD --------------------------------------------------------------
 def test_create_get_list(tmp_path):
     n, store = _notes(tmp_path)
