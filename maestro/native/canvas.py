@@ -239,12 +239,14 @@ class CanvasWindow:
         self.plane._owner = self
         self._plane_size = (5000, 4000)  # cresce dinamicamente (_resize_plane)
         self.plane.set_size_request(*self._plane_size)
-        # pan: arrastar o fundo do plano (ignora se cair sobre um nó/nota)
+        # pan/arrasto: gesto preso à SCROLLEDWINDOW (que NÃO rola) e não ao plano (que
+        # rola no pan) — senão a referência se move e dá tremor, igual era no nó.
+        self.scrolled.set_kinetic_scrolling(False)  # evita conflito com nosso pan
         pan = Gtk.GestureDrag()
         pan.connect("drag-begin", self._pan_begin)
         pan.connect("drag-update", self._pan_update)
         pan.connect("drag-end", self._pan_end)
-        self.plane.add_controller(pan)
+        self.scrolled.add_controller(pan)
         self.scrolled.set_child(self.plane)
         # C1: minimapa sobreposto (canto inf-direito) p/ navegar canvas grande
         overlay = Gtk.Overlay()
@@ -640,8 +642,10 @@ class CanvasWindow:
         return False
 
     def _pan_begin(self, gesture, x, y):
-        # x,y vêm em coords do PLANO (gesto preso ao plano, que NÃO se move) -> estável.
-        picked = self.plane.pick(x, y, Gtk.PickFlags.DEFAULT)
+        # x,y vêm em coords da SCROLLEDWINDOW (não rola) -> referência estável (sem tremor).
+        # Pro pick, traduz p/ coords do PLANO somando o scroll atual.
+        ha, va = self.scrolled.get_hadjustment(), self.scrolled.get_vadjustment()
+        picked = self.plane.pick(x + ha.get_value(), y + va.get_value(), Gtk.PickFlags.DEFAULT)
         self._pan = None
         self._drag = None
         target = self._drag_handle(picked)

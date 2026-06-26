@@ -9,6 +9,10 @@ versionamento incremental. Datas em 2026.
   um retângulo branco indicando **onde você está** (viewport). **Clicar** no minimapa
   **move a vista** pra aquele ponto. Atualiza ao rolar/pan/zoom e ao criar/mover/fechar.
 - Helper gi-free testável `minimap_layout` (escala+offset pra encaixar o "mundo").
+- **Conserto do tremor no PAN:** o gesto de arrasto passou da `_Plane` (que ROLA no pan)
+  para a `ScrolledWindow` (que não rola) — mesma causa/cura do tremor do nó (referência
+  estável). Kinetic scrolling desligado p/ não brigar com o pan. Coords do pick traduzidas
+  somando o scroll. Node drag e minimapa intactos.
 - Validado por busca (DrawingArea+Overlay) + probe ao vivo. Suíte: 376 testes.
 - Fase 3 continua: C4 (notas cor/pin) e C2 (grupos) em PRs seguintes.
 
