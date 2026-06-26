@@ -208,6 +208,7 @@ class CanvasWindow:
         self.scrolled.set_hexpand(True)
         self.scrolled.set_vexpand(True)
         self.plane = _Plane()
+        self.plane.add_css_class("maestro-plane")  # fundo escuro do canvas (UI-1)
         self.plane._owner = self
         self._plane_size = (5000, 4000)  # cresce dinamicamente (_resize_plane)
         self.plane.set_size_request(*self._plane_size)
@@ -230,9 +231,23 @@ class CanvasWindow:
 
     # -- CSS: cores de estado (substitui override_background_color do GTK3) --
     def _install_css(self) -> None:
-        rules = [".nodehead { padding: 1px 6px; }", ".notehead { background-color: #fde68a; }"]
+        # tema escuro app-wide (UI-1): deixa o GTK usar a variante dark
+        settings = Gtk.Settings.get_default()
+        if settings is not None:
+            settings.set_property("gtk-application-prefer-dark-theme", True)
+        rules = [
+            ".maestro-plane { background-color: #15151e; }",  # canvas escuro
+            # card: fundo, borda sutil, cantos arredondados, sombra leve
+            ".node-card { background-color: #1e1e2e; border: 1px solid #313244;"
+            " border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.45); }",
+            ".nodehead { padding: 2px 8px; background-color: #313244;"
+            " border-radius: 7px 7px 0 0; }",
+            ".notehead { background-color: #f9e2af; color: #1e1e2e; padding: 2px 8px;"
+            " border-radius: 7px 7px 0 0; }",
+            ".state-dot { font-size: 9px; margin-right: 2px; }",  # estado vira um DOT
+        ]
         for st, hexc in STATE_COLORS.items():
-            rules.append(f".st-{st} {{ background-color: {hexc}; }}")
+            rules.append(f".dot-{st} {{ color: {hexc}; }}")
         provider = Gtk.CssProvider()
         data = "\n".join(rules)
         if hasattr(provider, "load_from_string"):
@@ -322,13 +337,18 @@ class CanvasWindow:
     def _add_node(self, nid, title, argv, default):
         frame = Gtk.Frame()
         frame._nid = nid
+        frame.add_css_class("node-card")  # card escuro: borda/cantos/sombra (UI-1)
         head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         head.add_css_class("nodehead")
-        head.add_css_class("st-idle")
         num_lbl = Gtk.Label(label="")  # nº de posição (Ctrl+Shift+N foca) [A.2]
         num_lbl.add_css_class("dim-label")
         frame._num_lbl = num_lbl
         head.append(num_lbl)
+        dot = Gtk.Label(label="●")  # estado do nó vira um DOT (UI-1)
+        dot.add_css_class("state-dot")
+        dot.add_css_class("dot-idle")
+        head._dot = dot
+        head.append(dot)
         badge = self.badges.get(nid)
         if badge:  # tira colorida = badge do papel (V9-S3) — DrawingArea c/ cor arbitrária
             sq = Gtk.DrawingArea()
@@ -616,13 +636,15 @@ class CanvasWindow:
             self._apply_theme(name)
 
     def set_node_state(self, nid: str, state: str) -> None:
-        """Recolore o título do nó conforme o estado (idle/busy/blocked/failed/done)."""
+        """Estado do nó vira a COR DE UM DOT no cabeçalho (não inunda o head). UI-1."""
         head = self.heads.get(nid)
-        if head is None:
+        dot = getattr(head, "_dot", None) if head is not None else None
+        if dot is None:
             return
+        s = state if state in STATE_COLORS else "idle"
         for st in STATE_COLORS:
-            head.remove_css_class(f"st-{st}")
-        head.add_css_class(f"st-{state if state in STATE_COLORS else 'idle'}")
+            dot.remove_css_class(f"dot-{st}")
+        dot.add_css_class(f"dot-{s}")
 
     # -- modo conexão: criar/remover cabos por clique (V7-S2) --
     def _toggle_connect(self, btn):
@@ -1151,6 +1173,7 @@ class CanvasWindow:
         fid = f"ft-{n}"
         frame = Gtk.Frame()
         frame._ft_id = fid
+        frame.add_css_class("node-card")  # UI-1
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         head.add_css_class("nodehead")
@@ -1245,6 +1268,7 @@ class CanvasWindow:
     def _add_note_widget(self, note):
         frame = Gtk.Frame()
         frame._note_id = note.id
+        frame.add_css_class("node-card")  # UI-1
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         # barra de título (arraste pelo "≡" + edição do título)
         head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
