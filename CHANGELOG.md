@@ -3,6 +3,19 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.17.0] — UX do terminal, árvore de arquivos e multi-workspace (paridade Maestri)
+- **Fase A — UX do terminal:** **Ctrl+Shift+W** fecha o terminal em foco; **duplo-clique no
+  título** renomeia (persistido). Terminal já vira shell ao sair da IA (v0.16.0).
+- **Fase B — Árvore de arquivos (File Tree):** menu ☰ → 📁 cria um nó navegável dos arquivos
+  do projeto (lazy-load por pasta; clicar num arquivo copia o caminho). Raiz = projeto do
+  workspace ou `$HOME`.
+- **Fase C — Multi-workspace:** ☰ → 🗂️ workspaces (listar/criar/abrir). Cada workspace tem
+  estado **isolado** (DB próprio); o `default` preserva o estado legado. Abrir = relança o app
+  no workspace (`os.execv`). O File Tree enraíza no projeto do workspace.
+- Base da auditoria de comportamento do Maestri em `docs/06`. **Ombro** (IA local) e demais
+  pesados (Portals/Maestro Mode/diff-git) ficam para o futuro.
+- Suíte: 366 testes.
+
 ## [0.16.0] — Cabos interativos (agentes que conversam) + novo terminal
 - **Cabos interativos (`maestro-ask`, ADR-11):** ligue um cabo entre dois terminais e
   um agente CONSULTA o outro com `maestro-ask <nó> "<prompt>"` — roteado pelo motor
