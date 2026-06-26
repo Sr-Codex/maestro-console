@@ -58,6 +58,15 @@ BASE_W, BASE_H = 420, 220
 MIN_NODE_W, MIN_NODE_H = 240, 120  # piso ao redimensionar um card (arrastar a alça ⤡)
 # estado do envelope (passo done) -> estado visual do nó
 _ST_MAP = {"DONE": "done", "BLOCKED": "blocked", "FAILED": "failed", "NEEDS_INPUT": "blocked"}
+# estado: cor + FORMA + tooltip (acessibilidade: não depender só da cor) — UI-1
+_STATE_GLYPH = {"idle": "●", "busy": "◐", "blocked": "▲", "failed": "✕", "done": "✓"}
+_STATE_PT = {
+    "idle": "ocioso",
+    "busy": "ocupado",
+    "blocked": "bloqueado",
+    "failed": "falhou",
+    "done": "concluído",
+}
 _log = logging.getLogger(__name__)
 
 
@@ -344,9 +353,10 @@ class CanvasWindow:
         num_lbl.add_css_class("dim-label")
         frame._num_lbl = num_lbl
         head.append(num_lbl)
-        dot = Gtk.Label(label="●")  # estado do nó vira um DOT (UI-1)
+        dot = Gtk.Label(label=_STATE_GLYPH["idle"])  # estado: cor + forma + tooltip (UI-1)
         dot.add_css_class("state-dot")
         dot.add_css_class("dot-idle")
+        dot.set_tooltip_text(_STATE_PT["idle"])
         head._dot = dot
         head.append(dot)
         badge = self.badges.get(nid)
@@ -645,6 +655,8 @@ class CanvasWindow:
         for st in STATE_COLORS:
             dot.remove_css_class(f"dot-{st}")
         dot.add_css_class(f"dot-{s}")
+        dot.set_text(_STATE_GLYPH.get(s, "●"))  # forma por estado (não só cor)
+        dot.set_tooltip_text(_STATE_PT.get(s, s))
 
     # -- modo conexão: criar/remover cabos por clique (V7-S2) --
     def _toggle_connect(self, btn):
