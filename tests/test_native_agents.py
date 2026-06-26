@@ -18,8 +18,10 @@ def test_agent_argv_interativo_sob_bwrap(monkeypatch):
     assert argv[0] == "bwrap"  # confinado (ADR-6)
     i = argv.index("--")
     inner = argv[i + 1 :]
-    assert inner[0] == "claude"  # binário interativo
-    assert "-p" not in inner  # NÃO é headless (é interativo)
+    # a IA roda DENTRO de um shell: ao sair dela, cai num terminal normal
+    assert inner[0] == "/bin/bash" and inner[1] == "-c"
+    assert "claude" in inner[2] and "exec /bin/bash" in inner[2]  # IA -> shell ao sair
+    assert "-p" not in inner[2]  # NÃO é headless (é interativo)
 
 
 def test_state_colors_tem_todos():

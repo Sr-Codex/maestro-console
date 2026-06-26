@@ -3,6 +3,23 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.16.0] — Cabos interativos (agentes que conversam) + novo terminal
+- **Cabos interativos (`maestro-ask`, ADR-11):** ligue um cabo entre dois terminais e
+  um agente CONSULTA o outro com `maestro-ask <nó> "<prompt>"` — roteado pelo motor
+  MEDIADO (headless + bwrap + envelope), e a resposta volta no terminal. Skill instalada
+  no workspace (CLAUDE.md/AGENTS.md); guardrails contra *echoing* (limite de turnos por
+  par, refresh de identidade, anti-loop), calibráveis por env (`MAESTRO_ASK_*`). Mailbox
+  de arquivos via `shared_paths`; cliente stdlib no PATH do sandbox.
+- **➕ novo terminal em runtime:** menu ☰ ações → ➕ cria um terminal **shell** OU uma
+  **nova instância de agente** (claude/codex) que participa de cabos.
+- **Terminal vira shell ao sair da IA** (comportamento do Maestri): a IA roda dentro de
+  um shell; ao sair (`/exit`, Ctrl-D), o card continua como terminal normal.
+- **Conexões:** desconectar sem depender da ordem dos cliques; removida a auto-conexão
+  por ordem (terminal não nasce mais conectado).
+- **Docs:** pesquisa de cabos interativos (`docs/05`) + especificação de comportamento
+  do Maestri e matriz de auditoria do clone (`docs/06`). ADRs 10/11.
+- Suíte: 355 testes.
+
 ## [0.15.0] — Redimensionar cards no canvas (por nó)
 - **Redimensionar terminais arrastando a alça ⤡** no canto inferior-direito de cada
   card. O ajuste muda o tamanho **real** do terminal (`set_size_request`), então o VTE
