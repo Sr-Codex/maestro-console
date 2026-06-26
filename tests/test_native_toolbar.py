@@ -13,12 +13,13 @@ def test_completo_inclui_todos_na_ordem():
         team_name="coder-reviewer",
     )
     keys = [k for _, k in items]
-    assert keys == ["newterm", "run_team", "handoff", "note", "floors", "routines"]
+    assert keys == ["newterm", "filetree", "run_team", "handoff", "note", "floors", "routines"]
     assert items[0] == ("➕ novo terminal", "newterm")  # sempre disponível
+    assert ("📁 árvore de arquivos", "filetree") in items
 
 
-def test_novo_terminal_sempre_presente():
-    # ➕ novo terminal não depende de nada (shell funciona sem controller)
+def test_sempre_presentes_sem_nada():
+    # ➕ novo terminal e 📁 árvore não dependem de nada (funcionam sem controller)
     items = action_menu_items(
         has_controller=False,
         has_edges=False,
@@ -26,7 +27,7 @@ def test_novo_terminal_sempre_presente():
         has_floors=False,
         has_routines=False,
     )
-    assert items == [("➕ novo terminal", "newterm")]
+    assert items == [("➕ novo terminal", "newterm"), ("📁 árvore de arquivos", "filetree")]
 
 
 def test_sem_controller_some_run_handoff_routines():
@@ -34,14 +35,14 @@ def test_sem_controller_some_run_handoff_routines():
         has_controller=False, has_edges=True, has_notes=True, has_floors=True, has_routines=True
     )
     keys = [k for _, k in items]
-    assert keys == ["newterm", "note", "floors"]  # run_team/handoff/routines exigem controller
+    assert keys == ["newterm", "filetree", "note", "floors"]  # run/handoff/routines exigem ctrl
 
 
 def test_handoff_exige_controller_e_edges():
     items = action_menu_items(
         has_controller=True, has_edges=False, has_notes=False, has_floors=False, has_routines=False
     )
-    assert [k for _, k in items] == ["newterm", "run_team"]  # sem edges, sem handoff
+    assert [k for _, k in items] == ["newterm", "filetree", "run_team"]  # sem edges, sem handoff
 
 
 def test_team_name_no_label():
