@@ -13,6 +13,7 @@ independentes do zoom: display = base * zoom (helpers `to_display`/`to_base`).
 from __future__ import annotations
 
 import logging
+import threading
 
 import gi
 
@@ -26,11 +27,15 @@ from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Vte  # noqa: E402
 from ..engine.attention import attention_items, notify  # noqa: E402
 from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
 from ..engine.state.store import Store  # noqa: E402
+from ..engine.ask_bus import AskBus, install_client  # noqa: E402
+from ..engine.ask_router import AskRouter  # noqa: E402
+from ..engine.envelope import EnvelopeState  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from .agents import STATE_COLORS, agent_argv, installed_agents  # noqa: E402
 from .floors_ui import floor_rows, merge_text, preview_text  # noqa: E402
 from .notes_ui import note_title_display  # noqa: E402
 from .orchestrate import (  # noqa: E402
+    _run_sync,
     run_edge_handoff_in_thread,
     run_floor_agent_in_thread,
     run_note_to_agent_in_thread,
@@ -135,6 +140,7 @@ class CanvasWindow:
         badges=None,
         routines=None,
         store=None,
+        ask_bus_dir=None,
     ):
         self.model = model
         self.controller = controller
@@ -162,6 +168,15 @@ class CanvasWindow:
         self._edge_state: dict[tuple[str, str], str] = {}  # cor do cabo por handoff (V7-S4)
         self._active_edge: tuple[str, str] | None = None
         self._pan: tuple[float, float] | None = None
+        # cabos interativos (ADR-11): mailbox + router — só com controller + edges
+        self._ask_bus = None
+        self._ask_router = None
+        self._ask_inflight: set[str] = set()
+        if ask_bus_dir and controller is not None and edges is not None:
+            self._ask_bus = AskBus(ask_bus_dir)
+            self._ask_router = AskRouter(
+                edge_allowed=self._ask_edge_allowed, delegate=self._ask_delegate
+            )
 
         self._install_css()
         self.win = Gtk.ApplicationWindow(application=app)
@@ -537,12 +552,96 @@ class CanvasWindow:
             self.edges.remove(src, dst)  # toggle: clicar de novo remove
         else:
             self.edges.add(src, dst)
+            self._ask_hint(src, dst)  # avisa os terminais sobre o maestro-ask (ADR-11)
         self.plane.queue_draw()
 
     def _cancel_connect(self) -> None:
         if self._connect_src is not None:
             self.set_node_state(self._connect_src, "idle")
             self._connect_src = None
+
+    # -- cabos interativos: maestro-ask (ADR-11, Fase 3) --
+    def start_ask_watcher(self, interval_ms: int = 500) -> None:
+        """Liga o poll do mailbox (host roteia os 'maestro-ask' dos agentes)."""
+        if self._ask_bus is None:
+            return
+        self._ask_bus.cleanup(max_age_seconds=3600)  # limpa órfãos (broker sobrevive)
+        GLib.timeout_add(interval_ms, self._ask_tick)
+
+    def _ask_edge_allowed(self, frm: str, to: str) -> bool:
+        if self.edges is None:
+            return False
+        pairs = set(self.edges.list())
+        return (frm, to) in pairs or (to, frm) in pairs  # cabo em qualquer sentido
+
+    def _ask_delegate(self, to: str, prompt: str) -> str:
+        env = _run_sync(self.controller.delegate(to, prompt))  # síncrono no worker
+        if env.state is EnvelopeState.DONE:
+            return env.result or ""
+        return f"[{to} retornou {env.state}] {env.note or env.result or ''}"
+
+    def _ask_tick(self) -> bool:
+        if self._ask_bus is None:
+            return False
+        started = False
+        try:
+            for req in self._ask_bus.pending_requests():
+                if req.id in self._ask_inflight:
+                    continue
+                self._ask_inflight.add(req.id)
+                self._ask_set_edge_state(req.frm, req.to, "busy")
+                threading.Thread(target=self._ask_process, args=(req,), daemon=True).start()
+                started = True
+        except Exception as exc:  # nunca derruba o tick
+            _log.error("ask_tick falhou: %s", exc)
+        if started:
+            self.plane.queue_draw()
+        return True  # continua o poll
+
+    def _ask_process(self, req) -> None:
+        """Roda em thread daemon: AskRouter.handle chama delegate (síncrono via _run_sync)."""
+        resp = None
+        try:
+            resp = self._ask_router.handle(req)
+            self._ask_bus.write_response(resp)
+        except Exception as exc:
+            _log.error("ask_process falhou: %s", exc)
+        finally:
+            self._ask_inflight.discard(req.id)
+        GLib.idle_add(self._ask_reflect, req, resp)
+
+    def _ask_reflect(self, req, resp) -> bool:
+        ok = bool(resp and resp.ok)
+        fr = self.frames.get(req.to)
+        term = getattr(fr, "_term", None) if fr is not None else None
+        if term is not None:
+            term.feed(
+                f"\r\n\x1b[2m[{req.frm} perguntou via cabo] {req.prompt}\x1b[0m\r\n".encode()
+            )
+            term.feed(f"\x1b[2m[resposta enviada a {req.frm}]\x1b[0m\r\n".encode())
+        self._ask_set_edge_state(req.frm, req.to, "done" if ok else "failed")
+        self.plane.queue_draw()
+        return False
+
+    def _ask_set_edge_state(self, frm: str, to: str, state: str) -> None:
+        if self.edges is None:
+            return
+        for e in self.edges.list():
+            if set(e) == {frm, to}:
+                self._edge_state[e] = state
+
+    def _ask_hint(self, src: str, dst: str) -> None:
+        """Avisa ambos os terminais que podem conversar pelo cabo (maestro-ask)."""
+        if self._ask_bus is None:
+            return
+        for a, b in ((src, dst), (dst, src)):
+            fr = self.frames.get(a)
+            term = getattr(fr, "_term", None) if fr is not None else None
+            if term is not None:
+                term.feed(
+                    f"\r\n\x1b[2m[maestro] cabo ligado a '{b}'. Para perguntar: "
+                    f'maestro-ask {b} "<sua pergunta>"\x1b[0m\r\n'.encode()
+                )
 
     def _on_key(self, _c, keyval, _keycode, state):
         ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
@@ -1200,9 +1299,17 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         state["store"] = st
         # um terminal de AGENTE interativo (sandbox bwrap) por CLI instalado
         ws = Workspace(f"{base}/workspaces")
+        ask_bus_dir = f"{base}/ask-bus"
+        install_client(ask_bus_dir)  # instala o maestro-ask no mailbox (montado nos agentes)
         nodes = []
         for name, profile in installed_agents().items():
-            nodes.append((name, name, agent_argv(profile, str(ws.create(name)))))
+            nodes.append(
+                (
+                    name,
+                    name,
+                    agent_argv(profile, str(ws.create(name)), node=name, ask_bus_dir=ask_bus_dir),
+                )
+            )
         if not nodes:  # nenhum agente instalado -> um shell de exemplo
             nodes = [("term1", "shell", ["/bin/bash"])]
         floors = resolve_floors(st, f"{base}/floors")
@@ -1220,9 +1327,11 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
             badges=badges,
             routines=Routines(st),
             store=st,
+            ask_bus_dir=ask_bus_dir,
         )
         win.show()
         state["win"] = win  # ref p/ re-ativação idempotente (W5)
+        win.start_ask_watcher()  # poll do mailbox dos cabos interativos (ADR-11)
         # tick in-app do scheduler: dispara routines vencidas enquanto aberto (V10-S4)
         GLib.timeout_add_seconds(30, win._routines_tick)
         # attention: realça/notifica o que precisa de você (V11-S1)
