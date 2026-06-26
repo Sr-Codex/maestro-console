@@ -48,9 +48,9 @@ from .orchestrate import (  # noqa: E402
     run_routines_tick_in_thread,
     run_team_in_thread,
 )
-from .palette import build_palette_items, fuzzy  # noqa: E402
+from .palette import build_action_items, build_palette_items, fuzzy, hintbar_text  # noqa: E402
 from .routines_ui import parse_steps, routine_rows  # noqa: E402
-from .state import CanvasModel, EdgeModel, to_display  # noqa: E402
+from .state import CanvasModel, EdgeModel, state_activity, to_display  # noqa: E402
 from .themes import get_theme, theme_names  # noqa: E402
 from .toolbar import action_menu_items  # noqa: E402
 
@@ -228,6 +228,9 @@ class CanvasWindow:
         self.plane.add_controller(pan)
         self.scrolled.set_child(self.plane)
         root.append(self.scrolled)
+        self._hint_lbl = Gtk.Label(label=hintbar_text(), xalign=0)  # B2: ensina atalhos
+        self._hint_lbl.add_css_class("hintbar")
+        root.append(self._hint_lbl)
         self.win.set_child(root)
 
         for i, (nid, title, argv) in enumerate(nodes):
@@ -254,6 +257,11 @@ class CanvasWindow:
             ".notehead { background-color: #f9e2af; color: #1e1e2e; padding: 2px 8px;"
             " border-radius: 7px 7px 0 0; }",
             ".state-dot { font-size: 9px; margin-right: 2px; }",  # estado vira um DOT
+            # E3: status proativo no card — discreto, à direita do título
+            ".node-status { font-size: 10px; color: #9399b2; margin: 0 6px; }",
+            # B2: rodapé que ensina os atalhos (Zellij-like)
+            ".hintbar { font-size: 10px; color: #9399b2; padding: 2px 8px;"
+            " background-color: #181825; border-top: 1px solid #313244; }",
         ]
         for st, hexc in STATE_COLORS.items():
             rules.append(f".dot-{st} {{ color: {hexc}; }}")
@@ -268,6 +276,29 @@ class CanvasWindow:
             Gtk.StyleContext.add_provider_for_display(
                 display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
             )
+
+    def _action_spec(self):
+        """Ações do app (rótulo, chave) + mapa chave→callback. Reusado pela toolbar (☰)
+        e pela paleta (D1), pra não duplicar a lista de comandos."""
+        spec = action_menu_items(
+            has_controller=self.controller is not None,
+            has_edges=self.edges is not None,
+            has_notes=self.notes is not None,
+            has_floors=self.floors is not None,
+            has_routines=self.routines is not None,
+            team_name=self.run_team_name,
+        )
+        cbmap = {
+            "newterm": self._open_new_terminal_dialog,
+            "filetree": self._create_file_tree,
+            "workspaces": self._open_workspaces_dialog,
+            "run_team": self._run_team,
+            "handoff": self._open_handoff_dialog,
+            "note": self._create_note,
+            "floors": self._open_floors_dialog,
+            "routines": self._open_routines_dialog,
+        }
+        return spec, cbmap
 
     def _toolbar(self) -> Gtk.Widget:
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -311,24 +342,7 @@ class CanvasWindow:
         hint.set_tooltip_text("busca rápida de agentes/teams/floors/notas/routines")
         bar.append(hint)
         # -- comandos agrupados num menu (popover): descongestiona a barra (P3) --
-        spec = action_menu_items(
-            has_controller=self.controller is not None,
-            has_edges=self.edges is not None,
-            has_notes=self.notes is not None,
-            has_floors=self.floors is not None,
-            has_routines=self.routines is not None,
-            team_name=self.run_team_name,
-        )
-        cbmap = {
-            "newterm": self._open_new_terminal_dialog,
-            "filetree": self._create_file_tree,
-            "workspaces": self._open_workspaces_dialog,
-            "run_team": self._run_team,
-            "handoff": self._open_handoff_dialog,
-            "note": self._create_note,
-            "floors": self._open_floors_dialog,
-            "routines": self._open_routines_dialog,
-        }
+        spec, cbmap = self._action_spec()
         if spec:
             mb = Gtk.MenuButton(label="☰ ações")
             pop = Gtk.Popover()
@@ -379,6 +393,10 @@ class CanvasWindow:
         rn.connect("pressed", self._maybe_rename, nid)  # duplo-clique no título renomeia
         lbl.add_controller(rn)
         head.append(lbl)
+        status = Gtk.Label(label="")  # E3: status proativo ("trabalhando…"/"esperando você")
+        status.add_css_class("node-status")
+        head._status = status
+        head.append(status)
         nclose = Gtk.Button(label="✕")
         nclose.set_has_frame(False)
         nclose.set_tooltip_text("fechar este terminal (remove do canvas nesta sessão)")
@@ -657,12 +675,24 @@ class CanvasWindow:
         dot.add_css_class(f"dot-{s}")
         dot.set_text(_STATE_GLYPH.get(s, "●"))  # forma por estado (não só cor)
         dot.set_tooltip_text(_STATE_PT.get(s, s))
+        st_lbl = getattr(head, "_status", None)  # E3: status proativo ("fazendo X")
+        if st_lbl is not None:
+            st_lbl.set_text(state_activity(s))
 
     # -- modo conexão: criar/remover cabos por clique (V7-S2) --
+    def _update_hintbar(self) -> None:
+        """B2: rodapé reflete o modo atual (normal / conectar / escolhendo destino)."""
+        lbl = getattr(self, "_hint_lbl", None)
+        if lbl is not None:
+            lbl.set_text(
+                hintbar_text(connect=self._connect_mode, picking=self._connect_src is not None)
+            )
+
     def _toggle_connect(self, btn):
         self._connect_mode = btn.get_active()
         if not self._connect_mode:
             self._cancel_connect()
+        self._update_hintbar()
 
     def _connect_pick(self, nid: str) -> None:
         """1º clique escolhe a origem; 2º cria (ou remove, se já existe) o cabo."""
@@ -671,10 +701,12 @@ class CanvasWindow:
         if self._connect_src is None:
             self._connect_src = nid
             self.set_node_state(nid, "busy")  # realça a origem pendente
+            self._update_hintbar()  # B2: agora "clique no DESTINO"
             return
         src, dst = self._connect_src, nid
         self._connect_src = None
         self.set_node_state(src, "idle")
+        self._update_hintbar()
         if src == dst:
             return
         pairs = set(self.edges.list())
@@ -693,6 +725,7 @@ class CanvasWindow:
         if self._connect_src is not None:
             self.set_node_state(self._connect_src, "idle")
             self._connect_src = None
+        self._update_hintbar()
 
     # -- cabos interativos: maestro-ask (ADR-11, Fase 3) --
     def start_ask_watcher(self, interval_ms: int = 500) -> None:
@@ -1522,14 +1555,23 @@ class CanvasWindow:
 
     # -- command palette (Ctrl-P) (V11-S2) --
     def _palette_items(self):
+        # D1: AÇÕES primeiro (com atalho à direita), depois navegação por entidades.
+        spec, cbmap = self._action_spec()
+        self._palette_cbmap = cbmap
+        actions = [(label, key, "") for label, key in spec]
+        if self.edges is not None:
+            actions.append(("🔌 Conectar cabo", "__connect", "Ctrl+Shift+L"))
+        actions.append(("⚠ Próxima atenção", "__attn", "Ctrl+Shift+A"))
+        items = build_action_items(actions)
         agents = list(self.frames.keys())
         teams = self.controller.list_teams() if self.controller is not None else []
         floors = self.floors.list() if self.floors is not None else []
         notes = self.notes.list() if self.notes is not None else []
         routines = self.routines.list() if self.routines is not None else []
-        return build_palette_items(
+        items += build_palette_items(
             agents=agents, teams=teams, floors=floors, notes=notes, routines=routines
         )
+        return items
 
     def _center_on(self, frame):
         z = self.model.zoom()
@@ -1548,6 +1590,18 @@ class CanvasWindow:
         va.set_value(max(0, cy - va.get_page_size() / 2))
 
     def _palette_act(self, item):
+        if item.kind == "action":  # D1: executa um comando do app
+            if item.ref == "__connect":
+                btn = getattr(self, "_connect_btn", None)
+                if btn is not None:
+                    btn.set_active(not btn.get_active())
+            elif item.ref == "__attn":
+                self._focus_next_attention()
+            else:
+                cb = getattr(self, "_palette_cbmap", {}).get(item.ref)
+                if cb is not None:
+                    cb()
+            return
         if item.kind == "agent":
             fr = self.frames.get(item.ref)
             if fr is not None:
@@ -1564,10 +1618,10 @@ class CanvasWindow:
 
     def _open_palette(self):
         items = self._palette_items()
-        dlg, box = self._dialog("Ir para… (Ctrl-P)")
-        dlg.set_default_size(420, 320)
+        dlg, box = self._dialog("Paleta de comandos (Ctrl-P)")
+        dlg.set_default_size(440, 340)
         entry = Gtk.Entry()
-        entry.set_placeholder_text("buscar agente/team/floor/nota/routine…")
+        entry.set_placeholder_text("buscar ação ou agente/nota/floor/routine…")
         box.append(entry)
         listbox = Gtk.ListBox()
         scroller = Gtk.ScrolledWindow()
@@ -1586,8 +1640,15 @@ class CanvasWindow:
             rows.clear()
             for it in fuzzy(entry.get_text(), items):
                 row = Gtk.ListBoxRow()
+                rb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
                 lbl = Gtk.Label(label=it.label, xalign=0)
-                row.set_child(lbl)
+                lbl.set_hexpand(True)
+                rb.append(lbl)
+                if it.hint:  # D1: mostra o atalho à direita (ensina enquanto usa)
+                    hk = Gtk.Label(label=it.hint, xalign=1)
+                    hk.add_css_class("dim-label")
+                    rb.append(hk)
+                row.set_child(rb)
                 listbox.append(row)
                 rows.append(it)
             first = listbox.get_row_at_index(0)

@@ -3,6 +3,20 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.19.0] — Descoberta & velocidade (Fase 1: ideias de apps parecidos)
+Primeira fase do roadmap de melhorias com identidade própria (não cópia do Maestri),
+colhido de apps da categoria (Warp, Zellij, Linear/Raycast) — ver `docs/09`/`docs/10`.
+- **B2 — Barra que ensina atalhos (estilo Zellij):** rodapé que mostra os atalhos do
+  modo atual; ao entrar no modo conectar, troca para "clique na ORIGEM → no DESTINO ·
+  Esc cancela". Mata o "não sei os atalhos".
+- **D1 — Paleta de comandos turbinada (estilo VS Code/Linear/Raycast):** o Ctrl-P agora
+  lista AÇÕES do app (novo terminal, conectar, workspaces, notas, floors, routines,
+  próxima atenção…) além da navegação por entidades, com **fuzzy** e o **atalho exibido
+  à direita** (ensina enquanto usa).
+- **E3 — Status proativo no card:** rótulo discreto ao lado do título dizendo o que o
+  agente faz agora ("trabalhando…", "esperando você", "concluído"), derivado do estado.
+- Validado por busca (GTK4 `SearchEntry`/`Popover`) + probe ao vivo. Suíte: 370 testes.
+
 ## [0.18.0] — Foco rápido por teclado entre terminais (Fase A.2)
 - **Ctrl+Shift+1…9** foca o terminal N (número discreto no cabeçalho, renumerado ao
   adicionar/fechar). **Ctrl+Shift+A** pula pro próximo terminal que precisa de você
