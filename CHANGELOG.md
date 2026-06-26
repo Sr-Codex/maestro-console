@@ -3,6 +3,16 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.18.0] — Foco rápido por teclado entre terminais (Fase A.2)
+- **Ctrl+Shift+1…9** foca o terminal N (número discreto no cabeçalho, renumerado ao
+  adicionar/fechar). **Ctrl+Shift+A** pula pro próximo terminal que precisa de você
+  (atenção), ciclando a partir do foco atual. Centraliza o card + dá foco ao terminal.
+  Usa Ctrl+Shift (livre) em vez do Shift+A/segurar-número do Maestri (que roubariam
+  teclas do terminal).
+- Encerra o roadmap de paridade com o Maestri das fases leves (A, A.2, B, C). Pesados
+  (Portals, Maestro Mode, diff/git) e **Ombro** (IA local) ficam fora por decisão.
+- Suíte: 366 testes.
+
 ## [0.17.0] — UX do terminal, árvore de arquivos e multi-workspace (paridade Maestri)
 - **Fase A — UX do terminal:** **Ctrl+Shift+W** fecha o terminal em foco; **duplo-clique no
   título** renomeia (persistido). Terminal já vira shell ao sair da IA (v0.16.0).
