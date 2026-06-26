@@ -163,7 +163,9 @@ class _Plane(Gtk.Fixed):
             # inteiro (5000×4000 ~80MB) — só a área onde há coisas.
             b = o._cairo_bounds()
             if b is not None:
-                cr = snapshot.append_cairo(Graphene.Rect().init(*b))
+                camx, camy = o._cam  # canvas infinito: superfície e desenho seguem a câmera
+                cr = snapshot.append_cairo(Graphene.Rect().init(b[0] + camx, b[1] + camy, b[2], b[3]))
+                cr.translate(camx, camy)  # desenha em base*zoom; a câmera desloca tudo
                 o._draw_cables_cr(cr)
         Gtk.Fixed.do_snapshot(self, snapshot)
 
@@ -254,18 +256,22 @@ class CanvasWindow:
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         root.append(self._toolbar())
+        # CANVAS INFINITO: ScrolledWindow só dá a viewport (NEVER = sem rolagem/parede);
+        # o pan é por CÂMERA (self._cam), sem limite — ver _pan_*/_place.
         self.scrolled = Gtk.ScrolledWindow()
-        self.scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER)
         self.scrolled.set_hexpand(True)
         self.scrolled.set_vexpand(True)
         self.plane = _Plane()
         self.plane.add_css_class("maestro-plane")  # fundo escuro do canvas (UI-1)
         self.plane._owner = self
-        self._plane_size = (5000, 4000)  # cresce dinamicamente (_resize_plane)
-        self.plane.set_size_request(*self._plane_size)
-        # pan/arrasto: gesto preso à SCROLLEDWINDOW (que NÃO rola) e não ao plano (que
-        # rola no pan) — senão a referência se move e dá tremor, igual era no nó.
-        self.scrolled.set_kinetic_scrolling(False)  # evita conflito com nosso pan
+        # plano = tamanho da VIEWPORT (a câmera move o conteúdo dentro). NÃO usar um plano
+        # gigante 5000×4000: com a GPU isso vira uma textura enorme do fundo CSS -> VRAM OOM.
+        self.plane.set_hexpand(True)
+        self.plane.set_vexpand(True)
+        self._plane_size = (0, 0)  # legado (não mais usado p/ dimensionar o plano)
+        self._cam = (0.0, 0.0)  # câmera: tela = base*zoom + cam (sem limite -> infinito)
+        # gesto no scrolled (que NÃO rola -> referência estável, sem tremor)
         pan = Gtk.GestureDrag()
         pan.connect("drag-begin", self._pan_begin)
         pan.connect("drag-update", self._pan_update)
@@ -291,9 +297,6 @@ class CanvasWindow:
         self._minimap.add_controller(mmclick)
         overlay.add_overlay(self._minimap)
         root.append(overlay)
-        # redesenha o minimapa quando a vista rola/pan (viewport muda)
-        self.scrolled.get_hadjustment().connect("value-changed", lambda *_: self._mm_refresh())
-        self.scrolled.get_vadjustment().connect("value-changed", lambda *_: self._mm_refresh())
         self._hint_lbl = Gtk.Label(label=hintbar_text(), xalign=0)  # B2: ensina atalhos
         self._hint_lbl.add_css_class("hintbar")
         root.append(self._hint_lbl)
@@ -369,10 +372,13 @@ class CanvasWindow:
         if s < 8:  # zoom muito longe: sem grid (evita poluir)
             css = ".maestro-plane { background-image: none; }"
         else:
+            camx, camy = getattr(self, "_cam", (0.0, 0.0))  # grid acompanha a câmera
+            px, py = camx % s, camy % s  # background-position (mód. p/ alinhar com os nós)
             css = (
                 ".maestro-plane { background-image: radial-gradient(circle, "
                 "rgba(128,133,159,0.5) 0px, rgba(128,133,159,0.5) 1.4px, transparent 1.8px); "
-                f"background-repeat: repeat; background-size: {s:.1f}px {s:.1f}px; }}"
+                f"background-repeat: repeat; background-size: {s:.1f}px {s:.1f}px; "
+                f"background-position: {px:.1f}px {py:.1f}px; }}"
             )
         if hasattr(prov, "load_from_string"):
             prov.load_from_string(css)
@@ -551,9 +557,10 @@ class CanvasWindow:
         self._autofit_all_groups()  # C2: se o nó nasceu dentro de um grupo, ele abraça
 
     def _place(self, child, base, z) -> None:
-        """Posiciona+escala o child com UM transform único (ver _plane_xform)."""
+        """Posiciona+escala o child: tela = base*zoom + câmera (canvas infinito)."""
         px, py = to_display(base, z)
-        self.plane.set_child_transform(child, _plane_xform(px, py, z))
+        camx, camy = self._cam
+        self.plane.set_child_transform(child, _plane_xform(px + camx, py + camy, z))
 
     # (arrastar nó: agora via o gesto do PLANO — ver _pan_begin/_pan_update/_pan_end)
 
@@ -710,21 +717,19 @@ class CanvasWindow:
     def _on_canvas_click(self, _g, n_press, x, y):
         if n_press < 2:  # só duplo-clique
             return
-        ha, va = self.scrolled.get_hadjustment(), self.scrolled.get_vadjustment()
-        px, py = x + ha.get_value(), y + va.get_value()
-        picked = self.plane.pick(px, py, Gtk.PickFlags.DEFAULT)
+        picked = self.plane.pick(x, y, Gtk.PickFlags.DEFAULT)  # x,y já são coords de tela
         if self._drag_handle(picked) is not None or self._over_child(picked):
             return  # clique sobre nó/nota/árvore: deixa eles tratarem (ex.: renomear nó)
-        gid = self._group_title_band_hit(px, py)
+        camx, camy = self._cam  # hit-test de grupo é em base*zoom (tela - câmera)
+        gid = self._group_title_band_hit(x - camx, y - camy)
         if gid is not None:
             self._group_dialog(gid)
 
     def _pan_begin(self, gesture, x, y):
-        # x,y vêm em coords da SCROLLEDWINDOW (não rola) -> referência estável (sem tremor).
-        # Pro pick, traduz p/ coords do PLANO somando o scroll atual.
-        ha, va = self.scrolled.get_hadjustment(), self.scrolled.get_vadjustment()
-        px, py = x + ha.get_value(), y + va.get_value()  # coords do PLANO
-        picked = self.plane.pick(px, py, Gtk.PickFlags.DEFAULT)
+        # x,y vêm em coords do scrolled (que NÃO rola) = coords de TELA -> estável.
+        picked = self.plane.pick(x, y, Gtk.PickFlags.DEFAULT)
+        camx, camy = self._cam
+        px, py = x - camx, y - camy  # coords base*zoom (p/ hit-test de grupo)
         self._pan = None
         self._drag = None
         self._group_resize = None
@@ -736,6 +741,7 @@ class CanvasWindow:
                 gesture.set_state(Gtk.EventSequenceState.DENIED)
                 return
             self._drag = {"kind": kind, "id": tid, "base": self._drag_store(kind).get(tid, (0.0, 0.0))}
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)  # não vaza p/ window-drag
             return
         if self._over_child(picked):  # corpo do nó/nota/árvore: deixa o filho interagir
             gesture.set_state(Gtk.EventSequenceState.DENIED)
@@ -744,6 +750,7 @@ class CanvasWindow:
         gid = self._group_corner_hit(px, py)
         if gid is not None:
             self._group_resize = {"id": gid, "size": self._group_size.get(gid, (600.0, 360.0))}
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
             return
         gid = self._group_title_band_hit(px, py)
         if gid is not None:  # arrasta o grupo + os nós contidos (move junto)
@@ -753,11 +760,10 @@ class CanvasWindow:
                 "base": self._group_base.get(gid, (0.0, 0.0)),
                 "members": self._group_members(gid),
             }
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
             return
-        self._pan = (  # fundo: pan da vista
-            self.scrolled.get_hadjustment().get_value(),
-            self.scrolled.get_vadjustment().get_value(),
-        )
+        self._pan = self._cam  # fundo: pan move a CÂMERA (canvas infinito, sem limite)
+        gesture.set_state(Gtk.EventSequenceState.CLAIMED)  # reivindica: não move a janela
 
     def _pan_update(self, _g, off_x, off_y):
         z = self.model.zoom()
@@ -799,8 +805,9 @@ class CanvasWindow:
             return
         if self._pan is None:
             return
-        self.scrolled.get_hadjustment().set_value(self._pan[0] - off_x)
-        self.scrolled.get_vadjustment().set_value(self._pan[1] - off_y)
+        # pan = mover a câmera (conteúdo segue o dedo), SEM limite -> canvas infinito
+        self._cam = (self._pan[0] + off_x, self._pan[1] + off_y)
+        self._reposition_all()
 
     def _pan_end(self, _g, _ox, _oy):
         if self._group_resize is not None:  # C2: fim do resize MANUAL do grupo (vira o piso)
@@ -867,31 +874,11 @@ class CanvasWindow:
         self._apply_zoom()
 
     def _resize_plane(self) -> None:
-        """Cresce o plano p/ caber todos os nós/notas no zoom atual.
-
-        Com extensão fixa, arrastar um nó pra longe e dar zoom o jogava pra fora da
-        área rolável (inalcançável). Só cresce; nunca encolhe abaixo do piso inicial.
-        Compara com o tamanho atual p/ evitar relayout à toa durante o arrasto.
-        """
-        z = self.model.zoom()
-        bases = (
-            list(self._base_pos.values())
-            + list(self._note_base.values())
-            + list(self._ft_base.values())
-        )
-        max_bx = max((b[0] for b in bases), default=0.0)
-        max_by = max((b[1] for b in bases), default=0.0)
-        max_w = max((s[0] for s in self._node_size.values()), default=BASE_W)
-        max_h = max((s[1] for s in self._node_size.values()), default=BASE_H)
-        for gid, (gx, gy) in self._group_base.items():  # C2: grupos também alargam o plano
-            gw, gh = self._group_size.get(gid, (600.0, 360.0))
-            max_bx = max(max_bx, gx + gw - max_w)
-            max_by = max(max_by, gy + gh - max_h)
-        need_w = max(5000, int(max_bx * z + max_w * z + 400))
-        need_h = max(4000, int(max_by * z + max_h * z + 400))
-        if (need_w, need_h) != self._plane_size:
-            self._plane_size = (need_w, need_h)
-            self.plane.set_size_request(need_w, need_h)
+        """No-op (canvas infinito): o plano fica do tamanho da viewport e a CÂMERA dá o
+        alcance ilimitado. Antes crescia o plano (5000×4000+), o que com a GPU virava
+        textura gigante do fundo CSS -> VRAM OOM. Mantido como no-op p/ não mexer nos
+        muitos chamadores."""
+        return
 
     def _apply_zoom(self):
         z = self.model.zoom()
@@ -904,6 +891,19 @@ class CanvasWindow:
             self._place(frame, self._ft_base.get(fid, (0.0, 0.0)), z)
         self.zlabel.set_text(f"zoom {int(z * 100)}%")
         self._apply_grid()  # espaçamento do grid acompanha o zoom
+        self.plane.queue_draw()
+        self._mm_refresh()
+
+    def _reposition_all(self) -> None:
+        """Re-coloca todos os widgets segundo a câmera atual (pan do canvas infinito)."""
+        z = self.model.zoom()
+        for nid, frame in self.frames.items():
+            self._place(frame, self._base_pos.get(nid, (0.0, 0.0)), z)
+        for note_id, frame in self.note_frames.items():
+            self._place(frame, self._note_base.get(note_id, (0.0, 0.0)), z)
+        for fid, frame in self._ft_frames.items():
+            self._place(frame, self._ft_base.get(fid, (0.0, 0.0)), z)
+        self._apply_grid()  # grid acompanha a câmera (background-position)
         self.plane.queue_draw()
         self._mm_refresh()
 
@@ -924,13 +924,10 @@ class CanvasWindow:
         for _id, (bx, by) in self._ft_base.items():
             items.append((bx, by, 300, 360, (0.40, 0.70, 0.50)))  # árvore: verde
         z = self.model.zoom() or 1.0
-        ha, va = self.scrolled.get_hadjustment(), self.scrolled.get_vadjustment()
-        vp = (
-            ha.get_value() / z,
-            va.get_value() / z,
-            (ha.get_page_size() or 1) / z,
-            (va.get_page_size() or 1) / z,
-        )
+        camx, camy = self._cam  # viewport em coords-base: canto = -cam/z, tamanho = tela/z
+        vw = self.scrolled.get_width() or 1
+        vh = self.scrolled.get_height() or 1
+        vp = (-camx / z, -camy / z, vw / z, vh / z)
         return items, vp
 
     def _draw_minimap(self, _area, cr, w, h):  # pragma: no cover - precisa de GTK
@@ -957,9 +954,10 @@ class CanvasWindow:
         z = self.model.zoom() or 1.0
         world_x = (x - offx) / scale  # clique -> coord-mundo (base)
         world_y = (y - offy) / scale
-        ha, va = self.scrolled.get_hadjustment(), self.scrolled.get_vadjustment()
-        ha.set_value(max(0.0, world_x * z - ha.get_page_size() / 2))  # centra a vista ali
-        va.set_value(max(0.0, world_y * z - va.get_page_size() / 2))
+        vw = self.scrolled.get_width() or 1  # centra a câmera nesse ponto (sem limite)
+        vh = self.scrolled.get_height() or 1
+        self._cam = (vw / 2 - world_x * z, vh / 2 - world_y * z)
+        self._reposition_all()
 
     # -- tema dos terminais (V11-S4) --
     def _apply_theme(self, name: str) -> None:
@@ -2154,10 +2152,11 @@ class CanvasWindow:
             nw, nh = BASE_W, BASE_H
         else:
             return  # frame sem id: nada a centralizar (antes rolava pra origem)
-        cx, cy = x + (nw * z) / 2, y + (nh * z) / 2  # centro do nó escalado
-        ha, va = self.scrolled.get_hadjustment(), self.scrolled.get_vadjustment()
-        ha.set_value(max(0, cx - ha.get_page_size() / 2))
-        va.set_value(max(0, cy - va.get_page_size() / 2))
+        cx, cy = x + (nw * z) / 2, y + (nh * z) / 2  # centro do nó escalado (base*z)
+        vw = self.scrolled.get_width() or 1  # câmera leva esse centro ao meio da tela
+        vh = self.scrolled.get_height() or 1
+        self._cam = (vw / 2 - cx, vh / 2 - cy)
+        self._reposition_all()
 
     def _palette_act(self, item):
         if item.kind == "action":  # D1: executa um comando do app
