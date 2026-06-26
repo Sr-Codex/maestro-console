@@ -325,6 +325,10 @@ class CanvasWindow:
         head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         head.add_css_class("nodehead")
         head.add_css_class("st-idle")
+        num_lbl = Gtk.Label(label="")  # nº de posição (Ctrl+Shift+N foca) [A.2]
+        num_lbl.add_css_class("dim-label")
+        frame._num_lbl = num_lbl
+        head.append(num_lbl)
         badge = self.badges.get(nid)
         if badge:  # tira colorida = badge do papel (V9-S3) — DrawingArea c/ cor arbitrária
             sq = Gtk.DrawingArea()
@@ -392,6 +396,7 @@ class CanvasWindow:
         self._place(frame, (bx, by), self.model.zoom())
         self.frames[nid] = frame
         self.order.append(nid)
+        self._renumber_nodes()  # atualiza os números de posição (Ctrl+Shift+N) [A.2]
 
     def _place(self, child, base, z) -> None:
         """Posiciona+escala o child com UM transform único (ver _plane_xform)."""
@@ -503,7 +508,37 @@ class CanvasWindow:
         if term is not None and term in self.terms:
             self.terms.remove(term)
         self.plane.remove(frame)  # destrói a subárvore -> fecha o PTY (SIGHUP no filho)
+        if self._focused_nid == nid:
+            self._focused_nid = None
+        self._renumber_nodes()
         self.plane.queue_draw()
+
+    # -- foco rápido por teclado (A.2) --
+    def _focus_node(self, nid: str) -> None:
+        fr = self.frames.get(nid)
+        if fr is None:
+            return
+        self._center_on(fr)
+        term = getattr(fr, "_term", None)
+        if term is not None:
+            term.grab_focus()
+        self._focused_nid = nid
+
+    def _focus_next_attention(self) -> None:
+        if self._store is None:
+            return
+        ids = [it.agent for it in attention_items(self._store) if it.agent in self.frames]
+        if not ids:
+            return
+        start = ids.index(self._focused_nid) + 1 if self._focused_nid in ids else 0
+        self._focus_node(ids[start % len(ids)])
+
+    def _renumber_nodes(self) -> None:
+        for i, nid in enumerate(self.order, 1):
+            fr = self.frames.get(nid)
+            lbl = getattr(fr, "_num_lbl", None) if fr is not None else None
+            if lbl is not None:
+                lbl.set_text(f"{i} " if i <= 9 else "")
 
     # -- pan (arrastar fundo) --
     def _pan_begin(self, gesture, x, y):
@@ -722,6 +757,16 @@ class CanvasWindow:
             nid = self._focused_nid
             if nid and nid in self.frames:
                 self._close_node(nid)
+            return True
+        # Ctrl+Shift+A: pula pro próximo terminal que precisa de você (atenção) [A.2]
+        if ctrl and shift and keyval in (Gdk.KEY_a, Gdk.KEY_A):
+            self._focus_next_attention()
+            return True
+        # Ctrl+Shift+1..9: foca o terminal N (posição na ordem) [A.2]
+        if ctrl and shift and Gdk.KEY_1 <= keyval <= Gdk.KEY_9:
+            i = keyval - Gdk.KEY_1
+            if i < len(self.order):
+                self._focus_node(self.order[i])
             return True
         # Esc cancela o modo conectar SOMENTE se ele está ativo. Só chega aqui quando
         # o foco não está num terminal (o VTE consome o próprio Esc), então o Esc do
