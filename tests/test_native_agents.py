@@ -5,10 +5,16 @@ from maestro.native import agents
 from maestro.native.agents import agent_argv, installed_agents
 
 
-def test_installed_agents_filtra_por_binario():
-    # claude e codex estão instalados neste ambiente
+def test_installed_agents_filtra_por_binario(monkeypatch):
+    # hermético (passa no CI sem os binários reais): mocka o PATH p/ só "claude" instalado
+    # e verifica que o FILTRO por binário inclui o presente e exclui o ausente.
+    claude_bin = load_profiles()["claude"].cmd[0]
+    monkeypatch.setattr(
+        agents.shutil, "which", lambda b: "/usr/bin/fake" if b == claude_bin else None
+    )
     inst = installed_agents()
-    assert "claude" in inst and "codex" in inst
+    assert "claude" in inst  # binário "presente" -> incluído
+    assert "codex" not in inst  # binário ausente -> filtrado
 
 
 def test_agent_argv_interativo_sob_bwrap(monkeypatch):
