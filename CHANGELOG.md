@@ -3,6 +3,34 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.26.0] — Cabo "estilo Maestri": pergunta digitada no terminal VIVO + captura
+- **Modo live (default):** ao perguntar por um cabo (`maestro-ask`), o prompt é **digitado no
+  terminal VIVO do agente destino** (`Vte.feed_child`) — você VÊ a pergunta aparecer e o agente
+  responde lá, como no Maestri. Antes era headless/invisível (uma cópia separada respondia; o
+  terminal aberto ficava intocado, mostrando o placeholder "explain this codebase").
+- **Captura por quiescência + estado-da-TUI:** o host monitora o terminal do destino (só quando
+  **desfocado**, igual Maestri), detecta o fim do turno (silêncio + sumiço do "esc to interrupt")
+  e devolve a resposta a quem perguntou (pelo mailbox → `Answer from <nó>: ...`).
+- **Fallback headless:** se a captura falhar (sem terminal, destino focado, timeout, vazio), cai
+  no mecanismo mediado anterior — quem perguntou **sempre** recebe algo. `MAESTRO_ASK_MODE=headless`
+  força o modo antigo.
+- Protocolo do mailbox e guardrails reaproveitados (sem mudança em `ask_bus`/`ask_router`/cliente).
+- Heurística de captura pura e testável em `maestro/native/ask_capture.py` (+ `tests/test_ask_capture.py`).
+- Honesto: injeção é confiável (provada em VTE real); captura de TUI full-screen é best-effort
+  (~nível Maestri, ~70%) com fallback. Vai precisar de ajuste fino com os TUIs reais.
+
+## [0.25.0] — Canvas: abre igual fechou (persistência completa do estado)
+- **Roster de terminais persistido (a grande lacuna):** o startup recriava SÓ os agentes
+  instalados; terminais criados em runtime (➕ shell ou instância extra de agente) **sumiam**
+  ao reabrir. Agora a lista de terminais é persistida (`ui_state canvas_nodes`: nid/kind/base)
+  e **recriada ao abrir** — shells e instâncias extras voltam na posição/tamanho. 1ª vez
+  semeia com os agentes instalados. **✕ fecha = remove de vez** (sai do roster).
+- **Grupos — WYSIWYG:** o grupo agora reabre **exatamente** no tamanho/posição em que estava
+  (antes salvava o "manual" e o auto-fit encolhia/crescia ao reabrir). Persiste o retângulo
+  EXIBIDO (`_persist_group`) e o auto-fit fica suspenso no startup (`_loading`).
+- **Fit ao abrir:** a câmera **centraliza no conteúdo** — tudo visível, sem caçar card fora da tela.
+- Posições/tamanhos de cards, notas (texto/cor/pin), grupos, cabos e zoom já persistiam e continuam.
+
 ## [0.24.0] — Canvas infinito funcional no CM4 (pan por SELECT+trackball + seleção)
 - **Canvas infinito agora roda no CM4** (reverte o "adiado pro CM5"): a GPU aguenta o
   modelo-câmera (testado em runtime, sem OOM); os testes anteriores que "provaram"

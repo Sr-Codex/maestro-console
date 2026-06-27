@@ -27,15 +27,23 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Vte", "3.91")
 from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Vte  # noqa: E402
 
-from ..engine.attention import attention_items, notify  # noqa: E402
-from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
-from ..engine.state.store import Store  # noqa: E402
 from ..engine.ask_bus import AskBus, install_ask_skill, install_client  # noqa: E402
 from ..engine.ask_router import AskRouter, policy_from_env  # noqa: E402
+from ..engine.attention import attention_items, notify  # noqa: E402
 from ..engine.envelope import EnvelopeState  # noqa: E402
+from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
+from ..engine.state.store import Store  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from ..engine.workspace_registry import WorkspaceRegistry  # noqa: E402
 from .agents import STATE_COLORS, agent_argv, installed_agents  # noqa: E402
+from .ask_capture import (  # noqa: E402
+    LIVE_CAP_MS,
+    LIVE_QUIET_MS,
+    LIVE_SUBMIT_MS,
+    LIVE_WAIT_S,
+    clean_capture,
+    tui_busy,
+)
 from .filetree import list_children  # noqa: E402
 from .floors_ui import floor_rows, merge_text, preview_text  # noqa: E402
 from .notes_ui import note_title_display  # noqa: E402
@@ -229,18 +237,22 @@ class CanvasWindow:
         self._group_color: dict[str, str] = {}
         self._group_title: dict[str, str] = {}
         self._group_user_sized: set[str] = set()  # grupos redimensionados de propósito (piso)
+        self._loading = False  # True só no startup: suspende auto-fit p/ restaurar tamanho EXATO
         self._group_resize = None  # estado do resize de grupo (alça canto inf-dir)
         self._edge_state: dict[tuple[str, str], str] = {}  # cor do cabo por handoff (V7-S4)
         self._active_edge: tuple[str, str] | None = None
         self._pan: tuple[float, float] | None = None
         self._focused_nid: str | None = None  # terminal em foco (p/ fechar via teclado)
         self._selected: tuple[str, str] | None = None  # (kind, id) selecionado (borda azul)
-        self._ptr_over: tuple[str, str] | None = None  # (kind, id) sob o cursor (p/ roteio de scroll)
+        self._ptr_over: tuple[str, str] | None = None  # (kind,id) sob o cursor (roteio do scroll)
         # cabos interativos (ADR-11): mailbox + router — só com controller + edges
         self._ask_bus_dir = ask_bus_dir  # p/ criar novos terminais de agente em runtime
         self._ask_bus = None
         self._ask_router = None
         self._ask_inflight: set[str] = set()
+        # modo do cabo: "live" (Maestri: digita no terminal vivo do B) ou "headless" (mediado).
+        # default live; cai no headless automaticamente se a captura falhar.
+        self._ask_mode = os.environ.get("MAESTRO_ASK_MODE", "live").strip().lower()
         if ask_bus_dir and controller is not None and edges is not None:
             self._ask_bus = AskBus(ask_bus_dir)
             self._ask_router = AskRouter(
@@ -279,7 +291,7 @@ class CanvasWindow:
         self.plane.set_hexpand(True)
         self.plane.set_vexpand(True)
         self._plane_size = (0, 0)  # legado (não mais usado p/ dimensionar o plano)
-        self._cam = (0.0, 0.0)  # câmera: tela = base*zoom + cam (sem limite -> infinito)
+        self._cam = (0.0, 0.0)  # câmera (tela=base*zoom+cam); _fit_view centraliza ao abrir
         # gesto no scrolled (que NÃO rola -> referência estável, sem tremor)
         pan = Gtk.GestureDrag()
         pan.connect("drag-begin", self._pan_begin)
@@ -330,6 +342,7 @@ class CanvasWindow:
         root.append(self._hint_lbl)
         self.win.set_child(root)
 
+        self._loading = True  # suspende auto-fit no startup -> grupos voltam no tamanho EXATO salvo
         if self.groups is not None:  # carrega grupos (desenhados atrás dos nós) — C2
             for g in self.groups.list():
                 self._load_group(g)
@@ -338,6 +351,7 @@ class CanvasWindow:
         if self.notes is not None:  # restaura notas salvas (V9-S3)
             for note in self.notes.list():
                 self._add_note_widget(note)
+        self._loading = False  # fim do startup: auto-fit volta a valer (interações ao vivo)
         self._apply_zoom()
         self._apply_theme(self.model.terminal_theme())  # tema persistido (V11-S4)
 
@@ -553,6 +567,7 @@ class CanvasWindow:
         frame._term = term  # ref p/ remover de self.terms ao fechar o nó
         fc = Gtk.EventControllerFocus()
         fc.connect("enter", lambda _c, n=nid: setattr(self, "_focused_nid", n))
+        fc.connect("leave", lambda _c, n=nid: self._on_term_unfocus(n))  # monitorar só desfocado
         term.add_controller(fc)  # rastreia o terminal em foco (fechar via Ctrl+Shift+W)
         sz = self.model.node_size(nid, (BASE_W, BASE_H))  # tamanho por nó (persistido)
         self._node_size[nid] = sz
@@ -659,15 +674,16 @@ class CanvasWindow:
         entry.grab_focus()
 
     def _close_node(self, nid: str) -> None:
-        """Remove o nó-terminal do canvas NESTA sessão (widget + PTY do agente).
+        """Fecha o nó-terminal: ✕ REMOVE DE VEZ (sai do roster -> não volta ao reabrir).
 
-        Não apaga posição persistida nem cabos no Store — relançar restaura o nó.
-        O desenho de cabos já ignora nós fora de self.frames, então não sobra cabo
-        solto. Remove o terminal de self.terms p/ não vazar nem quebrar _apply_theme.
+        Remove o widget + PTY do agente e tira o nó do roster persistido. Cabos órfãos
+        são ignorados no desenho (já filtra por self.frames). Remove o terminal de
+        self.terms p/ não vazar nem quebrar _apply_theme.
         """
         frame = self.frames.pop(nid, None)
         if frame is None:
             return
+        self.model.remove_from_roster(nid)  # ✕ = remoção permanente (decisão do usuário)
         if nid in self.order:
             self.order.remove(nid)
         self.heads.pop(nid, None)
@@ -883,9 +899,7 @@ class CanvasWindow:
             self._group_manual[gid] = (gx, gy, w, h)  # piso = retângulo manual atual
             self._group_user_sized.add(gid)  # a partir daqui o manual é piso (primeira opção)
             self._autofit_group(gid)  # ainda cresce se um nó passar do piso
-            m = self._group_manual[gid]
-            if self.groups is not None:
-                self.groups.set_rect(gid, m[0], m[1], m[2], m[3])
+            self._persist_group(gid)  # salva o tamanho EXIBIDO (WYSIWYG) -> reabre igual
             self._resize_plane()
             self.plane.queue_draw()
             self._mm_refresh()
@@ -906,8 +920,7 @@ class CanvasWindow:
                         self._save_note(fr)
                 # ft: posição não é persistida (efêmera)
             self._autofit_group(gid)
-            if self.groups is not None:
-                self.groups.set_rect(gid, gx, gy, gw, gh)  # persiste grupo (piso)
+            self._persist_group(gid)  # salva o tamanho EXIBIDO (WYSIWYG) -> reabre igual
             self._resize_plane()
             self.plane.queue_draw()
             self._mm_refresh()
@@ -945,6 +958,25 @@ class CanvasWindow:
         self._cam = (camx - dx * step, camy - dy * step)
         self._reposition_all()
         return True  # consome: nem o terminal nem o ScrolledWindow rolam
+
+    def _fit_view(self) -> bool:
+        """Centraliza a câmera no conteúdo (cards/notas/árvores) — mostra tudo ao abrir.
+        Chamado após a 1ª alocação da viewport (get_width real). One-shot p/ GLib."""
+        items, _vp = self._mm_items()  # itens em coords-base (x, y, w, h, cor)
+        z = self.model.zoom() or 1.0
+        vw = self.scrolled.get_width() or 1
+        vh = self.scrolled.get_height() or 1
+        if items:
+            xs0 = min(i[0] for i in items)
+            ys0 = min(i[1] for i in items)
+            xs1 = max(i[0] + i[2] for i in items)
+            ys1 = max(i[1] + i[3] for i in items)
+            cx, cy = (xs0 + xs1) / 2.0, (ys0 + ys1) / 2.0  # centro do conteúdo (base)
+            self._cam = (vw / 2 - cx * z, vh / 2 - cy * z)  # leva ao meio da tela
+        else:
+            self._cam = (0.0, 0.0)
+        self._reposition_all()
+        return False  # one-shot (GLib)
 
     def _zoom(self, dz):
         self.model.set_zoom(self.model.zoom() + dz)
@@ -1129,10 +1161,119 @@ class CanvasWindow:
         return (frm, to) in pairs or (to, frm) in pairs  # cabo em qualquer sentido
 
     def _ask_delegate(self, to: str, prompt: str) -> str:
+        # MODO LIVE (padrão, estilo Maestri): digita o prompt no terminal VIVO do B e captura
+        # a resposta dele. Cai no HEADLESS (variante a) se não der — A sempre recebe algo.
+        if self._ask_mode != "headless":
+            ans = self._ask_live(to, prompt)
+            if ans and ans.strip():
+                return ans
+        return self._ask_headless(to, prompt)
+
+    def _ask_headless(self, to: str, prompt: str) -> str:
         env = _run_sync(self.controller.delegate(to, prompt))  # síncrono no worker
         if env.state is EnvelopeState.DONE:
             return env.result or ""
         return f"[{to} retornou {env.state}] {env.note or env.result or ''}"
+
+    def _on_term_unfocus(self, nid: str) -> None:
+        if self._focused_nid == nid:
+            self._focused_nid = None
+
+    def _term_text(self, term) -> str:
+        """Texto renderizado da tela do VTE (sem ANSI). Main thread."""
+        try:
+            res = term.get_text_format(Vte.Format.TEXT)
+        except Exception:
+            return ""
+        if isinstance(res, str):
+            return res
+        try:
+            return res[0] or ""  # algumas bindings devolvem (texto, ...)
+        except (TypeError, IndexError):
+            return ""
+
+    def _ask_live(self, to: str, prompt: str) -> str | None:
+        """(thread worker) injeta no terminal VIVO do B e captura a resposta. None = não deu
+        (sem terminal, B focado, timeout ou captura vazia) -> o chamador cai no headless."""
+        fr = self.frames.get(to)
+        term = getattr(fr, "_term", None) if fr is not None else None
+        if term is None or to == self._focused_nid:
+            return None  # sem terminal vivo, ou B sob controle manual (focado) — igual Maestri
+        result: dict = {}
+        done = threading.Event()
+        GLib.idle_add(self._live_ask_start, term, prompt, result, done)
+        done.wait(timeout=LIVE_WAIT_S)
+        return result.get("answer")
+
+    def _feed_child(self, term, text: str) -> None:
+        """Escreve no stdin do agente (como se digitado). VTE 3.91 espera bytes."""
+        try:
+            term.feed_child(text.encode())
+        except TypeError:
+            term.feed_child(text)
+
+    def _live_ask_start(self, term, prompt, result, done) -> bool:
+        """(main thread) DIGITA o prompt no terminal vivo; o ENTER vai SEPARADO depois (ver
+        _live_submit). A detecção de quiescência só começa após o envio."""
+        oneline = " ".join(prompt.split())  # frame multi-linha -> 1 linha (não quebra a caixa)
+        st = {
+            "term": term, "prompt": oneline, "result": result, "done": done,
+            "before": self._term_text(term), "handler": None, "submitted": False,
+            "submit_id": None, "quiet_id": None, "cap_id": None, "finished": False,
+        }
+        self._feed_child(term, oneline)  # 1) digita o texto (SEM Enter)
+        st["handler"] = term.connect("contents-changed", self._live_on_change, st)
+        st["cap_id"] = GLib.timeout_add(LIVE_CAP_MS, self._live_finish, st, True)  # teto duro
+        st["submit_id"] = GLib.timeout_add(LIVE_SUBMIT_MS, self._live_submit, st)  # 2) Enter
+        return False
+
+    def _live_submit(self, st) -> bool:
+        """(main thread) manda o ENTER (C-m = \\r) SEPARADO e liga a detecção de fim de turno."""
+        st["submit_id"] = None
+        if st["finished"]:
+            return False
+        self._feed_child(st["term"], "\r")  # Enter como transmissão própria -> envia de verdade
+        st["submitted"] = True
+        st["quiet_id"] = GLib.timeout_add(LIVE_QUIET_MS, self._live_quiet, st)
+        return False
+
+    def _live_on_change(self, _term, st) -> None:
+        if st["finished"] or not st["submitted"]:
+            return  # ignora as mudanças do próprio texto digitado (antes do Enter)
+        if st["quiet_id"]:
+            GLib.source_remove(st["quiet_id"])  # novo output -> rearma a quiescência
+        st["quiet_id"] = GLib.timeout_add(LIVE_QUIET_MS, self._live_quiet, st)
+
+    def _live_quiet(self, st) -> bool:
+        st["quiet_id"] = None
+        if st["finished"]:
+            return False
+        if tui_busy(self._term_text(st["term"])):  # ainda trabalhando (pausa de "pensar")
+            st["quiet_id"] = GLib.timeout_add(LIVE_QUIET_MS, self._live_quiet, st)
+            return False
+        self._live_finish(st, False)  # silêncio + não-ocupado = terminou o turno
+        return False
+
+    def _live_finish(self, st, timed_out) -> bool:
+        if st["finished"]:
+            return False
+        st["finished"] = True
+        term = st["term"]
+        if st["handler"]:
+            try:
+                term.disconnect(st["handler"])
+            except Exception:
+                pass
+        for k in ("submit_id", "quiet_id", "cap_id"):
+            if st.get(k):
+                GLib.source_remove(st[k])
+                st[k] = None
+        if not timed_out:  # no timeout deixa vazio -> chamador cai no headless
+            ans = clean_capture(st["before"], self._term_text(term), st["prompt"])
+            if ans:
+                st["result"]["answer"] = ans
+        st["done"].set()
+        return False
 
     def _ask_tick(self) -> bool:
         if self._ask_bus is None:
@@ -1166,13 +1307,9 @@ class CanvasWindow:
 
     def _ask_reflect(self, req, resp) -> bool:
         ok = bool(resp and resp.ok)
-        fr = self.frames.get(req.to)
-        term = getattr(fr, "_term", None) if fr is not None else None
-        if term is not None:
-            term.feed(
-                f"\r\n\x1b[2m[{req.frm} perguntou via cabo] {req.prompt}\x1b[0m\r\n".encode()
-            )
-            term.feed(f"\x1b[2m[resposta enviada a {req.frm}]\x1b[0m\r\n".encode())
+        # No modo live o prompt já aparece DIGITADO no terminal do B (feed_child) e o B
+        # responde lá — não duplicamos com linha cosmética (era o que confundia). A cor do
+        # cabo indica sucesso/falha.
         self._ask_set_edge_state(req.frm, req.to, "done" if ok else "failed")
         self.plane.queue_draw()
         return False
@@ -1540,6 +1677,7 @@ class CanvasWindow:
     def _new_shell_terminal(self) -> str | None:
         nid = self._unique_nid("shell")
         self._add_node(nid, "shell", ["/bin/bash"], default=self._next_node_default())
+        self.model.add_to_roster(nid, "shell", None)  # persiste -> volta ao reabrir
         self._resize_plane()
         self.plane.queue_draw()
         return nid
@@ -1561,6 +1699,7 @@ class CanvasWindow:
         install_ask_skill(wsp, nid)  # ensina o maestro-ask ao novo agente
         argv = agent_argv(profiles[base], str(wsp), node=nid, ask_bus_dir=self._ask_bus_dir)
         self._add_node(nid, nid, argv, default=self._next_node_default())
+        self.model.add_to_roster(nid, "agent", base)  # persiste -> volta ao reabrir
         self._resize_plane()
         self.plane.queue_draw()
         return nid
@@ -1862,6 +2001,9 @@ class CanvasWindow:
         self._group_title[g.id] = g.title
         self._group_base[g.id] = (g.x, g.y)  # exibido (refinado pelo auto-fit)
         self._group_size[g.id] = (g.w, g.h)
+        # o retângulo salvo é a posição/tamanho que o usuário deixou -> tratar como PISO ao
+        # reabrir (senão o auto-fit encolhe o grupo pra abraçar só os nós e ele "não volta").
+        self._group_user_sized.add(g.id)
         self._autofit_group(g.id)
 
     def _create_group(self) -> None:
@@ -1879,6 +2021,8 @@ class CanvasWindow:
         lados — cresce E encolhe. Se o usuário redimensionou de propósito, esse tamanho
         vira piso (não encolhe abaixo dele). Vazio = volta ao tamanho manual/default."""
         if gid not in self._group_manual:
+            return
+        if self._loading:  # startup: não auto-fitar -> grupo fica no tamanho/posição EXATOS salvos
             return
         mx, my, mw, mh = self._group_manual[gid]
         members = self._group_members(gid)
@@ -1901,11 +2045,23 @@ class CanvasWindow:
         self._group_base[gid] = (left, top)
         self._group_size[gid] = (max(GROUP_MIN_W, right - left), max(GROUP_MIN_H, bottom - top))
 
+    def _persist_group(self, gid) -> None:
+        """Persiste o retângulo EXIBIDO do grupo (base+size pós auto-fit) — WYSIWYG: o que
+        está na tela é o que reabre. Antes salvava só o 'manual', que diferia do exibido."""
+        if self.groups is None or gid not in self._group_base:
+            return
+        bx, by = self._group_base[gid]
+        gw, gh = self._group_size[gid]
+        self.groups.set_rect(gid, bx, by, gw, gh)
+
     def _autofit_all_groups(self) -> None:
         if not self._group_base:
             return
         for gid in list(self._group_base):
             self._autofit_group(gid)
+        if not self._loading:  # persiste o tamanho EXIBIDO após abraçar o conteúdo
+            for gid in list(self._group_base):
+                self._persist_group(gid)
         self._resize_plane()
         self.plane.queue_draw()
         self._mm_refresh()
@@ -2369,20 +2525,43 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         ws = Workspace(f"{base}/workspaces")
         ask_bus_dir = f"{base}/ask-bus"
         install_client(ask_bus_dir)  # instala o maestro-ask no mailbox (montado nos agentes)
+        model = CanvasModel(st)
+        # ROSTER persistido: QUAIS terminais existem (abre igual fechou). 1ª vez = semeia
+        # com os agentes instalados; depois é a fonte da verdade (inclui shells/instâncias).
+        roster = model.node_roster()
+        if not roster:
+            roster = [{"nid": n, "kind": "agent", "base": n} for n in installed_agents()]
+            if not roster:
+                roster = [{"nid": "shell-1", "kind": "shell", "base": None}]
+            model.set_node_roster(roster)
         nodes = []
-        for name, profile in installed_agents().items():
-            wsp = ws.create(name)
-            install_ask_skill(wsp, name)  # ensina o agente a usar o maestro-ask
-            nodes.append(
-                (name, name, agent_argv(profile, str(wsp), node=name, ask_bus_dir=ask_bus_dir))
-            )
-        if not nodes:  # nenhum agente instalado -> um shell de exemplo
-            nodes = [("term1", "shell", ["/bin/bash"])]
+        for spec in roster:
+            nid = spec.get("nid")
+            if not nid:
+                continue
+            if spec.get("kind") == "shell":
+                nodes.append((nid, model.node_name(nid, "shell"), ["/bin/bash"]))
+                continue
+            base = spec.get("base") or nid
+            prof = installed_agents().get(base)
+            if prof is None:  # CLI base não instalado -> não dá pra recriar este card
+                continue
+            wsp = ws.create(nid)
+            install_ask_skill(wsp, nid)  # ensina o agente a usar o maestro-ask
+            if nid != base and nid not in controller.agents:  # instância extra (runtime)
+                try:
+                    controller.add_agent_instance(nid, base)
+                except Exception:
+                    controller.agents[nid] = prof  # já no registry: garante só o profile
+            argv = agent_argv(prof, str(wsp), node=nid, ask_bus_dir=ask_bus_dir)
+            nodes.append((nid, model.node_name(nid, nid), argv))
+        if not nodes:  # tudo removido / nada instalado -> um shell de exemplo
+            nodes = [("shell-1", "shell", ["/bin/bash"])]
         floors = resolve_floors(st, f"{base}/floors")
         badges = agent_badges(controller.get_team("coder-reviewer"))
         win = CanvasWindow(
             app,
-            CanvasModel(st),
+            model,
             nodes,
             controller=controller,
             edges=EdgeModel(st),
@@ -2399,6 +2578,7 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
             home_base=str(base),
         )
         win.show()
+        GLib.timeout_add(80, win._fit_view)  # centraliza a vista no conteúdo (viewport já com tamanho real)
         state["win"] = win  # ref p/ re-ativação idempotente (W5)
         win.start_ask_watcher()  # poll do mailbox dos cabos interativos (ADR-11)
         # tick in-app do scheduler: dispara routines vencidas enquanto aberto (V10-S4)

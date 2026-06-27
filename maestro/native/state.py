@@ -6,6 +6,8 @@ Separa a lógica testável da parte gráfica. Persiste via o Store da engine
 
 from __future__ import annotations
 
+import json
+
 from ..engine.state.store import Store
 
 
@@ -50,6 +52,32 @@ class CanvasModel:
 
     def set_node_name(self, node_id: str, name: str) -> None:
         self._store.set_ui(f"nodename_{node_id}", name)
+
+    def node_roster(self) -> list[dict]:
+        """Lista persistida dos terminais do canvas: [{nid, kind: agent|shell, base}].
+        É a FONTE da verdade de QUAIS cards existem (recriados no startup) — antes o
+        startup recriava só os agentes instalados, perdendo shells/instâncias de runtime."""
+        raw = self._store.get_ui("canvas_nodes")
+        if not raw:
+            return []
+        try:
+            v = json.loads(raw)
+            return v if isinstance(v, list) else []
+        except (ValueError, TypeError):
+            return []
+
+    def set_node_roster(self, roster: list[dict]) -> None:
+        self._store.set_ui("canvas_nodes", json.dumps(roster))
+
+    def add_to_roster(self, nid: str, kind: str, base: str | None) -> None:
+        r = self.node_roster()
+        if any(s.get("nid") == nid for s in r):
+            return
+        r.append({"nid": nid, "kind": kind, "base": base})
+        self.set_node_roster(r)
+
+    def remove_from_roster(self, nid: str) -> None:
+        self.set_node_roster([s for s in self.node_roster() if s.get("nid") != nid])
 
     def terminal_theme(self) -> str:
         return self._store.get_ui("terminal_theme") or "default"
