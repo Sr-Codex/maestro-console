@@ -3,6 +3,21 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.28.0] — Barra de contexto da NOTA (2ª pílula, estilo Maestri) — Fase 1
+- **2ª pílula flutuante** que aparece **ao selecionar uma nota** e some ao desselecionar
+  (`_update_note_ctx` no `_select`), logo abaixo da barra principal. Espelha o Maestri: ao clicar
+  no bloco de notas surge um menu de contexto com as ferramentas DAQUELA nota.
+- **Menor que a barra principal** (`.note-ctx-bar`/`.note-ctx-btn`: cantos/padding/botões
+  reduzidos) e com **folga vertical** clara em relação a ela (`margin_top=66`).
+- Ferramentas (Fase 1): **🎨 cor** (5 presets, reusa `_set_note_color`) · **B / I / S / `</>`**
+  (envolvem a seleção com markdown `**` / `*` / `~~` / `` ` ``) · **# heading · ☑ checklist ·
+  • lista** (prefixam a linha do cursor) · **⧉ duplicar** · **🗑 apagar**.
+- Edição via `Gtk.TextView` do corpo: funções puras `md_wrap`/`md_line_prefix` em
+  `engine/notes.py` (gi-free, testadas) + glue GTK (`get_selection_bounds`/`select_range`); salva
+  a nota após cada edição. **Markdown source** (marcadores visíveis; render WYSIWYG é Fase 2).
+- Fase 2 (depois): imagem, exportar, opacidade/cor custom, toggle de render markdown, fonte,
+  conectar por cabo.
+
 ## [0.27.0] — Barra flutuante de ferramentas (estilo Maestri)
 - **Pílula flutuante no topo-centro** do canvas (`Gtk.Overlay`, igual ao minimapa) com 8 ícones
   line-art (symbolic), inspirada no Maestri. Passo 1: liga ao que já existe e deixa o resto como
