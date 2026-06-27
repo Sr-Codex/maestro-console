@@ -3,6 +3,17 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.29.0] — Bloco de nota estilo sticky-note (redesign visual, Maestri)
+- **Nota INTEIRA colorida** (sticky-note): a cor pastel passa a preencher o card todo — frame +
+  cabeçalho + corpo (`Gtk.TextView` via CSS no subnó `text`, classe `.notebody-<cor>`). Antes só
+  a faixa do cabeçalho era colorida e o corpo ficava escuro. `_apply_note_color` agora pinta os três.
+- **Cabeçalho enxuto:** removidos **📌 pin** (não era necessário), **🎨 cor** e o **grip "≡"**
+  (cor já está na pílula de contexto; o cabeçalho inteiro continua sendo a área de arraste).
+- **Título flat** (`.note-title`: transparente, sem caixa, negrito) e **botão ✕ minimalista**
+  (`.note-close`: pequeno e redondo, hover suave).
+- **Cabeçalho compacto** (`.notehead-min`): menos padding/altura no topo.
+- Limpeza: import `..engine.notes` reordenado (corrige I001 herdado do PR #22).
+
 ## [0.28.0] — Barra de contexto da NOTA (2ª pílula, estilo Maestri) — Fase 1
 - **2ª pílula flutuante** que aparece **ao selecionar uma nota** e some ao desselecionar
   (`_update_note_ctx` no `_select`), logo abaixo da barra principal. Espelha o Maestri: ao clicar

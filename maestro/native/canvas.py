@@ -32,6 +32,7 @@ from ..engine.ask_router import AskRouter, policy_from_env  # noqa: E402
 from ..engine.attention import attention_items, notify  # noqa: E402
 from ..engine.envelope import EnvelopeState  # noqa: E402
 from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
+from ..engine.notes import md_line_prefix, md_wrap  # noqa: E402
 from ..engine.state.store import Store  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from ..engine.workspace_registry import WorkspaceRegistry  # noqa: E402
@@ -46,7 +47,6 @@ from .ask_capture import (  # noqa: E402
 )
 from .filetree import list_children  # noqa: E402
 from .floors_ui import floor_rows, merge_text, preview_text  # noqa: E402
-from ..engine.notes import md_line_prefix, md_wrap  # noqa: E402
 from .notes_ui import note_title_display  # noqa: E402
 from .orchestrate import (  # noqa: E402
     _run_sync,
@@ -398,9 +398,21 @@ class CanvasWindow:
             # 2ª pílula (contexto da nota): menor que a principal
             ".note-ctx-bar { border-radius: 16px; padding: 2px 5px; }",
             ".note-ctx-btn { min-width: 26px; min-height: 26px; padding: 2px; font-size: 12px; }",
+            # bloco de nota estilo sticky-note (Maestri): cabeçalho compacto, título flat,
+            # fechar minimalista redondo. A cor pastel preenche a nota TODA (ver .notebody-*).
+            ".notehead-min { padding: 1px 4px; }",
+            ".note-title { background: transparent; border: none; box-shadow: none; outline: none;"
+            " min-height: 0; padding: 0 2px; font-weight: bold; color: #1e1e2e; }",
+            ".note-title:focus-within { outline: none; box-shadow: none; }",
+            ".note-close { min-width: 20px; min-height: 20px; padding: 0; border-radius: 10px;"
+            " color: #1e1e2e; opacity: 0.5; }",
+            ".note-close:hover { background-color: rgba(0,0,0,0.12); opacity: 1; }",
         ]
         for cname, hexc in NOTE_COLORS.items():  # C4: classes de cor das notas
             rules.append(f".notecol-{cname} {{ background-color: {hexc}; color: #1e1e2e; }}")
+            # corpo (TextView) na MESMA cor pastel → sticky-note inteira colorida
+            rules.append(f".notebody-{cname} {{ background-color: {hexc}; }}")
+            rules.append(f".notebody-{cname} text {{ background-color: {hexc}; color: #1e1e2e; }}")
         for st, hexc in STATE_COLORS.items():
             rules.append(f".dot-{st} {{ color: {hexc}; }}")
         provider = Gtk.CssProvider()
@@ -2020,62 +2032,37 @@ class CanvasWindow:
         frame._note_id = note.id
         frame.add_css_class("node-card")  # UI-1
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        # barra de título (arraste pelo "≡" + edição do título)
+        # cabeçalho compacto: o cabeçalho INTEIRO arrasta (sem grip "≡"); cor/pin/apagar ficam na
+        # pílula de contexto (estilo Maestri). Aqui só título + fechar minimalista.
         head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         head.add_css_class("notehead")
-        grip = Gtk.Label(label=" ≡ ")
-        head.append(grip)
+        head.add_css_class("notehead-min")
         title = Gtk.Entry()
+        title.add_css_class("note-title")  # flat: sem caixa, negrito, transparente
         title.set_text(note_title_display(note) if note.title else "Nota")
         title.set_hexpand(True)
         head.append(title)
-        # 🎨 cor (C4): popover com swatches
-        colorbtn = Gtk.MenuButton(label="🎨")
-        colorbtn.set_has_frame(False)
-        colorbtn.set_tooltip_text("cor da nota")
-        cpop = Gtk.Popover()
-        crow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
-        for cname in NOTE_COLORS:
-            sw = Gtk.Button()
-            sw.add_css_class(f"notecol-{cname}")
-            sw.set_size_request(22, 22)
-            sw.connect(
-                "clicked",
-                lambda _b, fr=frame, c=cname, p=cpop: (p.popdown(), self._set_note_color(fr, c)),
-            )
-            crow.append(sw)
-        cpop.set_child(crow)
-        colorbtn.set_popover(cpop)
-        head.append(colorbtn)
-        # 📌 pin (C4): fixa a nota (não arrasta)
-        pinbtn = Gtk.ToggleButton(label="📌" if note.pinned else "📍")
-        pinbtn.set_has_frame(False)
-        pinbtn.set_tooltip_text("fixar a nota (não arrasta)")
-        pinbtn.set_active(note.pinned)
-        if note.pinned:
-            self._note_pinned.add(note.id)
-        pinbtn.connect("toggled", lambda b, fr=frame: self._toggle_note_pin(fr, b))
-        head.append(pinbtn)
         nclose = Gtk.Button(label="✕")
         nclose.set_has_frame(False)
+        nclose.add_css_class("note-close")  # pequeno e redondo
         nclose.set_tooltip_text("apagar esta nota")
         nclose.connect("clicked", lambda _b, fr=frame: self._close_note(fr))
         head.append(nclose)
         head._drag_note = note.id  # arrasto via gesto do PLANO (estável) — ver _pan_*
         frame._note_head = head
-        self._apply_note_color(frame, note.color)  # aplica a cor salva
-        # corpo (markdown editável)
+        # corpo (markdown editável) — na MESMA cor pastel (sticky-note inteira)
         body = Gtk.TextView()
         body.set_wrap_mode(Gtk.WrapMode.WORD)
         body.get_buffer().set_text(note.body)
         body.set_size_request(200, 110)
+        frame._body_view = body
+        self._apply_note_color(frame, note.color)  # aplica a cor salva (frame + head + corpo)
         # salvar ao perder foco (GTK4: EventControllerFocus)
         for w in (title, body):
             fc = Gtk.EventControllerFocus()
             fc.connect("leave", lambda _c, fr=frame: self._save_note(fr))
             w.add_controller(fc)
         frame._title_entry = title
-        frame._body_view = body
         box.append(head)
         box.append(body)
         # agent-to-note: rodar um agente com a nota (V9-S4)
@@ -2116,14 +2103,22 @@ class CanvasWindow:
         self.notes.save(note)
         return False
 
-    # -- C4: cor e pin da nota --
+    # -- C4: cor da nota (sticky-note: colore frame + cabeçalho + corpo) --
     def _apply_note_color(self, frame, color: str) -> None:
+        col = color if color in NOTE_COLORS else NOTE_COLOR_DEFAULT
         head = getattr(frame, "_note_head", None)
-        if head is None:
-            return
+        body = getattr(frame, "_body_view", None)
         for cname in NOTE_COLORS:
-            head.remove_css_class(f"notecol-{cname}")
-        head.add_css_class(f"notecol-{color if color in NOTE_COLORS else NOTE_COLOR_DEFAULT}")
+            frame.remove_css_class(f"notecol-{cname}")
+            if head is not None:
+                head.remove_css_class(f"notecol-{cname}")
+            if body is not None:
+                body.remove_css_class(f"notebody-{cname}")
+        frame.add_css_class(f"notecol-{col}")  # fundo da nota inteira
+        if head is not None:
+            head.add_css_class(f"notecol-{col}")
+        if body is not None:
+            body.add_css_class(f"notebody-{col}")  # corpo (TextView) na mesma cor
 
     def _set_note_color(self, frame, color: str) -> None:
         if self.notes is None:

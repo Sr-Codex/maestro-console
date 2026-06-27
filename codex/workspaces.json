@@ -1,0 +1,8 @@
+{
+  "workspaces": {
+    "default": {
+      "project_dir": "codex"
+    }
+  },
+  "current": "default"
+}
