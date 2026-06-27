@@ -395,6 +395,9 @@ class CanvasWindow:
             ".fab-btn:hover { background-color: rgba(255,255,255,0.08); border-radius: 10px; }",
             ".fab-btn:disabled { opacity: 0.35; }",
             ".fab-run { color: #89b4fa; }",  # o play (azul)
+            # 2ª pílula (contexto da nota): menor que a principal
+            ".note-ctx-bar { border-radius: 16px; padding: 2px 5px; }",
+            ".note-ctx-btn { min-width: 26px; min-height: 26px; padding: 2px; font-size: 12px; }",
         ]
         for cname, hexc in NOTE_COLORS.items():  # C4: classes de cor das notas
             rules.append(f".notecol-{cname} {{ background-color: {hexc}; color: #1e1e2e; }}")
@@ -595,6 +598,7 @@ class CanvasWindow:
         b = Gtk.Button(label=label)
         b.set_has_frame(False)
         b.add_css_class("fab-btn")
+        b.add_css_class("note-ctx-btn")  # menor que a barra principal
         b.set_tooltip_text(tip)
         b.connect("clicked", lambda _b: cb())
         return b
@@ -604,14 +608,16 @@ class CanvasWindow:
         Aparece só quando uma nota está selecionada (ver _update_note_ctx)."""
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
         bar.add_css_class("fab-bar")
+        bar.add_css_class("note-ctx-bar")  # menor que a principal
         bar.set_halign(Gtk.Align.CENTER)
         bar.set_valign(Gtk.Align.START)
-        bar.set_margin_top(56)  # abaixo da barra principal (que usa margin_top=12)
+        bar.set_margin_top(66)  # folga clara abaixo da barra principal (margin_top=12)
         bar.set_visible(False)
         # 🎨 cor — popover com os 5 presets, age na nota selecionada
         colorbtn = Gtk.MenuButton(label="🎨")
         colorbtn.set_has_frame(False)
         colorbtn.add_css_class("fab-btn")
+        colorbtn.add_css_class("note-ctx-btn")
         colorbtn.set_tooltip_text("cor da nota")
         cpop = Gtk.Popover()
         crow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
@@ -637,10 +643,12 @@ class CanvasWindow:
         bar.append(self._ctx_btn("☑", "Checklist", lambda: self._note_line_prefix("- [ ] ")))
         bar.append(self._ctx_btn("•", "Lista", lambda: self._note_line_prefix("- ")))
         # ações
-        bar.append(self._fab_button(
-            "edit-copy-symbolic", "⧉", "Duplicar nota", self._note_duplicate))
-        bar.append(self._fab_button(
-            "user-trash-symbolic", "🗑", "Apagar nota", self._note_delete))
+        dup = self._fab_button("edit-copy-symbolic", "⧉", "Duplicar nota", self._note_duplicate)
+        dup.add_css_class("note-ctx-btn")
+        bar.append(dup)
+        dele = self._fab_button("user-trash-symbolic", "🗑", "Apagar nota", self._note_delete)
+        dele.add_css_class("note-ctx-btn")
+        bar.append(dele)
         self._note_ctx_bar = bar
         return bar
 

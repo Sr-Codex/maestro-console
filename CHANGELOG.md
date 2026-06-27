@@ -7,6 +7,8 @@ versionamento incremental. Datas em 2026.
 - **2ª pílula flutuante** que aparece **ao selecionar uma nota** e some ao desselecionar
   (`_update_note_ctx` no `_select`), logo abaixo da barra principal. Espelha o Maestri: ao clicar
   no bloco de notas surge um menu de contexto com as ferramentas DAQUELA nota.
+- **Menor que a barra principal** (`.note-ctx-bar`/`.note-ctx-btn`: cantos/padding/botões
+  reduzidos) e com **folga vertical** clara em relação a ela (`margin_top=66`).
 - Ferramentas (Fase 1): **🎨 cor** (5 presets, reusa `_set_note_color`) · **B / I / S / `</>`**
   (envolvem a seleção com markdown `**` / `*` / `~~` / `` ` ``) · **# heading · ☑ checklist ·
   • lista** (prefixam a linha do cursor) · **⧉ duplicar** · **🗑 apagar**.
