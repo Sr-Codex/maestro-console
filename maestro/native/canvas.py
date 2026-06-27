@@ -116,6 +116,13 @@ def _mix(h: str, target: int, f: float) -> str:
     return "#%02x%02x%02x" % tuple(int(c + (target - c) * f) for c in (r, g, b))
 
 
+def _contrast_text(h: str) -> str:
+    """Cor de texto legível sobre `h`: preto em fundo claro, branco em fundo escuro."""
+    r, g, b = _hex_to_rgb(h)
+    lum = 0.299 * r + 0.587 * g + 0.114 * b  # luminância perceptual (0–255)
+    return "#1e1e2e" if lum > 150 else "#f5f5f5"
+
+
 def note_hex(color: str) -> str:
     """Resolve a cor de uma nota p/ hex: aceita hex (#rrggbb), nome antigo (NOTE_COLORS)
     ou vazio → default. Mantém compatibilidade com notas salvas antes da paleta v2."""
@@ -451,9 +458,11 @@ class CanvasWindow:
             # seletor de cor: popover escuro translúcido + swatches circulares + "Mais cores"
             ".note-pop > contents { background-color: rgba(30,30,46,0.97); border-radius: 16px;"
             " box-shadow: 0 8px 24px rgba(0,0,0,0.6); padding: 10px; }",
+            # swatch circular: achata o botão (background-image padrão do tema esconde a cor)
             ".csw { border-radius: 50%; min-width: 26px; min-height: 26px; padding: 0;"
-            " border: 1px solid rgba(255,255,255,0.12); }",
-            ".csw:hover { border-color: rgba(255,255,255,0.55); }",
+            " background-image: none; box-shadow: none;"
+            " border: 1px solid rgba(255,255,255,0.18); }",
+            ".csw:hover { border-color: rgba(255,255,255,0.7); }",
             ".note-curcolor { border-radius: 50%; min-width: 22px; min-height: 22px; }",
             ".note-morecolors { border-radius: 9px; color: #cdd6f4;"
             " background-color: rgba(255,255,255,0.06); padding: 6px; }",
@@ -717,6 +726,7 @@ class CanvasWindow:
         per_row = 7
         for i, hexc in enumerate(NOTE_PALETTE):
             sw = Gtk.Button()
+            sw.set_has_frame(False)  # achata: deixa o background-color (palsw) aparecer
             sw.add_css_class("csw")
             sw.add_css_class(f"palsw-{i}")
             sw.set_tooltip_text(hexc)
@@ -2252,13 +2262,15 @@ class CanvasWindow:
                 continue
             key = self._nid_key(nid)
             r, g, b = _hex_to_rgb(hexc)
-            head_c = _mix(hexc, 255, 0.18)  # faixa de mover: tom levemente + claro
-            ph_c = _mix(hexc, 0, 0.50)  # placeholder: tom escurecido (acompanha a cor)
+            txt = _contrast_text(hexc)  # texto legível: preto p/ claro, branco p/ escuro
+            tgt = 0 if txt == "#1e1e2e" else 255  # combina com a cor: card claro→faixa + escura
+            head_c = _mix(hexc, tgt, 0.16)  # faixa de mover: tom que contrasta de leve e combina
+            ph_c = _mix(hexc, tgt, 0.45)  # placeholder: muted na direção do contraste
             rules += [
                 f".note-c-{key} {{ background-color: rgba({r},{g},{b},0.95); }}",  # frame
                 f".note-h-{key} {{ background-color: {head_c}; }}",  # faixa superior
                 f".note-b-{key} {{ background-color: {hexc}; }}",  # corpo (textview)
-                f".note-b-{key} text {{ background-color: {hexc}; color: #1e1e2e; }}",
+                f".note-b-{key} text {{ background-color: {hexc}; color: {txt}; }}",
                 f".note-p-{key} {{ color: {ph_c}; }}",  # placeholder
             ]
         self._css_load(self._color_provider, "\n".join(rules))

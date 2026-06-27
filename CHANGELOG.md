@@ -5,9 +5,11 @@ versionamento incremental. Datas em 2026.
 
 ## [0.29.0] — Bloco de nota estilo sticky-note + seletor de cor (Maestri)
 - **Nota INTEIRA colorida** (sticky-note): a cor pastel preenche o card todo — frame + corpo —
-  com leve transparência. Cabeçalho = só uma **faixa fina superior** (tom levemente mais claro)
-  p/ **mover** a nota; removidos título, 📌 pin, 🎨 do card, grip "≡" e ✕ (cor/apagar ficam na
-  pílula). Sem campo de título, a 1ª linha do corpo vira o título (minimapa/run).
+  com leve transparência. Cabeçalho = só uma **faixa fina superior** (tom que combina e contrasta
+  de leve com a cor) p/ **mover** a nota; removidos título, 📌 pin, 🎨 do card, grip "≡" e ✕
+  (cor/apagar ficam na pílula). Sem campo de título, a 1ª linha do corpo vira o título.
+- **Cor da letra adaptativa:** texto preto em notas claras, branco em notas escuras (luminância);
+  placeholder e faixa acompanham a direção do contraste. Mantém tudo legível em qualquer cor.
 - **Placeholder "Clique para editar..."** (overlay clicável-através) some quando há texto; cor
   acompanha a tonalidade do card (tom escurecido).
 - **Corpo rola em vez de crescer:** `Gtk.ScrolledWindow` de altura fixa + **barra de rolagem
