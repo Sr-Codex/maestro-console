@@ -3,23 +3,24 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
-## [0.29.0] — Bloco de nota estilo sticky-note (redesign visual, Maestri)
-- **Nota INTEIRA colorida** (sticky-note): a cor pastel passa a preencher o card todo — frame +
-  corpo (`Gtk.TextView` via CSS no subnó `text`, classe `.notebody-<cor>`). Antes só a faixa do
-  cabeçalho era colorida e o corpo ficava escuro.
-- **Cabeçalho = só uma BARRA FINA escura p/ MOVER a nota.** Removidos **título**, **📌 pin**,
-  **🎨 cor**, **grip "≡"** e **botão ✕** (cor/apagar ficam na pílula de contexto — a pílula já tem
-  🗑). A barra fica **bem mais escura** que a nota (`.notehead-<cor>` = cor pastel escurecida ~45%)
-  e o cabeçalho inteiro continua sendo a área de arraste. Sem campo de título, a 1ª linha do corpo
-  vira o título (p/ minimapa/run).
-- **Corpo rola em vez de crescer:** corpo dentro de `Gtk.ScrolledWindow` de altura fixa com
-  **barra de rolagem minimalista** à direita (`.note-scroll`: trilho transparente, slider fino de
-  pontas arredondadas).
-- **2ª pílula com mais respiro** (spacing 6, padding 3×9) + botão **"Aa" de FONTE**: abre o
-  seletor nativo (`Gtk.FontDialog`) e aplica família+tamanho+peso+estilo ao corpo da nota, via
-  provider CSS dedicado (classe `nf-<id>`). **Persistido** em nova coluna `notes.font` (migração
-  idempotente, padrão `color`/`pinned`); duplicar copia a fonte.
-- `_apply_note_color` pinta frame (pastel) + cabeçalho (escuro) + corpo (pastel).
+## [0.29.0] — Bloco de nota estilo sticky-note + seletor de cor (Maestri)
+- **Nota INTEIRA colorida** (sticky-note): a cor pastel preenche o card todo — frame + corpo —
+  com leve transparência. Cabeçalho = só uma **faixa fina superior** (tom levemente mais claro)
+  p/ **mover** a nota; removidos título, 📌 pin, 🎨 do card, grip "≡" e ✕ (cor/apagar ficam na
+  pílula). Sem campo de título, a 1ª linha do corpo vira o título (minimapa/run).
+- **Placeholder "Clique para editar..."** (overlay clicável-através) some quando há texto; cor
+  acompanha a tonalidade do card (tom escurecido).
+- **Corpo rola em vez de crescer:** `Gtk.ScrolledWindow` de altura fixa + **barra de rolagem
+  minimalista** à direita (slider fino, pontas arredondadas).
+- **Seletor de cor estilo Maestri (pílula):** botão mostra a **cor atual numa bolinha**; abre um
+  **popover escuro** (translúcido, cantos, sombra, seta) com **paleta de 10 cores em círculos**
+  (`NOTE_PALETTE`) + **"🎨 Mais cores"** → seletor nativo (`Gtk.ColorDialog`) p/ **cor custom**.
+  Cores das notas passam a ser guardadas em **HEX** (`note.color`), aplicadas por **provider CSS
+  por-nota** (frame/faixa/corpo/placeholder); back-compat com nomes antigos. **Grupos seguem com a
+  paleta `NOTE_COLORS`** (intactos).
+- **Botão "Aa" de FONTE:** seletor nativo (`Gtk.FontDialog`) aplica família+tamanho+peso+estilo ao
+  corpo; **persistido** em nova coluna `notes.font` (migração idempotente). Duplicar copia cor+fonte.
+- **2ª pílula com mais respiro** (spacing 6, padding 3×9).
 - Limpeza: import `..engine.notes` reordenado (corrige I001 herdado do PR #22).
 
 ## [0.28.0] — Barra de contexto da NOTA (2ª pílula, estilo Maestri) — Fase 1

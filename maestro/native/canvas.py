@@ -88,6 +88,44 @@ NOTE_COLORS = {
     "mauve": "#cba6f7",
 }
 NOTE_COLOR_DEFAULT = "yellow"
+# C4 v2: paleta rápida das NOTAS (hex; estilo das imagens #4/#6/#7). Notas guardam HEX em
+# note.color (cor custom via "Mais cores"); GRUPOS seguem usando NOTE_COLORS acima.
+NOTE_PALETTE = [
+    "#f7e6a8",  # creme/amarelo
+    "#f5c9d8",  # rosa
+    "#bcd9f5",  # azul claro
+    "#c4e8bf",  # verde claro
+    "#fcdcab",  # pêssego/laranja claro
+    "#ddc7f0",  # lilás
+    "#f5f5f5",  # branco
+    "#3a3a42",  # cinza escuro
+    "#3c5560",  # azul petróleo
+    "#1f2db5",  # azul escuro
+]
+NOTE_HEX_DEFAULT = "#f7e6a8"
+
+
+def _hex_to_rgb(h: str) -> tuple[int, int, int]:
+    h = h.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _mix(h: str, target: int, f: float) -> str:
+    """Mistura a cor com `target` (0=preto, 255=branco) por fração f. f>0 escurece/clareia."""
+    r, g, b = _hex_to_rgb(h)
+    return "#%02x%02x%02x" % tuple(int(c + (target - c) * f) for c in (r, g, b))
+
+
+def note_hex(color: str) -> str:
+    """Resolve a cor de uma nota p/ hex: aceita hex (#rrggbb), nome antigo (NOTE_COLORS)
+    ou vazio → default. Mantém compatibilidade com notas salvas antes da paleta v2."""
+    if color.startswith("#") and len(color) == 7:
+        return color
+    if color in NOTE_COLORS:
+        return NOTE_COLORS[color]
+    return NOTE_HEX_DEFAULT
+
+
 # C2: geometria dos grupos (coords-base; *zoom na hora de desenhar)
 GROUP_TITLE_H = 22  # faixa do título (alça de arrasto)
 GROUP_MIN_W, GROUP_MIN_H = 200, 140
@@ -406,21 +444,26 @@ class CanvasWindow:
             ".note-scroll scrollbar slider { min-width: 5px; border-radius: 6px;"
             " background-color: rgba(30,30,46,0.40); }",
             ".note-scroll scrollbar slider:hover { background-color: rgba(30,30,46,0.70); }",
-            # bloco de nota estilo sticky-note (Maestri): só uma BARRA FINA escura no topo
-            # (área de mover); a cor pastel preenche o resto da nota (ver .notebody-*).
-            ".notehead-min { padding: 0; min-height: 14px; }",
+            # sticky-note: faixa fina superior p/ mover (cor vem do provider por-nota,
+            # .note-h-<id>); cor/faixa/corpo/placeholder são gerados em _rebuild_note_colors.
+            ".notehead-min { padding: 0; min-height: 12px; border-radius: 8px 8px 0 0; }",
+            ".note-ph { margin: 6px 8px; }",  # placeholder alinhado ao texto
+            # seletor de cor: popover escuro translúcido + swatches circulares + "Mais cores"
+            ".note-pop > contents { background-color: rgba(30,30,46,0.97); border-radius: 16px;"
+            " box-shadow: 0 8px 24px rgba(0,0,0,0.6); padding: 10px; }",
+            ".csw { border-radius: 50%; min-width: 26px; min-height: 26px; padding: 0;"
+            " border: 1px solid rgba(255,255,255,0.12); }",
+            ".csw:hover { border-color: rgba(255,255,255,0.55); }",
+            ".note-curcolor { border-radius: 50%; min-width: 22px; min-height: 22px; }",
+            ".note-morecolors { border-radius: 9px; color: #cdd6f4;"
+            " background-color: rgba(255,255,255,0.06); padding: 6px; }",
+            ".note-morecolors:hover { background-color: rgba(255,255,255,0.12); }",
+            ".note-poprow-sep { background-color: rgba(255,255,255,0.10); min-height: 1px; }",
         ]
-        for cname, hexc in NOTE_COLORS.items():  # C4: classes de cor das notas
+        for i, hexc in enumerate(NOTE_PALETTE):  # swatches circulares da paleta v2
+            rules.append(f".palsw-{i} {{ background-color: {hexc}; }}")
+        for cname, hexc in NOTE_COLORS.items():  # C4: cores dos GRUPOS (swatch do grupo)
             rules.append(f".notecol-{cname} {{ background-color: {hexc}; color: #1e1e2e; }}")
-            # corpo (TextView) na MESMA cor pastel → sticky-note inteira colorida
-            rules.append(f".notebody-{cname} {{ background-color: {hexc}; }}")
-            rules.append(f".notebody-{cname} text {{ background-color: {hexc}; color: #1e1e2e; }}")
-            # cabeçalho BEM mais escuro que a nota (barra fina de mover)
-            r0 = int(hexc[1:3], 16)
-            g0 = int(hexc[3:5], 16)
-            b0 = int(hexc[5:7], 16)
-            dark = f"#{int(r0 * 0.45):02x}{int(g0 * 0.45):02x}{int(b0 * 0.45):02x}"
-            rules.append(f".notehead-{cname} {{ background-color: {dark}; }}")
         for st, hexc in STATE_COLORS.items():
             rules.append(f".dot-{st} {{ color: {hexc}; }}")
         provider = Gtk.CssProvider()
@@ -448,6 +491,13 @@ class CanvasWindow:
         if display is not None:
             Gtk.StyleContext.add_provider_for_display(
                 display, self._font_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 2
+            )
+        # cor por nota (hex; suporta cor custom de "Mais cores"): provider próprio
+        self._note_colors: dict[str, str] = {}  # note_id -> hex (#rrggbb)
+        self._color_provider = Gtk.CssProvider()
+        if display is not None:
+            Gtk.StyleContext.add_provider_for_display(
+                display, self._color_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 3
             )
 
     def _apply_grid(self) -> None:
@@ -648,24 +698,47 @@ class CanvasWindow:
         bar.set_valign(Gtk.Align.START)
         bar.set_margin_top(66)  # folga clara abaixo da barra principal (margin_top=12)
         bar.set_visible(False)
-        # 🎨 cor — popover com os 5 presets, age na nota selecionada
-        colorbtn = Gtk.MenuButton(label="🎨")
+        # cor — botão mostra a COR ATUAL numa bolinha; popover escuro c/ paleta circular + custom
+        colorbtn = Gtk.MenuButton()
         colorbtn.set_has_frame(False)
         colorbtn.add_css_class("fab-btn")
         colorbtn.add_css_class("note-ctx-btn")
         colorbtn.set_tooltip_text("cor da nota")
+        swatch = Gtk.DrawingArea()
+        swatch.set_size_request(22, 22)
+        swatch.set_draw_func(self._draw_cur_color)
+        self._ctx_color_swatch = swatch
+        colorbtn.set_child(swatch)
         cpop = Gtk.Popover()
-        crow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
-        for cname in NOTE_COLORS:
+        cpop.add_css_class("note-pop")
+        cgrid = Gtk.Grid()
+        cgrid.set_row_spacing(8)
+        cgrid.set_column_spacing(8)
+        per_row = 7
+        for i, hexc in enumerate(NOTE_PALETTE):
             sw = Gtk.Button()
-            sw.add_css_class(f"notecol-{cname}")
-            sw.set_size_request(22, 22)
+            sw.add_css_class("csw")
+            sw.add_css_class(f"palsw-{i}")
+            sw.set_tooltip_text(hexc)
             sw.connect(
                 "clicked",
-                lambda _b, c=cname, p=cpop: (p.popdown(), self._ctx_set_color(c)),
+                lambda _b, c=hexc, p=cpop: (p.popdown(), self._ctx_set_color(c)),
             )
-            crow.append(sw)
-        cpop.set_child(crow)
+            cgrid.attach(sw, i % per_row, i // per_row, 1, 1)
+        sep = Gtk.Box()
+        sep.add_css_class("note-poprow-sep")
+        sep.set_margin_top(8)
+        sep.set_margin_bottom(8)
+        more = Gtk.Button(label="🎨 Mais cores")
+        more.set_has_frame(False)
+        more.add_css_class("note-morecolors")
+        more.set_hexpand(True)
+        more.connect("clicked", lambda _b, p=cpop: (p.popdown(), self._ctx_pick_custom_color()))
+        cbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        cbox.append(cgrid)
+        cbox.append(sep)
+        cbox.append(more)
+        cpop.set_child(cbox)
         colorbtn.set_popover(cpop)
         bar.append(colorbtn)
         # Aa — seletor de fonte (família + tamanho) da nota
@@ -694,6 +767,28 @@ class CanvasWindow:
         bar = getattr(self, "_note_ctx_bar", None)
         if bar is not None:
             bar.set_visible(bool(self._selected) and self._selected[0] == "note")
+        self._update_ctx_color_swatch()  # bolinha da cor atual
+
+    def _draw_cur_color(self, _area, cr, w, h) -> None:
+        """Desenha a bolinha da cor ATUAL no botão de cor da pílula."""
+        hexc = getattr(self, "_cur_color_hex", NOTE_HEX_DEFAULT)
+        r, g, b = _hex_to_rgb(hexc)
+        rad = min(w, h) / 2 - 1
+        cr.arc(w / 2, h / 2, rad, 0, 6.283185307179586)
+        cr.set_source_rgb(r / 255, g / 255, b / 255)
+        cr.fill_preserve()
+        cr.set_source_rgba(1, 1, 1, 0.35)
+        cr.set_line_width(1)
+        cr.stroke()
+
+    def _update_ctx_color_swatch(self) -> None:
+        sw = getattr(self, "_ctx_color_swatch", None)
+        if sw is None:
+            return
+        frame = self._ctx_note_frame()
+        if frame is not None:
+            self._cur_color_hex = self._note_colors.get(frame._note_id, NOTE_HEX_DEFAULT)
+        sw.queue_draw()
 
     def _add_node(self, nid, title, argv, default):
         frame = Gtk.Frame()
@@ -2057,12 +2152,12 @@ class CanvasWindow:
         frame._note_id = note.id
         frame.add_css_class("node-card")  # UI-1
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        # cabeçalho = só uma BARRA FINA ESCURA p/ MOVER a nota (sem título, sem fechar;
-        # cor/apagar ficam na pílula de contexto — estilo Maestri).
+        # cabeçalho = só uma FAIXA FINA (tom levemente + claro) p/ MOVER a nota (sem título,
+        # sem fechar; cor/apagar ficam na pílula de contexto — estilo Maestri).
         head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         head.add_css_class("notehead")
         head.add_css_class("notehead-min")
-        head.set_size_request(-1, 14)
+        head.set_size_request(-1, 12)
         head.set_tooltip_text("arraste p/ mover a nota")
         head._drag_note = note.id  # arrasto via gesto do PLANO (estável) — ver _pan_*
         frame._note_head = head
@@ -2076,6 +2171,13 @@ class CanvasWindow:
         if getattr(note, "font", ""):  # fonte salva: registra e aplica
             self._note_fonts[note.id] = note.font
             self._rebuild_note_fonts()
+        # placeholder "Clique para editar..." (some quando há texto) — overlay clicável-através
+        ph = Gtk.Label(label="Clique para editar...")
+        ph.add_css_class("note-ph")
+        ph.set_halign(Gtk.Align.START)
+        ph.set_valign(Gtk.Align.START)
+        ph.set_can_target(False)  # cliques passam p/ o TextView
+        frame._note_ph = ph
         # rola em vez de crescer: corpo dentro de um ScrolledWindow de altura fixa, com
         # barra de rolagem minimalista (à direita, pontas arredondadas) — ver CSS .note-scroll
         scroller = Gtk.ScrolledWindow()
@@ -2084,13 +2186,19 @@ class CanvasWindow:
         scroller.set_size_request(200, 110)
         scroller.set_child(body)
         frame._body_scroll = scroller
-        self._apply_note_color(frame, note.color)  # aplica a cor salva (frame + head + corpo)
+        overlay = Gtk.Overlay()
+        overlay.set_child(scroller)
+        overlay.add_overlay(ph)
+        buf = body.get_buffer()
+        ph.set_visible(buf.get_char_count() == 0)
+        buf.connect("changed", lambda b, lbl=ph: lbl.set_visible(b.get_char_count() == 0))
+        self._apply_note_color(frame, note.color)  # frame + faixa + corpo + placeholder
         # salvar ao perder foco (GTK4: EventControllerFocus)
         fc = Gtk.EventControllerFocus()
         fc.connect("leave", lambda _c, fr=frame: self._save_note(fr))
         body.add_controller(fc)
         box.append(head)
-        box.append(scroller)
+        box.append(overlay)
         # agent-to-note: rodar um agente com a nota (V9-S4)
         if self.controller is not None:
             agents = installed_agents()
@@ -2131,22 +2239,42 @@ class CanvasWindow:
         self.notes.save(note)
         return False
 
-    # -- C4: cor da nota (sticky-note: colore frame + cabeçalho + corpo) --
+    # -- C4 v2: cor da nota por HEX (frame pastel + faixa clara + corpo + placeholder) --
+    @staticmethod
+    def _nid_key(note_id: str) -> str:
+        return note_id.replace("-", "")  # sufixo de classe CSS válido
+
+    def _rebuild_note_colors(self) -> None:
+        """Regenera o CSS por-nota a partir de self._note_colors (hex)."""
+        rules = []
+        for nid, hexc in self._note_colors.items():
+            if not hexc:
+                continue
+            key = self._nid_key(nid)
+            r, g, b = _hex_to_rgb(hexc)
+            head_c = _mix(hexc, 255, 0.18)  # faixa de mover: tom levemente + claro
+            ph_c = _mix(hexc, 0, 0.50)  # placeholder: tom escurecido (acompanha a cor)
+            rules += [
+                f".note-c-{key} {{ background-color: rgba({r},{g},{b},0.95); }}",  # frame
+                f".note-h-{key} {{ background-color: {head_c}; }}",  # faixa superior
+                f".note-b-{key} {{ background-color: {hexc}; }}",  # corpo (textview)
+                f".note-b-{key} text {{ background-color: {hexc}; color: #1e1e2e; }}",
+                f".note-p-{key} {{ color: {ph_c}; }}",  # placeholder
+            ]
+        self._css_load(self._color_provider, "\n".join(rules))
+
     def _apply_note_color(self, frame, color: str) -> None:
-        col = color if color in NOTE_COLORS else NOTE_COLOR_DEFAULT
-        head = getattr(frame, "_note_head", None)
-        body = getattr(frame, "_body_view", None)
-        for cname in NOTE_COLORS:
-            frame.remove_css_class(f"notecol-{cname}")
-            if head is not None:
-                head.remove_css_class(f"notehead-{cname}")
-            if body is not None:
-                body.remove_css_class(f"notebody-{cname}")
-        frame.add_css_class(f"notecol-{col}")  # fundo da nota inteira (pastel)
-        if head is not None:
-            head.add_css_class(f"notehead-{col}")  # barra de mover: BEM mais escura
-        if body is not None:
-            body.add_css_class(f"notebody-{col}")  # corpo (TextView) na mesma cor
+        nid = frame._note_id
+        key = self._nid_key(nid)
+        self._note_colors[nid] = note_hex(color)
+        self._rebuild_note_colors()
+        frame.add_css_class(f"note-c-{key}")  # classes estáveis por nota (idempotente)
+        for attr, prefix in (("_note_head", "note-h-"), ("_body_view", "note-b-"),
+                             ("_note_ph", "note-p-")):
+            w = getattr(frame, attr, None)
+            if w is not None:
+                w.add_css_class(f"{prefix}{key}")
+        self._update_ctx_color_swatch()
 
     def _set_note_color(self, frame, color: str) -> None:
         if self.notes is None:
@@ -2154,9 +2282,9 @@ class CanvasWindow:
         note = self.notes.get(frame._note_id)
         if note is None:
             return
-        note.color = color
+        note.color = note_hex(color)  # guarda HEX (paleta ou custom)
         self.notes.save(note)
-        self._apply_note_color(frame, color)
+        self._apply_note_color(frame, note.color)
         self._mm_refresh()
 
     def _toggle_note_pin(self, frame, btn) -> None:
@@ -2198,6 +2326,28 @@ class CanvasWindow:
         frame = self._ctx_note_frame()
         if frame is not None:
             self._set_note_color(frame, color)
+
+    def _ctx_pick_custom_color(self) -> None:
+        """"Mais cores": abre o seletor nativo (Gtk.ColorDialog) p/ cor custom."""
+        frame = self._ctx_note_frame()
+        if frame is None:
+            return
+        dialog = Gtk.ColorDialog()
+        init = Gdk.RGBA()
+        init.parse(self._note_colors.get(frame._note_id, NOTE_HEX_DEFAULT))
+
+        def done(dlg, res):
+            try:
+                rgba = dlg.choose_rgba_finish(res)
+            except GLib.Error:
+                return  # cancelado
+            if rgba is not None:
+                hexc = "#%02x%02x%02x" % (
+                    round(rgba.red * 255), round(rgba.green * 255), round(rgba.blue * 255)
+                )
+                self._set_note_color(frame, hexc)
+
+        dialog.choose_rgba(self.win, init, None, done)
 
     def _note_wrap(self, left: str, right: str) -> None:
         """Envolve a seleção (ou o cursor) do corpo da nota com marcadores markdown."""
