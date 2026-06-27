@@ -25,7 +25,8 @@ gi.require_version("Gsk", "4.0")
 gi.require_version("Graphene", "1.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("Vte", "3.91")
-from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Vte  # noqa: E402
+gi.require_version("Pango", "1.0")
+from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Pango, Vte  # noqa: E402
 
 from ..engine.ask_bus import AskBus, install_ask_skill, install_client  # noqa: E402
 from ..engine.ask_router import AskRouter, policy_from_env  # noqa: E402
@@ -441,6 +442,13 @@ class CanvasWindow:
                 display, self._grid_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1
             )
         self._apply_grid()
+        # fonte por nota (seletor completo): provider próprio, reconstruído ao trocar a fonte
+        self._note_fonts: dict[str, str] = {}  # note_id -> Pango desc (ex.: "Sans 12")
+        self._font_provider = Gtk.CssProvider()
+        if display is not None:
+            Gtk.StyleContext.add_provider_for_display(
+                display, self._font_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 2
+            )
 
     def _apply_grid(self) -> None:
         """Grid de pontos via radial-gradient no CSS do plano (GPU; rola liso, sem lag).
@@ -460,6 +468,14 @@ class CanvasWindow:
                 f"background-repeat: repeat; background-size: {s:.1f}px {s:.1f}px; "
                 f"background-position: {px:.1f}px {py:.1f}px; }}"
             )
+        if hasattr(prov, "load_from_string"):
+            prov.load_from_string(css)
+        else:  # GTK4 < 4.12
+            prov.load_from_data(css.encode())
+
+    @staticmethod
+    def _css_load(prov, css: str) -> None:
+        """Carrega CSS num provider (string no GTK≥4.12; bytes nos anteriores)."""
         if hasattr(prov, "load_from_string"):
             prov.load_from_string(css)
         else:  # GTK4 < 4.12
@@ -652,6 +668,8 @@ class CanvasWindow:
         cpop.set_child(crow)
         colorbtn.set_popover(cpop)
         bar.append(colorbtn)
+        # Aa — seletor de fonte (família + tamanho) da nota
+        bar.append(self._ctx_btn("Aa", "Fonte da nota", self._ctx_pick_font))
         # formatação inline (envolve a seleção com markdown)
         bar.append(self._ctx_btn("B", "Negrito (**)", lambda: self._note_wrap("**", "**")))
         bar.append(self._ctx_btn("I", "Itálico (*)", lambda: self._note_wrap("*", "*")))
@@ -2054,6 +2072,10 @@ class CanvasWindow:
         body.set_wrap_mode(Gtk.WrapMode.WORD)
         body.get_buffer().set_text(note.body)
         frame._body_view = body
+        body.add_css_class(self._note_font_class(note.id))  # fonte por nota (CSS dedicado)
+        if getattr(note, "font", ""):  # fonte salva: registra e aplica
+            self._note_fonts[note.id] = note.font
+            self._rebuild_note_fonts()
         # rola em vez de crescer: corpo dentro de um ScrolledWindow de altura fixa, com
         # barra de rolagem minimalista (à direita, pontas arredondadas) — ver CSS .note-scroll
         scroller = Gtk.ScrolledWindow()
@@ -2222,6 +2244,7 @@ class CanvasWindow:
         bx, by = self._note_base.get(frame._note_id, (src.x, src.y))
         dup = self.notes.create(src.title, src.body, x=bx + 30, y=by + 30)
         dup.color = src.color
+        dup.font = src.font
         self.notes.save(dup)
         self._add_note_widget(dup)
 
@@ -2230,6 +2253,63 @@ class CanvasWindow:
         if frame is not None:
             self._close_note(frame)
             self._select(None)  # limpa seleção -> esconde a pílula de contexto
+
+    # -- fonte por nota (seletor completo: Gtk.FontDialog) --
+    @staticmethod
+    def _note_font_class(note_id: str) -> str:
+        return "nf-" + note_id.replace("-", "")  # classe CSS válida (não começa com dígito)
+
+    def _rebuild_note_fonts(self) -> None:
+        """Regenera o CSS do provider de fontes a partir de self._note_fonts."""
+        styles = {Pango.Style.NORMAL: "normal", Pango.Style.OBLIQUE: "oblique",
+                  Pango.Style.ITALIC: "italic"}
+        rules = []
+        for nid, desc_str in self._note_fonts.items():
+            if not desc_str:
+                continue
+            d = Pango.FontDescription.from_string(desc_str)
+            fam = d.get_family() or "sans-serif"
+            size = d.get_size() / Pango.SCALE
+            size_css = f"{size:g}px" if d.get_size_is_absolute() else f"{size:g}pt"
+            weight = int(d.get_weight())
+            style = styles.get(d.get_style(), "normal")
+            rules.append(
+                f'.{self._note_font_class(nid)} {{ font-family: "{fam}"; font-size: {size_css};'
+                f" font-weight: {weight}; font-style: {style}; }}"
+            )
+        self._css_load(self._font_provider, "\n".join(rules))
+
+    def _apply_note_font(self, frame, desc_str: str) -> None:
+        nid = frame._note_id
+        self._note_fonts[nid] = desc_str
+        self._rebuild_note_fonts()
+        body = getattr(frame, "_body_view", None)
+        if body is not None:
+            body.add_css_class(self._note_font_class(nid))
+        if self.notes is not None:
+            note = self.notes.get(nid)
+            if note is not None:
+                note.font = desc_str
+                self.notes.save(note)
+
+    def _ctx_pick_font(self) -> None:
+        """Abre o seletor nativo de fonte e aplica à nota selecionada."""
+        frame = self._ctx_note_frame()
+        if frame is None:
+            return
+        dialog = Gtk.FontDialog()
+        init = self._note_fonts.get(frame._note_id)
+        init_desc = Pango.FontDescription.from_string(init) if init else None
+
+        def done(dlg, res):
+            try:
+                desc = dlg.choose_font_finish(res)
+            except GLib.Error:
+                return  # cancelado/erro: mantém a fonte atual
+            if desc is not None:
+                self._apply_note_font(frame, desc.to_string())
+
+        dialog.choose_font(self.win, init_desc, None, done)
 
     # -- grupos/áreas (C2): desenhados via cairo (atrás dos nós) + hit-test --
     def _load_group(self, g) -> None:

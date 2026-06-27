@@ -106,7 +106,8 @@ CREATE TABLE IF NOT EXISTS notes (
     y          REAL NOT NULL,
     updated_at REAL NOT NULL,
     color      TEXT NOT NULL DEFAULT '',
-    pinned     INTEGER NOT NULL DEFAULT 0
+    pinned     INTEGER NOT NULL DEFAULT 0,
+    font       TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS routines (
     id         TEXT PRIMARY KEY,
@@ -154,6 +155,7 @@ class Store:
         alters = (
             "ALTER TABLE notes ADD COLUMN color TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE notes ADD COLUMN font TEXT NOT NULL DEFAULT ''",
         )
         for ddl in alters:
             try:
@@ -522,15 +524,16 @@ class Store:
         y: float,
         color: str = "",
         pinned: int = 0,
+        font: str = "",
     ) -> None:
         with self._lock, self._conn:
             self._conn.execute(
-                "INSERT INTO notes(id, title, body, x, y, updated_at, color, pinned) "
-                "VALUES(?,?,?,?,?,?,?,?) "
+                "INSERT INTO notes(id, title, body, x, y, updated_at, color, pinned, font) "
+                "VALUES(?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(id) DO UPDATE SET title=excluded.title, body=excluded.body, "
                 "x=excluded.x, y=excluded.y, updated_at=excluded.updated_at, "
-                "color=excluded.color, pinned=excluded.pinned",
-                (note_id, title, body, x, y, time.time(), color, int(pinned)),
+                "color=excluded.color, pinned=excluded.pinned, font=excluded.font",
+                (note_id, title, body, x, y, time.time(), color, int(pinned), font),
             )
 
     def get_note(self, note_id: str) -> dict[str, Any] | None:

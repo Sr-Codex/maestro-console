@@ -19,10 +19,21 @@ def _notes(tmp_path):
 
 
 # -- C4: cor e pin ------------------------------------------------------
+def test_font_default_e_persistencia(tmp_path):
+    n, store = _notes(tmp_path)
+    a = n.create("t", "b")
+    assert a.font == ""  # default: fonte do tema
+    a.font = "DejaVu Sans Bold 14"
+    n.save(a)
+    assert n.get(a.id).font == "DejaVu Sans Bold 14"
+    assert n.list()[0].font == "DejaVu Sans Bold 14"
+    store.close()
+
+
 def test_cor_e_pin_default_e_persistencia(tmp_path):
     n, store = _notes(tmp_path)
     a = n.create("t", "b")
-    assert a.color == "" and a.pinned is False  # defaults
+    assert a.color == "" and a.pinned is False and a.font == ""  # defaults
     a.color = "green"
     a.pinned = True
     n.save(a)
@@ -60,7 +71,8 @@ def test_migracao_db_antigo_sem_colunas(tmp_path):
     con.close()
     n = Notes(Store(db))  # Store.__init__ roda _migrate (ALTER TABLE)
     got = n.get("n1")
-    assert got is not None and got.color == "" and got.pinned is False  # migrou sem perder
+    # migrou sem perder; colunas novas vêm com default
+    assert got is not None and got.color == "" and got.pinned is False and got.font == ""
 
 
 # -- CRUD --------------------------------------------------------------

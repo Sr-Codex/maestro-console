@@ -15,7 +15,10 @@ versionamento incremental. Datas em 2026.
 - **Corpo rola em vez de crescer:** corpo dentro de `Gtk.ScrolledWindow` de altura fixa com
   **barra de rolagem minimalista** à direita (`.note-scroll`: trilho transparente, slider fino de
   pontas arredondadas).
-- **2ª pílula com mais respiro** (spacing 6, padding 3×9).
+- **2ª pílula com mais respiro** (spacing 6, padding 3×9) + botão **"Aa" de FONTE**: abre o
+  seletor nativo (`Gtk.FontDialog`) e aplica família+tamanho+peso+estilo ao corpo da nota, via
+  provider CSS dedicado (classe `nf-<id>`). **Persistido** em nova coluna `notes.font` (migração
+  idempotente, padrão `color`/`pinned`); duplicar copia a fonte.
 - `_apply_note_color` pinta frame (pastel) + cabeçalho (escuro) + corpo (pastel).
 - Limpeza: import `..engine.notes` reordenado (corrige I001 herdado do PR #22).
 

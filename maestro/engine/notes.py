@@ -25,6 +25,7 @@ class Note:
     y: float
     color: str = ""  # cor da nota (C4); "" = padrão (amarelo)
     pinned: bool = False  # fixada: não arrasta (C4)
+    font: str = ""  # fonte da nota (Pango desc, ex.: "Sans 12"); "" = padrão do tema
 
 
 def render_markdown(note: Note) -> str:
@@ -111,6 +112,7 @@ class Notes:
             y=row["y"],
             color=row["color"] if "color" in row.keys() else "",
             pinned=bool(row["pinned"]) if "pinned" in row.keys() else False,
+            font=row["font"] if "font" in row.keys() else "",
         )
 
     def get(self, note_id: str) -> Note | None:
@@ -122,7 +124,7 @@ class Notes:
 
     def save(self, note: Note) -> None:
         self._store.upsert_note(
-            note.id, note.title, note.body, note.x, note.y, note.color, int(note.pinned)
+            note.id, note.title, note.body, note.x, note.y, note.color, int(note.pinned), note.font
         )
 
     def set_position(self, note_id: str, x: float, y: float) -> None:
