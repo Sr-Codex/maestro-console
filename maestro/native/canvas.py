@@ -237,6 +237,7 @@ class CanvasWindow:
         self._group_color: dict[str, str] = {}
         self._group_title: dict[str, str] = {}
         self._group_user_sized: set[str] = set()  # grupos redimensionados de propósito (piso)
+        self._group_excluded: set[tuple[str, str]] = set()  # (kind,id) destacados via Ctrl (não-membros)
         self._loading = False  # True só no startup: suspende auto-fit p/ restaurar tamanho EXATO
         self._group_resize = None  # estado do resize de grupo (alça canto inf-dir)
         self._edge_state: dict[tuple[str, str], str] = {}  # cor do cabo por handoff (V7-S4)
@@ -382,7 +383,7 @@ class CanvasWindow:
             # seleção: borda azul tracejada (outline não desloca o layout) p/ saber qual
             # nó/nota/árvore está selecionado (e recebe scroll do SELECT+trackball)
             ".selected { outline-color: #89b4fa; outline-style: dashed; outline-width: 2px;"
-            " outline-offset: -2px; }",
+            " outline-offset: 3px; }",  # 3px de folga: a linha não fica colada no card
         ]
         for cname, hexc in NOTE_COLORS.items():  # C4: classes de cor das notas
             rules.append(f".notecol-{cname} {{ background-color: {hexc}; color: #1e1e2e; }}")
@@ -566,9 +567,16 @@ class CanvasWindow:
         term = make_terminal(argv)
         frame._term = term  # ref p/ remover de self.terms ao fechar o nó
         fc = Gtk.EventControllerFocus()
-        fc.connect("enter", lambda _c, n=nid: setattr(self, "_focused_nid", n))
+        fc.connect("enter", lambda _c, n=nid: self._on_term_focus(n))  # clicar/focar = selecionar
         fc.connect("leave", lambda _c, n=nid: self._on_term_unfocus(n))  # monitorar só desfocado
         term.add_controller(fc)  # rastreia o terminal em foco (fechar via Ctrl+Shift+W)
+        # seleção em QUALQUER clique no card (fase CAPTURE = antes do VTE consumir; não claima,
+        # então o terminal/arraste seguem). Cobre re-clicar um card já focado (foco-enter só
+        # dispara em MUDANÇA de foco, então sozinho falhava ao re-selecionar após clicar fora).
+        selclick = Gtk.GestureClick()
+        selclick.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        selclick.connect("pressed", lambda *_a, n=nid: self._select(("node", n)))
+        frame.add_controller(selclick)
         sz = self.model.node_size(nid, (BASE_W, BASE_H))  # tamanho por nó (persistido)
         self._node_size[nid] = sz
         term.set_hexpand(True)
@@ -819,7 +827,15 @@ class CanvasWindow:
                 self._connect_pick(tid)
                 gesture.set_state(Gtk.EventSequenceState.DENIED)
                 return
-            self._drag = {"kind": kind, "id": tid, "base": self._drag_store(kind).get(tid, (0.0, 0.0))}
+            # pertença ao grupo é decidida pelo CURSOR ao vivo (simétrico): ENTRA quando o
+            # cursor entra no grupo, SAI quando o cursor não está sobre nenhum. Ctrl só
+            # CONGELA o auto-fit (grupo não persegue) p/ dar pra sair limpo.
+            detach = bool(gesture.get_current_event_state() & Gdk.ModifierType.CONTROL_MASK)
+            self._drag = {
+                "kind": kind, "id": tid,
+                "base": self._drag_store(kind).get(tid, (0.0, 0.0)),
+                "detach": detach, "start": (x, y),
+            }
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)  # não vaza p/ window-drag
             return
         if self._over_child(picked):  # corpo do nó/nota/árvore: deixa o filho interagir
@@ -878,8 +894,10 @@ class CanvasWindow:
                 frame = self._drag_frame(kind, tid)
                 if frame is not None:
                     self._place(frame, nb, z)
-                for gid in self._group_base:  # C2: grupo abraça AO VIVO durante o arrasto
-                    self._autofit_group(gid)
+                self._membership_by_cursor(kind, tid, off_x, off_y)  # entra/sai pelo CURSOR
+                if not self._drag.get("detach"):  # sem Ctrl: grupo abraça os membros ao vivo
+                    for gid in self._group_base:
+                        self._autofit_group(gid)
                 self.plane.queue_draw()
             return
         if self._pan is None:
@@ -1174,6 +1192,13 @@ class CanvasWindow:
         if env.state is EnvelopeState.DONE:
             return env.result or ""
         return f"[{to} retornou {env.state}] {env.note or env.result or ''}"
+
+    def _on_term_focus(self, nid: str) -> None:
+        # clicar em QUALQUER área do card foca o terminal -> selecionamos o card aqui (borda
+        # azul). O clique no corpo (VTE) é consumido pelo terminal e não chega ao _pan_begin,
+        # então o foco é o sinal confiável p/ selecionar clicando fora do cabeçalho.
+        self._focused_nid = nid
+        self._select(("node", nid))
 
     def _on_term_unfocus(self, nid: str) -> None:
         if self._focused_nid == nid:
@@ -2147,8 +2172,36 @@ class CanvasWindow:
                 iy = max(0.0, min(by + h, gy + gh) - max(by, gy))  # interseção em y
                 inter = ix * iy
                 if inter > 0 and inter >= GROUP_MEMBER_FRAC * (w * h):
+                    if (kind, iid) in self._group_excluded:
+                        continue  # destacado explicitamente (Ctrl) -> não é membro
                     members[(kind, iid)] = (bx, by)
         return members
+
+    def _group_at_cursor(self, off_x, off_y):
+        """gid do grupo cujo retângulo contém o CURSOR durante o arraste (ou None)."""
+        sx, sy = self._drag.get("start", (0.0, 0.0))
+        camx, camy = self._cam
+        cpx, cpy = sx + off_x - camx, sy + off_y - camy  # cursor em coords-plano (base*zoom)
+        for gid in reversed(list(self._group_base)):
+            gx, gy, gw, gh = self._group_disp_rect(gid)
+            if gx <= cpx <= gx + gw and gy <= cpy <= gy + gh:
+                return gid
+        return None
+
+    def _membership_by_cursor(self, kind, tid, off_x, off_y) -> None:
+        """Pertença pelo CURSOR (simétrico): ENTRA quando o cursor entra num grupo, SAI quando
+        o cursor não está sobre nenhum. Evita 're-entrar rápido' só porque um pedaço do item
+        ficou sobreposto — e casa com o destacar via Ctrl (que congela o auto-fit)."""
+        key = (kind, tid)
+        inside = self._group_at_cursor(off_x, off_y)
+        if inside is not None:
+            if key in self._group_excluded:
+                self._group_excluded.discard(key)  # cursor ENTROU -> pode pertencer
+                self._autofit_group(inside)
+        elif key not in self._group_excluded:
+            self._group_excluded.add(key)  # cursor FORA de qualquer grupo -> não-membro
+            for gid in self._group_base:
+                self._autofit_group(gid)
 
     def _group_dialog(self, gid):
         """Renomear / recolorir / apagar o grupo (duplo-clique na faixa do título)."""
