@@ -5,13 +5,18 @@ versionamento incremental. Datas em 2026.
 
 ## [0.29.0] — Bloco de nota estilo sticky-note (redesign visual, Maestri)
 - **Nota INTEIRA colorida** (sticky-note): a cor pastel passa a preencher o card todo — frame +
-  cabeçalho + corpo (`Gtk.TextView` via CSS no subnó `text`, classe `.notebody-<cor>`). Antes só
-  a faixa do cabeçalho era colorida e o corpo ficava escuro. `_apply_note_color` agora pinta os três.
-- **Cabeçalho enxuto:** removidos **📌 pin** (não era necessário), **🎨 cor** e o **grip "≡"**
-  (cor já está na pílula de contexto; o cabeçalho inteiro continua sendo a área de arraste).
-- **Título flat** (`.note-title`: transparente, sem caixa, negrito) e **botão ✕ minimalista**
-  (`.note-close`: pequeno e redondo, hover suave).
-- **Cabeçalho compacto** (`.notehead-min`): menos padding/altura no topo.
+  corpo (`Gtk.TextView` via CSS no subnó `text`, classe `.notebody-<cor>`). Antes só a faixa do
+  cabeçalho era colorida e o corpo ficava escuro.
+- **Cabeçalho = só uma BARRA FINA escura p/ MOVER a nota.** Removidos **título**, **📌 pin**,
+  **🎨 cor**, **grip "≡"** e **botão ✕** (cor/apagar ficam na pílula de contexto — a pílula já tem
+  🗑). A barra fica **bem mais escura** que a nota (`.notehead-<cor>` = cor pastel escurecida ~45%)
+  e o cabeçalho inteiro continua sendo a área de arraste. Sem campo de título, a 1ª linha do corpo
+  vira o título (p/ minimapa/run).
+- **Corpo rola em vez de crescer:** corpo dentro de `Gtk.ScrolledWindow` de altura fixa com
+  **barra de rolagem minimalista** à direita (`.note-scroll`: trilho transparente, slider fino de
+  pontas arredondadas).
+- **2ª pílula com mais respiro** (spacing 6, padding 3×9).
+- `_apply_note_color` pinta frame (pastel) + cabeçalho (escuro) + corpo (pastel).
 - Limpeza: import `..engine.notes` reordenado (corrige I001 herdado do PR #22).
 
 ## [0.28.0] — Barra de contexto da NOTA (2ª pílula, estilo Maestri) — Fase 1

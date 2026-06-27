@@ -395,24 +395,31 @@ class CanvasWindow:
             ".fab-btn:hover { background-color: rgba(255,255,255,0.08); border-radius: 10px; }",
             ".fab-btn:disabled { opacity: 0.35; }",
             ".fab-run { color: #89b4fa; }",  # o play (azul)
-            # 2ª pílula (contexto da nota): menor que a principal
-            ".note-ctx-bar { border-radius: 16px; padding: 2px 5px; }",
+            # 2ª pílula (contexto da nota): menor que a principal, com mais respiro
+            ".note-ctx-bar { border-radius: 16px; padding: 3px 9px; }",
             ".note-ctx-btn { min-width: 26px; min-height: 26px; padding: 2px; font-size: 12px; }",
-            # bloco de nota estilo sticky-note (Maestri): cabeçalho compacto, título flat,
-            # fechar minimalista redondo. A cor pastel preenche a nota TODA (ver .notebody-*).
-            ".notehead-min { padding: 1px 4px; }",
-            ".note-title { background: transparent; border: none; box-shadow: none; outline: none;"
-            " min-height: 0; padding: 0 2px; font-weight: bold; color: #1e1e2e; }",
-            ".note-title:focus-within { outline: none; box-shadow: none; }",
-            ".note-close { min-width: 20px; min-height: 20px; padding: 0; border-radius: 10px;"
-            " color: #1e1e2e; opacity: 0.5; }",
-            ".note-close:hover { background-color: rgba(0,0,0,0.12); opacity: 1; }",
+            # corpo: rola em vez de crescer; barra minimalista (direita, pontas arredondadas)
+            ".note-scroll { background: transparent; }",
+            ".note-scroll scrollbar { background: transparent; border: none; }",
+            ".note-scroll scrollbar trough { background: transparent; border: none; }",
+            ".note-scroll scrollbar slider { min-width: 5px; border-radius: 6px;"
+            " background-color: rgba(30,30,46,0.40); }",
+            ".note-scroll scrollbar slider:hover { background-color: rgba(30,30,46,0.70); }",
+            # bloco de nota estilo sticky-note (Maestri): só uma BARRA FINA escura no topo
+            # (área de mover); a cor pastel preenche o resto da nota (ver .notebody-*).
+            ".notehead-min { padding: 0; min-height: 14px; }",
         ]
         for cname, hexc in NOTE_COLORS.items():  # C4: classes de cor das notas
             rules.append(f".notecol-{cname} {{ background-color: {hexc}; color: #1e1e2e; }}")
             # corpo (TextView) na MESMA cor pastel → sticky-note inteira colorida
             rules.append(f".notebody-{cname} {{ background-color: {hexc}; }}")
             rules.append(f".notebody-{cname} text {{ background-color: {hexc}; color: #1e1e2e; }}")
+            # cabeçalho BEM mais escuro que a nota (barra fina de mover)
+            r0 = int(hexc[1:3], 16)
+            g0 = int(hexc[3:5], 16)
+            b0 = int(hexc[5:7], 16)
+            dark = f"#{int(r0 * 0.45):02x}{int(g0 * 0.45):02x}{int(b0 * 0.45):02x}"
+            rules.append(f".notehead-{cname} {{ background-color: {dark}; }}")
         for st, hexc in STATE_COLORS.items():
             rules.append(f".dot-{st} {{ color: {hexc}; }}")
         provider = Gtk.CssProvider()
@@ -618,7 +625,7 @@ class CanvasWindow:
     def _build_note_ctx(self) -> Gtk.Widget:
         """2ª pílula flutuante (estilo Maestri): ferramentas da NOTA selecionada.
         Aparece só quando uma nota está selecionada (ver _update_note_ctx)."""
-        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         bar.add_css_class("fab-bar")
         bar.add_css_class("note-ctx-bar")  # menor que a principal
         bar.set_halign(Gtk.Align.CENTER)
@@ -2032,39 +2039,36 @@ class CanvasWindow:
         frame._note_id = note.id
         frame.add_css_class("node-card")  # UI-1
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        # cabeçalho compacto: o cabeçalho INTEIRO arrasta (sem grip "≡"); cor/pin/apagar ficam na
-        # pílula de contexto (estilo Maestri). Aqui só título + fechar minimalista.
+        # cabeçalho = só uma BARRA FINA ESCURA p/ MOVER a nota (sem título, sem fechar;
+        # cor/apagar ficam na pílula de contexto — estilo Maestri).
         head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         head.add_css_class("notehead")
         head.add_css_class("notehead-min")
-        title = Gtk.Entry()
-        title.add_css_class("note-title")  # flat: sem caixa, negrito, transparente
-        title.set_text(note_title_display(note) if note.title else "Nota")
-        title.set_hexpand(True)
-        head.append(title)
-        nclose = Gtk.Button(label="✕")
-        nclose.set_has_frame(False)
-        nclose.add_css_class("note-close")  # pequeno e redondo
-        nclose.set_tooltip_text("apagar esta nota")
-        nclose.connect("clicked", lambda _b, fr=frame: self._close_note(fr))
-        head.append(nclose)
+        head.set_size_request(-1, 14)
+        head.set_tooltip_text("arraste p/ mover a nota")
         head._drag_note = note.id  # arrasto via gesto do PLANO (estável) — ver _pan_*
         frame._note_head = head
+        frame._title_entry = None  # sem título no cabeçalho (Maestri)
         # corpo (markdown editável) — na MESMA cor pastel (sticky-note inteira)
         body = Gtk.TextView()
         body.set_wrap_mode(Gtk.WrapMode.WORD)
         body.get_buffer().set_text(note.body)
-        body.set_size_request(200, 110)
         frame._body_view = body
+        # rola em vez de crescer: corpo dentro de um ScrolledWindow de altura fixa, com
+        # barra de rolagem minimalista (à direita, pontas arredondadas) — ver CSS .note-scroll
+        scroller = Gtk.ScrolledWindow()
+        scroller.add_css_class("note-scroll")
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_size_request(200, 110)
+        scroller.set_child(body)
+        frame._body_scroll = scroller
         self._apply_note_color(frame, note.color)  # aplica a cor salva (frame + head + corpo)
         # salvar ao perder foco (GTK4: EventControllerFocus)
-        for w in (title, body):
-            fc = Gtk.EventControllerFocus()
-            fc.connect("leave", lambda _c, fr=frame: self._save_note(fr))
-            w.add_controller(fc)
-        frame._title_entry = title
+        fc = Gtk.EventControllerFocus()
+        fc.connect("leave", lambda _c, fr=frame: self._save_note(fr))
+        body.add_controller(fc)
         box.append(head)
-        box.append(body)
+        box.append(scroller)
         # agent-to-note: rodar um agente com a nota (V9-S4)
         if self.controller is not None:
             agents = installed_agents()
@@ -2096,8 +2100,10 @@ class CanvasWindow:
         if note is None:
             return
         buf = frame._body_view.get_buffer()
-        note.title = frame._title_entry.get_text().strip()
         note.body = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+        # sem campo de título no cabeçalho: usa a 1ª linha do corpo (p/ minimapa/run)
+        stripped = note.body.strip()
+        note.title = stripped.splitlines()[0].strip()[:60] if stripped else ""
         note.x, note.y = self._note_base.get(frame._note_id, (0.0, 0.0))  # coords-base
         # cor/pin já persistem nos seus handlers; preserva-os (get traz do store)
         self.notes.save(note)
@@ -2111,12 +2117,12 @@ class CanvasWindow:
         for cname in NOTE_COLORS:
             frame.remove_css_class(f"notecol-{cname}")
             if head is not None:
-                head.remove_css_class(f"notecol-{cname}")
+                head.remove_css_class(f"notehead-{cname}")
             if body is not None:
                 body.remove_css_class(f"notebody-{cname}")
-        frame.add_css_class(f"notecol-{col}")  # fundo da nota inteira
+        frame.add_css_class(f"notecol-{col}")  # fundo da nota inteira (pastel)
         if head is not None:
-            head.add_css_class(f"notecol-{col}")
+            head.add_css_class(f"notehead-{col}")  # barra de mover: BEM mais escura
         if body is not None:
             body.add_css_class(f"notebody-{col}")  # corpo (TextView) na mesma cor
 
@@ -2483,14 +2489,16 @@ class CanvasWindow:
         note = self.notes.get(frame._note_id)
         if note is None:
             return
-        frame._title_entry.set_text(f"{note_title_display(note)} · rodando {agent}…")
+        if frame._title_entry is not None:
+            frame._title_entry.set_text(f"{note_title_display(note)} · rodando {agent}…")
 
         def done(env, updated, updated_note):
             def apply():
                 fresh = self.notes.get(frame._note_id)
                 if fresh is not None:
                     frame._body_view.get_buffer().set_text(fresh.body)
-                    frame._title_entry.set_text(note_title_display(fresh))
+                    if frame._title_entry is not None:
+                        frame._title_entry.set_text(note_title_display(fresh))
                 return False
 
             GLib.idle_add(apply)
