@@ -382,7 +382,7 @@ class CanvasWindow:
             # seleção: borda azul tracejada (outline não desloca o layout) p/ saber qual
             # nó/nota/árvore está selecionado (e recebe scroll do SELECT+trackball)
             ".selected { outline-color: #89b4fa; outline-style: dashed; outline-width: 2px;"
-            " outline-offset: -2px; }",
+            " outline-offset: 3px; }",  # 3px de folga: a linha não fica colada no card
         ]
         for cname, hexc in NOTE_COLORS.items():  # C4: classes de cor das notas
             rules.append(f".notecol-{cname} {{ background-color: {hexc}; color: #1e1e2e; }}")
@@ -566,9 +566,16 @@ class CanvasWindow:
         term = make_terminal(argv)
         frame._term = term  # ref p/ remover de self.terms ao fechar o nó
         fc = Gtk.EventControllerFocus()
-        fc.connect("enter", lambda _c, n=nid: setattr(self, "_focused_nid", n))
+        fc.connect("enter", lambda _c, n=nid: self._on_term_focus(n))  # clicar/focar = selecionar
         fc.connect("leave", lambda _c, n=nid: self._on_term_unfocus(n))  # monitorar só desfocado
         term.add_controller(fc)  # rastreia o terminal em foco (fechar via Ctrl+Shift+W)
+        # seleção em QUALQUER clique no card (fase CAPTURE = antes do VTE consumir; não claima,
+        # então o terminal/arraste seguem). Cobre re-clicar um card já focado (foco-enter só
+        # dispara em MUDANÇA de foco, então sozinho falhava ao re-selecionar após clicar fora).
+        selclick = Gtk.GestureClick()
+        selclick.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        selclick.connect("pressed", lambda *_a, n=nid: self._select(("node", n)))
+        frame.add_controller(selclick)
         sz = self.model.node_size(nid, (BASE_W, BASE_H))  # tamanho por nó (persistido)
         self._node_size[nid] = sz
         term.set_hexpand(True)
@@ -1174,6 +1181,13 @@ class CanvasWindow:
         if env.state is EnvelopeState.DONE:
             return env.result or ""
         return f"[{to} retornou {env.state}] {env.note or env.result or ''}"
+
+    def _on_term_focus(self, nid: str) -> None:
+        # clicar em QUALQUER área do card foca o terminal -> selecionamos o card aqui (borda
+        # azul). O clique no corpo (VTE) é consumido pelo terminal e não chega ao _pan_begin,
+        # então o foco é o sinal confiável p/ selecionar clicando fora do cabeçalho.
+        self._focused_nid = nid
+        self._select(("node", nid))
 
     def _on_term_unfocus(self, nid: str) -> None:
         if self._focused_nid == nid:

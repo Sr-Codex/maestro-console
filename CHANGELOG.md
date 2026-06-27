@@ -3,6 +3,13 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.26.1] — Polimento da seleção (borda azul)
+- **Seleciona clicando em QUALQUER área do card**, não só no cabeçalho (o corpo/VTE
+  consumia o clique). Via `Gtk.GestureClick` na fase CAPTURE (não claima — terminal/arraste seguem).
+- **Re-clique funciona:** card → clicar fora → card de novo volta a selecionar (antes a seleção
+  por foco-enter só disparava em MUDANÇA de foco; re-clicar um card já focado falhava).
+- **Folga de 3px** na borda (`outline-offset: 3px`) — a linha tracejada não fica colada no card.
+
 ## [0.26.0] — Cabo "estilo Maestri": pergunta digitada no terminal VIVO + captura
 - **Modo live (default):** ao perguntar por um cabo (`maestro-ask`), o prompt é **digitado no
   terminal VIVO do agente destino** (`Vte.feed_child`) — você VÊ a pergunta aparecer e o agente
