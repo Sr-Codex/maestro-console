@@ -3,6 +3,22 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.26.0] — Cabo "estilo Maestri": pergunta digitada no terminal VIVO + captura
+- **Modo live (default):** ao perguntar por um cabo (`maestro-ask`), o prompt é **digitado no
+  terminal VIVO do agente destino** (`Vte.feed_child`) — você VÊ a pergunta aparecer e o agente
+  responde lá, como no Maestri. Antes era headless/invisível (uma cópia separada respondia; o
+  terminal aberto ficava intocado, mostrando o placeholder "explain this codebase").
+- **Captura por quiescência + estado-da-TUI:** o host monitora o terminal do destino (só quando
+  **desfocado**, igual Maestri), detecta o fim do turno (silêncio + sumiço do "esc to interrupt")
+  e devolve a resposta a quem perguntou (pelo mailbox → `Answer from <nó>: ...`).
+- **Fallback headless:** se a captura falhar (sem terminal, destino focado, timeout, vazio), cai
+  no mecanismo mediado anterior — quem perguntou **sempre** recebe algo. `MAESTRO_ASK_MODE=headless`
+  força o modo antigo.
+- Protocolo do mailbox e guardrails reaproveitados (sem mudança em `ask_bus`/`ask_router`/cliente).
+- Heurística de captura pura e testável em `maestro/native/ask_capture.py` (+ `tests/test_ask_capture.py`).
+- Honesto: injeção é confiável (provada em VTE real); captura de TUI full-screen é best-effort
+  (~nível Maestri, ~70%) com fallback. Vai precisar de ajuste fino com os TUIs reais.
+
 ## [0.25.0] — Canvas: abre igual fechou (persistência completa do estado)
 - **Roster de terminais persistido (a grande lacuna):** o startup recriava SÓ os agentes
   instalados; terminais criados em runtime (➕ shell ou instância extra de agente) **sumiam**

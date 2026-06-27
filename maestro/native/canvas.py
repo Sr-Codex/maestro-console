@@ -27,15 +27,23 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Vte", "3.91")
 from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Vte  # noqa: E402
 
-from ..engine.attention import attention_items, notify  # noqa: E402
-from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
-from ..engine.state.store import Store  # noqa: E402
 from ..engine.ask_bus import AskBus, install_ask_skill, install_client  # noqa: E402
 from ..engine.ask_router import AskRouter, policy_from_env  # noqa: E402
+from ..engine.attention import attention_items, notify  # noqa: E402
 from ..engine.envelope import EnvelopeState  # noqa: E402
+from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
+from ..engine.state.store import Store  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from ..engine.workspace_registry import WorkspaceRegistry  # noqa: E402
 from .agents import STATE_COLORS, agent_argv, installed_agents  # noqa: E402
+from .ask_capture import (  # noqa: E402
+    LIVE_CAP_MS,
+    LIVE_QUIET_MS,
+    LIVE_SUBMIT_MS,
+    LIVE_WAIT_S,
+    clean_capture,
+    tui_busy,
+)
 from .filetree import list_children  # noqa: E402
 from .floors_ui import floor_rows, merge_text, preview_text  # noqa: E402
 from .notes_ui import note_title_display  # noqa: E402
@@ -236,12 +244,15 @@ class CanvasWindow:
         self._pan: tuple[float, float] | None = None
         self._focused_nid: str | None = None  # terminal em foco (p/ fechar via teclado)
         self._selected: tuple[str, str] | None = None  # (kind, id) selecionado (borda azul)
-        self._ptr_over: tuple[str, str] | None = None  # (kind, id) sob o cursor (p/ roteio de scroll)
+        self._ptr_over: tuple[str, str] | None = None  # (kind,id) sob o cursor (roteio do scroll)
         # cabos interativos (ADR-11): mailbox + router — só com controller + edges
         self._ask_bus_dir = ask_bus_dir  # p/ criar novos terminais de agente em runtime
         self._ask_bus = None
         self._ask_router = None
         self._ask_inflight: set[str] = set()
+        # modo do cabo: "live" (Maestri: digita no terminal vivo do B) ou "headless" (mediado).
+        # default live; cai no headless automaticamente se a captura falhar.
+        self._ask_mode = os.environ.get("MAESTRO_ASK_MODE", "live").strip().lower()
         if ask_bus_dir and controller is not None and edges is not None:
             self._ask_bus = AskBus(ask_bus_dir)
             self._ask_router = AskRouter(
@@ -280,7 +291,7 @@ class CanvasWindow:
         self.plane.set_hexpand(True)
         self.plane.set_vexpand(True)
         self._plane_size = (0, 0)  # legado (não mais usado p/ dimensionar o plano)
-        self._cam = (0.0, 0.0)  # câmera (tela = base*zoom + cam); ao abrir, _fit_view centraliza no conteúdo
+        self._cam = (0.0, 0.0)  # câmera (tela=base*zoom+cam); _fit_view centraliza ao abrir
         # gesto no scrolled (que NÃO rola -> referência estável, sem tremor)
         pan = Gtk.GestureDrag()
         pan.connect("drag-begin", self._pan_begin)
@@ -556,6 +567,7 @@ class CanvasWindow:
         frame._term = term  # ref p/ remover de self.terms ao fechar o nó
         fc = Gtk.EventControllerFocus()
         fc.connect("enter", lambda _c, n=nid: setattr(self, "_focused_nid", n))
+        fc.connect("leave", lambda _c, n=nid: self._on_term_unfocus(n))  # monitorar só desfocado
         term.add_controller(fc)  # rastreia o terminal em foco (fechar via Ctrl+Shift+W)
         sz = self.model.node_size(nid, (BASE_W, BASE_H))  # tamanho por nó (persistido)
         self._node_size[nid] = sz
@@ -1149,10 +1161,119 @@ class CanvasWindow:
         return (frm, to) in pairs or (to, frm) in pairs  # cabo em qualquer sentido
 
     def _ask_delegate(self, to: str, prompt: str) -> str:
+        # MODO LIVE (padrão, estilo Maestri): digita o prompt no terminal VIVO do B e captura
+        # a resposta dele. Cai no HEADLESS (variante a) se não der — A sempre recebe algo.
+        if self._ask_mode != "headless":
+            ans = self._ask_live(to, prompt)
+            if ans and ans.strip():
+                return ans
+        return self._ask_headless(to, prompt)
+
+    def _ask_headless(self, to: str, prompt: str) -> str:
         env = _run_sync(self.controller.delegate(to, prompt))  # síncrono no worker
         if env.state is EnvelopeState.DONE:
             return env.result or ""
         return f"[{to} retornou {env.state}] {env.note or env.result or ''}"
+
+    def _on_term_unfocus(self, nid: str) -> None:
+        if self._focused_nid == nid:
+            self._focused_nid = None
+
+    def _term_text(self, term) -> str:
+        """Texto renderizado da tela do VTE (sem ANSI). Main thread."""
+        try:
+            res = term.get_text_format(Vte.Format.TEXT)
+        except Exception:
+            return ""
+        if isinstance(res, str):
+            return res
+        try:
+            return res[0] or ""  # algumas bindings devolvem (texto, ...)
+        except (TypeError, IndexError):
+            return ""
+
+    def _ask_live(self, to: str, prompt: str) -> str | None:
+        """(thread worker) injeta no terminal VIVO do B e captura a resposta. None = não deu
+        (sem terminal, B focado, timeout ou captura vazia) -> o chamador cai no headless."""
+        fr = self.frames.get(to)
+        term = getattr(fr, "_term", None) if fr is not None else None
+        if term is None or to == self._focused_nid:
+            return None  # sem terminal vivo, ou B sob controle manual (focado) — igual Maestri
+        result: dict = {}
+        done = threading.Event()
+        GLib.idle_add(self._live_ask_start, term, prompt, result, done)
+        done.wait(timeout=LIVE_WAIT_S)
+        return result.get("answer")
+
+    def _feed_child(self, term, text: str) -> None:
+        """Escreve no stdin do agente (como se digitado). VTE 3.91 espera bytes."""
+        try:
+            term.feed_child(text.encode())
+        except TypeError:
+            term.feed_child(text)
+
+    def _live_ask_start(self, term, prompt, result, done) -> bool:
+        """(main thread) DIGITA o prompt no terminal vivo; o ENTER vai SEPARADO depois (ver
+        _live_submit). A detecção de quiescência só começa após o envio."""
+        oneline = " ".join(prompt.split())  # frame multi-linha -> 1 linha (não quebra a caixa)
+        st = {
+            "term": term, "prompt": oneline, "result": result, "done": done,
+            "before": self._term_text(term), "handler": None, "submitted": False,
+            "submit_id": None, "quiet_id": None, "cap_id": None, "finished": False,
+        }
+        self._feed_child(term, oneline)  # 1) digita o texto (SEM Enter)
+        st["handler"] = term.connect("contents-changed", self._live_on_change, st)
+        st["cap_id"] = GLib.timeout_add(LIVE_CAP_MS, self._live_finish, st, True)  # teto duro
+        st["submit_id"] = GLib.timeout_add(LIVE_SUBMIT_MS, self._live_submit, st)  # 2) Enter
+        return False
+
+    def _live_submit(self, st) -> bool:
+        """(main thread) manda o ENTER (C-m = \\r) SEPARADO e liga a detecção de fim de turno."""
+        st["submit_id"] = None
+        if st["finished"]:
+            return False
+        self._feed_child(st["term"], "\r")  # Enter como transmissão própria -> envia de verdade
+        st["submitted"] = True
+        st["quiet_id"] = GLib.timeout_add(LIVE_QUIET_MS, self._live_quiet, st)
+        return False
+
+    def _live_on_change(self, _term, st) -> None:
+        if st["finished"] or not st["submitted"]:
+            return  # ignora as mudanças do próprio texto digitado (antes do Enter)
+        if st["quiet_id"]:
+            GLib.source_remove(st["quiet_id"])  # novo output -> rearma a quiescência
+        st["quiet_id"] = GLib.timeout_add(LIVE_QUIET_MS, self._live_quiet, st)
+
+    def _live_quiet(self, st) -> bool:
+        st["quiet_id"] = None
+        if st["finished"]:
+            return False
+        if tui_busy(self._term_text(st["term"])):  # ainda trabalhando (pausa de "pensar")
+            st["quiet_id"] = GLib.timeout_add(LIVE_QUIET_MS, self._live_quiet, st)
+            return False
+        self._live_finish(st, False)  # silêncio + não-ocupado = terminou o turno
+        return False
+
+    def _live_finish(self, st, timed_out) -> bool:
+        if st["finished"]:
+            return False
+        st["finished"] = True
+        term = st["term"]
+        if st["handler"]:
+            try:
+                term.disconnect(st["handler"])
+            except Exception:
+                pass
+        for k in ("submit_id", "quiet_id", "cap_id"):
+            if st.get(k):
+                GLib.source_remove(st[k])
+                st[k] = None
+        if not timed_out:  # no timeout deixa vazio -> chamador cai no headless
+            ans = clean_capture(st["before"], self._term_text(term), st["prompt"])
+            if ans:
+                st["result"]["answer"] = ans
+        st["done"].set()
+        return False
 
     def _ask_tick(self) -> bool:
         if self._ask_bus is None:
@@ -1186,13 +1307,9 @@ class CanvasWindow:
 
     def _ask_reflect(self, req, resp) -> bool:
         ok = bool(resp and resp.ok)
-        fr = self.frames.get(req.to)
-        term = getattr(fr, "_term", None) if fr is not None else None
-        if term is not None:
-            term.feed(
-                f"\r\n\x1b[2m[{req.frm} perguntou via cabo] {req.prompt}\x1b[0m\r\n".encode()
-            )
-            term.feed(f"\x1b[2m[resposta enviada a {req.frm}]\x1b[0m\r\n".encode())
+        # No modo live o prompt já aparece DIGITADO no terminal do B (feed_child) e o B
+        # responde lá — não duplicamos com linha cosmética (era o que confundia). A cor do
+        # cabo indica sucesso/falha.
         self._ask_set_edge_state(req.frm, req.to, "done" if ok else "failed")
         self.plane.queue_draw()
         return False
