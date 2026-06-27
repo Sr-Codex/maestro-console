@@ -2269,7 +2269,8 @@ class CanvasWindow:
             rules += [
                 f".note-c-{key} {{ background-color: rgba({r},{g},{b},0.95); }}",  # frame
                 f".note-h-{key} {{ background-color: {head_c}; }}",  # faixa superior
-                f".note-b-{key} {{ background-color: {hexc}; }}",  # corpo (textview)
+                # cor no NÓ textview (cascateia p/ o subnó text por herança) + no subnó (robusto)
+                f".note-b-{key} {{ background-color: {hexc}; color: {txt}; }}",  # corpo
                 f".note-b-{key} text {{ background-color: {hexc}; color: {txt}; }}",
                 f".note-p-{key} {{ color: {ph_c}; }}",  # placeholder
             ]
