@@ -337,6 +337,7 @@ class CanvasWindow:
         mmclick.connect("pressed", self._minimap_click)
         self._minimap.add_controller(mmclick)
         overlay.add_overlay(self._minimap)
+        overlay.add_overlay(self._build_fab())  # barra flutuante de ferramentas (topo-centro)
         root.append(overlay)
         self._hint_lbl = Gtk.Label(label=hintbar_text(), xalign=0)  # B2: ensina atalhos
         self._hint_lbl.add_css_class("hintbar")
@@ -384,6 +385,14 @@ class CanvasWindow:
             # nó/nota/árvore está selecionado (e recebe scroll do SELECT+trackball)
             ".selected { outline-color: #89b4fa; outline-style: dashed; outline-width: 2px;"
             " outline-offset: 3px; }",  # 3px de folga: a linha não fica colada no card
+            # barra flutuante de ferramentas (pílula no topo-centro, estilo Maestri)
+            ".fab-bar { background-color: rgba(30,30,46,0.95); border: 1px solid #45475a;"
+            " border-radius: 22px; padding: 4px 8px; box-shadow: 0 4px 14px rgba(0,0,0,0.55); }",
+            ".fab-btn { background: transparent; border: none; min-width: 34px;"
+            " min-height: 34px; padding: 4px; color: #cdd6f4; }",
+            ".fab-btn:hover { background-color: rgba(255,255,255,0.08); border-radius: 10px; }",
+            ".fab-btn:disabled { opacity: 0.35; }",
+            ".fab-run { color: #89b4fa; }",  # o play (azul)
         ]
         for cname, hexc in NOTE_COLORS.items():  # C4: classes de cor das notas
             rules.append(f".notecol-{cname} {{ background-color: {hexc}; color: #1e1e2e; }}")
@@ -512,6 +521,71 @@ class CanvasWindow:
             pop.set_child(vb)
             mb.set_popover(pop)
             bar.append(mb)
+        return bar
+
+    def _fab_icon(self, icon_name: str, emoji: str) -> Gtk.Widget:
+        """Ícone symbolic (visual line-art do print) com fallback p/ emoji se o tema não tiver."""
+        try:
+            disp = Gdk.Display.get_default()
+            theme = Gtk.IconTheme.get_for_display(disp) if disp is not None else None
+            if theme is not None and theme.has_icon(icon_name):
+                return Gtk.Image.new_from_icon_name(icon_name)
+        except Exception:
+            pass
+        return Gtk.Label(label=emoji)
+
+    def _fab_button(self, icon_name, emoji, tip, cb, *, css=None, enabled=True) -> Gtk.Button:
+        b = Gtk.Button()
+        b.set_child(self._fab_icon(icon_name, emoji))
+        b.set_has_frame(False)
+        b.add_css_class("fab-btn")
+        if css:
+            b.add_css_class(css)
+        b.set_tooltip_text(tip)
+        b.set_sensitive(enabled and cb is not None)
+        if cb is not None:
+            b.connect("clicked", lambda _b: cb())
+        return b
+
+    def _build_fab(self) -> Gtk.Widget:
+        """Barra FLUTUANTE de ferramentas (pílula no topo-centro, estilo Maestri). Passo 1:
+        liga aos callbacks que já existem; clipe/globo/autonomia ficam desabilitados (em breve)."""
+        _spec, cb = self._action_spec()
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        bar.add_css_class("fab-bar")
+        bar.set_halign(Gtk.Align.CENTER)
+        bar.set_valign(Gtk.Align.START)
+        bar.set_margin_top(12)
+        # 1) ▶ executar orquestrador (azul) — só se houver controller/time
+        bar.append(self._fab_button(
+            "media-playback-start-symbolic", "▶", "Executar orquestrador (rodar time)",
+            cb.get("run_team"), css="fab-run", enabled="run_team" in cb))
+        # 2) terminal — novo terminal
+        bar.append(self._fab_button(
+            "utilities-terminal-symbolic", "🖥", "Novo terminal", cb.get("newterm")))
+        # 3) documento — nova nota
+        bar.append(self._fab_button(
+            "text-x-generic-symbolic", "📝", "Nova nota", cb.get("note"),
+            enabled="note" in cb))
+        # 4) clipe — contexto/anexos (em breve)
+        bar.append(self._fab_button(
+            "mail-attachment-symbolic", "📎", "Contexto/anexos (em breve)", None))
+        # 5) pasta — árvore de arquivos
+        bar.append(self._fab_button(
+            "folder-symbolic", "📁", "Árvore de arquivos", cb.get("filetree")))
+        # 6) globo — web/pesquisa (em breve)
+        bar.append(self._fab_button(
+            "globe-symbolic", "🌐", "Web/pesquisa (em breve)", None))
+        # 7) Aa — paleta de comandos
+        aa = Gtk.Button(label="Aa")
+        aa.set_has_frame(False)
+        aa.add_css_class("fab-btn")
+        aa.set_tooltip_text("Paleta de comandos (Ctrl-P)")
+        aa.connect("clicked", lambda _b: self._open_palette())
+        bar.append(aa)
+        # 8) ⦸ — controle de autonomia (em breve)
+        bar.append(self._fab_button(
+            "action-unavailable-symbolic", "⦸", "Autonomia: manual/auto (em breve)", None))
         return bar
 
     def _add_node(self, nid, title, argv, default):

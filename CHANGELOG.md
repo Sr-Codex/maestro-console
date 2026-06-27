@@ -3,6 +3,16 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.27.0] — Barra flutuante de ferramentas (estilo Maestri)
+- **Pílula flutuante no topo-centro** do canvas (`Gtk.Overlay`, igual ao minimapa) com 8 ícones
+  line-art (symbolic), inspirada no Maestri. Passo 1: liga ao que já existe e deixa o resto como
+  placeholder desabilitado ("em breve").
+- Ativos: **▶ executar orquestrador** (`run_team`, azul) · **terminal** (novo terminal) ·
+  **documento** (nova nota) · **pasta** (árvore de arquivos) · **Aa** (paleta de comandos).
+- Placeholders (em breve): **clipe** (contexto/anexos) · **globo** (web/pesquisa) · **⦸** (autonomia).
+- Reusa os callbacks de `_action_spec`; helper `_fab_icon` (symbolic + fallback emoji). A toolbar
+  `☰ ações` do topo segue intacta.
+
 ## [0.26.1] — Polimento: seleção (borda azul) + entrar/sair de grupo pelo cursor
 - **Seleciona clicando em QUALQUER área do card**, não só no cabeçalho (o corpo/VTE
   consumia o clique). Via `Gtk.GestureClick` na fase CAPTURE (não claima — terminal/arraste seguem).
