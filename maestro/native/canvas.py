@@ -46,6 +46,7 @@ from .ask_capture import (  # noqa: E402
 )
 from .filetree import list_children  # noqa: E402
 from .floors_ui import floor_rows, merge_text, preview_text  # noqa: E402
+from ..engine.notes import md_line_prefix, md_wrap  # noqa: E402
 from .notes_ui import note_title_display  # noqa: E402
 from .orchestrate import (  # noqa: E402
     _run_sync,
@@ -338,6 +339,7 @@ class CanvasWindow:
         self._minimap.add_controller(mmclick)
         overlay.add_overlay(self._minimap)
         overlay.add_overlay(self._build_fab())  # barra flutuante de ferramentas (topo-centro)
+        overlay.add_overlay(self._build_note_ctx())  # 2ª pílula: contexto da NOTA selecionada
         root.append(overlay)
         self._hint_lbl = Gtk.Label(label=hintbar_text(), xalign=0)  # B2: ensina atalhos
         self._hint_lbl.add_css_class("hintbar")
@@ -587,6 +589,66 @@ class CanvasWindow:
         bar.append(self._fab_button(
             "action-unavailable-symbolic", "⦸", "Autonomia: manual/auto (em breve)", None))
         return bar
+
+    def _ctx_btn(self, label, tip, cb) -> Gtk.Button:
+        """Botão de glifo-texto (B, I, #, …) p/ a barra de contexto da nota."""
+        b = Gtk.Button(label=label)
+        b.set_has_frame(False)
+        b.add_css_class("fab-btn")
+        b.set_tooltip_text(tip)
+        b.connect("clicked", lambda _b: cb())
+        return b
+
+    def _build_note_ctx(self) -> Gtk.Widget:
+        """2ª pílula flutuante (estilo Maestri): ferramentas da NOTA selecionada.
+        Aparece só quando uma nota está selecionada (ver _update_note_ctx)."""
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        bar.add_css_class("fab-bar")
+        bar.set_halign(Gtk.Align.CENTER)
+        bar.set_valign(Gtk.Align.START)
+        bar.set_margin_top(56)  # abaixo da barra principal (que usa margin_top=12)
+        bar.set_visible(False)
+        # 🎨 cor — popover com os 5 presets, age na nota selecionada
+        colorbtn = Gtk.MenuButton(label="🎨")
+        colorbtn.set_has_frame(False)
+        colorbtn.add_css_class("fab-btn")
+        colorbtn.set_tooltip_text("cor da nota")
+        cpop = Gtk.Popover()
+        crow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
+        for cname in NOTE_COLORS:
+            sw = Gtk.Button()
+            sw.add_css_class(f"notecol-{cname}")
+            sw.set_size_request(22, 22)
+            sw.connect(
+                "clicked",
+                lambda _b, c=cname, p=cpop: (p.popdown(), self._ctx_set_color(c)),
+            )
+            crow.append(sw)
+        cpop.set_child(crow)
+        colorbtn.set_popover(cpop)
+        bar.append(colorbtn)
+        # formatação inline (envolve a seleção com markdown)
+        bar.append(self._ctx_btn("B", "Negrito (**)", lambda: self._note_wrap("**", "**")))
+        bar.append(self._ctx_btn("I", "Itálico (*)", lambda: self._note_wrap("*", "*")))
+        bar.append(self._ctx_btn("S", "Tachado (~~)", lambda: self._note_wrap("~~", "~~")))
+        bar.append(self._ctx_btn("</>", "Código inline (`)", lambda: self._note_wrap("`", "`")))
+        # prefixos de linha
+        bar.append(self._ctx_btn("#", "Título (heading)", lambda: self._note_line_prefix("# ")))
+        bar.append(self._ctx_btn("☑", "Checklist", lambda: self._note_line_prefix("- [ ] ")))
+        bar.append(self._ctx_btn("•", "Lista", lambda: self._note_line_prefix("- ")))
+        # ações
+        bar.append(self._fab_button(
+            "edit-copy-symbolic", "⧉", "Duplicar nota", self._note_duplicate))
+        bar.append(self._fab_button(
+            "user-trash-symbolic", "🗑", "Apagar nota", self._note_delete))
+        self._note_ctx_bar = bar
+        return bar
+
+    def _update_note_ctx(self) -> None:
+        """Mostra a pílula de contexto só quando há uma NOTA selecionada."""
+        bar = getattr(self, "_note_ctx_bar", None)
+        if bar is not None:
+            bar.set_visible(bool(self._selected) and self._selected[0] == "note")
 
     def _add_node(self, nid, title, argv, default):
         frame = Gtk.Frame()
@@ -869,6 +931,7 @@ class CanvasWindow:
         new = self._frame_of(sel)
         if new is not None:
             new.add_css_class("selected")
+        self._update_note_ctx()  # mostra/esconde a pílula de contexto da nota
 
     def _on_motion(self, _c, x, y):
         """Rastreia qual elemento está sob o cursor (p/ rotear o scroll do SELECT+trackball)."""
@@ -2092,6 +2155,72 @@ class CanvasWindow:
         self.plane.remove(frame)
         self.plane.queue_draw()
         self._mm_refresh()
+
+    # -- barra de contexto da nota (Fase 1): formatação markdown + duplicar/apagar --
+    def _ctx_note_frame(self):
+        """Frame da nota selecionada (ou None)."""
+        if not (self._selected and self._selected[0] == "note"):
+            return None
+        return self.note_frames.get(self._selected[1])
+
+    def _ctx_set_color(self, color: str) -> None:
+        frame = self._ctx_note_frame()
+        if frame is not None:
+            self._set_note_color(frame, color)
+
+    def _note_wrap(self, left: str, right: str) -> None:
+        """Envolve a seleção (ou o cursor) do corpo da nota com marcadores markdown."""
+        frame = self._ctx_note_frame()
+        if frame is None:
+            return
+        buf = frame._body_view.get_buffer()
+        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+        bounds = buf.get_selection_bounds()  # PyGObject: () se vazia, (start, end) se há seleção
+        if bounds:
+            s, e = bounds[0].get_offset(), bounds[1].get_offset()
+        else:
+            s = e = buf.get_iter_at_mark(buf.get_insert()).get_offset()
+        new, cs, ce = md_wrap(text, s, e, left, right)
+        buf.set_text(new)
+        buf.select_range(buf.get_iter_at_offset(cs), buf.get_iter_at_offset(ce))
+        frame._body_view.grab_focus()
+        self._save_note(frame)
+
+    def _note_line_prefix(self, prefix: str) -> None:
+        """Prefixa a linha do cursor do corpo da nota (heading/checklist/lista)."""
+        frame = self._ctx_note_frame()
+        if frame is None:
+            return
+        buf = frame._body_view.get_buffer()
+        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+        cur = buf.get_iter_at_mark(buf.get_insert()).get_offset()
+        new, ncur = md_line_prefix(text, cur, prefix)
+        buf.set_text(new)
+        buf.place_cursor(buf.get_iter_at_offset(ncur))
+        frame._body_view.grab_focus()
+        self._save_note(frame)
+
+    def _note_duplicate(self) -> None:
+        """Cria uma cópia da nota selecionada (título/corpo/cor), deslocada."""
+        if self.notes is None:
+            return
+        frame = self._ctx_note_frame()
+        if frame is None:
+            return
+        src = self.notes.get(frame._note_id)
+        if src is None:
+            return
+        bx, by = self._note_base.get(frame._note_id, (src.x, src.y))
+        dup = self.notes.create(src.title, src.body, x=bx + 30, y=by + 30)
+        dup.color = src.color
+        self.notes.save(dup)
+        self._add_note_widget(dup)
+
+    def _note_delete(self) -> None:
+        frame = self._ctx_note_frame()
+        if frame is not None:
+            self._close_note(frame)
+            self._select(None)  # limpa seleção -> esconde a pílula de contexto
 
     # -- grupos/áreas (C2): desenhados via cairo (atrás dos nós) + hit-test --
     def _load_group(self, g) -> None:

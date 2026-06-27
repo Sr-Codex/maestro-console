@@ -45,6 +45,24 @@ def parse_markdown(text: str) -> tuple[str, str]:
     return "", text.rstrip("\n")
 
 
+def md_wrap(text: str, sel_start: int, sel_end: int, left: str, right: str) -> tuple[str, int, int]:
+    """Envolve [sel_start, sel_end) com `left`/`right` (ex.: ** .. **). Retorna
+    (novo_texto, cursor_start, cursor_end). Seleção vazia → insere marcadores e
+    posiciona o cursor ENTRE eles (cursor_start == cursor_end)."""
+    middle = text[sel_start:sel_end]
+    new = text[:sel_start] + left + middle + right + text[sel_end:]
+    cur_start = sel_start + len(left)
+    return new, cur_start, cur_start + len(middle)
+
+
+def md_line_prefix(text: str, cursor: int, prefix: str) -> tuple[str, int]:
+    """Insere `prefix` (ex.: '# ', '- [ ] ', '- ') no início da linha que contém
+    `cursor`. Retorna (novo_texto, novo_cursor)."""
+    line_start = text.rfind("\n", 0, cursor) + 1  # 0 se não houver \n antes
+    new = text[:line_start] + prefix + text[line_start:]
+    return new, cursor + len(prefix)
+
+
 def note_to_file(note: Note, directory: str | Path, filename: str = NOTE_FILENAME) -> Path:
     """Materializa a nota como markdown no diretório do agente (agent-to-note)."""
     d = Path(directory)

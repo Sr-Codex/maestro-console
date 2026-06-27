@@ -4,6 +4,8 @@ from maestro.engine.notes import (
     Note,
     Notes,
     file_to_note,
+    md_line_prefix,
+    md_wrap,
     note_to_file,
     parse_markdown,
     render_markdown,
@@ -114,6 +116,34 @@ def test_parse_sem_h1():
 
 def test_render_sem_titulo():
     assert render_markdown(Note("i", "", "apenas corpo", 0, 0)) == "apenas corpo\n"
+
+
+# -- barra de contexto: formatação markdown (Fase 1) ------------------
+def test_md_wrap_com_selecao():
+    # "ola mundo": envolve [4,9) ("mundo") com ** .. **
+    new, cs, ce = md_wrap("ola mundo", 4, 9, "**", "**")
+    assert new == "ola **mundo**"
+    assert new[cs:ce] == "mundo"  # seleção continua sobre o texto, não os marcadores
+
+
+def test_md_wrap_sem_selecao_cursor_entre_marcadores():
+    new, cs, ce = md_wrap("ab", 1, 1, "`", "`")
+    assert new == "a``b"
+    assert cs == ce == 2  # cursor fica ENTRE os dois `
+
+
+def test_md_line_prefix_no_inicio():
+    new, ncur = md_line_prefix("titulo", 3, "# ")
+    assert new == "# titulo" and ncur == 5
+
+
+def test_md_line_prefix_linha_do_meio():
+    # cursor na 2ª linha -> prefixa só ela
+    text = "linha1\nlinha2"
+    new, ncur = md_line_prefix(text, 9, "- [ ] ")
+    assert new == "linha1\n- [ ] linha2"
+    assert new[7:13] == "- [ ] "  # prefixo no início da 2ª linha
+    assert ncur == 15  # cursor acompanha o deslocamento (+6)
 
 
 # -- agent-to-note (ponte arquivo) ------------------------------------
