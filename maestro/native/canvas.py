@@ -237,6 +237,7 @@ class CanvasWindow:
         self._group_color: dict[str, str] = {}
         self._group_title: dict[str, str] = {}
         self._group_user_sized: set[str] = set()  # grupos redimensionados de propósito (piso)
+        self._group_excluded: set[tuple[str, str]] = set()  # (kind,id) destacados via Ctrl (não-membros)
         self._loading = False  # True só no startup: suspende auto-fit p/ restaurar tamanho EXATO
         self._group_resize = None  # estado do resize de grupo (alça canto inf-dir)
         self._edge_state: dict[tuple[str, str], str] = {}  # cor do cabo por handoff (V7-S4)
@@ -826,7 +827,15 @@ class CanvasWindow:
                 self._connect_pick(tid)
                 gesture.set_state(Gtk.EventSequenceState.DENIED)
                 return
-            self._drag = {"kind": kind, "id": tid, "base": self._drag_store(kind).get(tid, (0.0, 0.0))}
+            # pertença ao grupo é decidida pelo CURSOR ao vivo (simétrico): ENTRA quando o
+            # cursor entra no grupo, SAI quando o cursor não está sobre nenhum. Ctrl só
+            # CONGELA o auto-fit (grupo não persegue) p/ dar pra sair limpo.
+            detach = bool(gesture.get_current_event_state() & Gdk.ModifierType.CONTROL_MASK)
+            self._drag = {
+                "kind": kind, "id": tid,
+                "base": self._drag_store(kind).get(tid, (0.0, 0.0)),
+                "detach": detach, "start": (x, y),
+            }
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)  # não vaza p/ window-drag
             return
         if self._over_child(picked):  # corpo do nó/nota/árvore: deixa o filho interagir
@@ -885,8 +894,10 @@ class CanvasWindow:
                 frame = self._drag_frame(kind, tid)
                 if frame is not None:
                     self._place(frame, nb, z)
-                for gid in self._group_base:  # C2: grupo abraça AO VIVO durante o arrasto
-                    self._autofit_group(gid)
+                self._membership_by_cursor(kind, tid, off_x, off_y)  # entra/sai pelo CURSOR
+                if not self._drag.get("detach"):  # sem Ctrl: grupo abraça os membros ao vivo
+                    for gid in self._group_base:
+                        self._autofit_group(gid)
                 self.plane.queue_draw()
             return
         if self._pan is None:
@@ -2161,8 +2172,36 @@ class CanvasWindow:
                 iy = max(0.0, min(by + h, gy + gh) - max(by, gy))  # interseção em y
                 inter = ix * iy
                 if inter > 0 and inter >= GROUP_MEMBER_FRAC * (w * h):
+                    if (kind, iid) in self._group_excluded:
+                        continue  # destacado explicitamente (Ctrl) -> não é membro
                     members[(kind, iid)] = (bx, by)
         return members
+
+    def _group_at_cursor(self, off_x, off_y):
+        """gid do grupo cujo retângulo contém o CURSOR durante o arraste (ou None)."""
+        sx, sy = self._drag.get("start", (0.0, 0.0))
+        camx, camy = self._cam
+        cpx, cpy = sx + off_x - camx, sy + off_y - camy  # cursor em coords-plano (base*zoom)
+        for gid in reversed(list(self._group_base)):
+            gx, gy, gw, gh = self._group_disp_rect(gid)
+            if gx <= cpx <= gx + gw and gy <= cpy <= gy + gh:
+                return gid
+        return None
+
+    def _membership_by_cursor(self, kind, tid, off_x, off_y) -> None:
+        """Pertença pelo CURSOR (simétrico): ENTRA quando o cursor entra num grupo, SAI quando
+        o cursor não está sobre nenhum. Evita 're-entrar rápido' só porque um pedaço do item
+        ficou sobreposto — e casa com o destacar via Ctrl (que congela o auto-fit)."""
+        key = (kind, tid)
+        inside = self._group_at_cursor(off_x, off_y)
+        if inside is not None:
+            if key in self._group_excluded:
+                self._group_excluded.discard(key)  # cursor ENTROU -> pode pertencer
+                self._autofit_group(inside)
+        elif key not in self._group_excluded:
+            self._group_excluded.add(key)  # cursor FORA de qualquer grupo -> não-membro
+            for gid in self._group_base:
+                self._autofit_group(gid)
 
     def _group_dialog(self, gid):
         """Renomear / recolorir / apagar o grupo (duplo-clique na faixa do título)."""
