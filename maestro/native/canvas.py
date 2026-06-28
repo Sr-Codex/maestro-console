@@ -92,6 +92,9 @@ MIN_NODE_W, MIN_NODE_H = 240, 120  # piso ao redimensionar um card (arrastar a a
 MIN_NOTE_W, MIN_NOTE_H = 160, 90  # piso ao redimensionar uma nota
 NOTE_W_DEFAULT, NOTE_H_DEFAULT = 200, 110  # tamanho padrão do corpo da nota
 RESIZE_BAND = 6  # faixa (px de tela) em volta da borda do card onde o cursor vira resize
+CABLE_DASH_ON, CABLE_DASH_OFF = 8.0, 6.0  # tracejado do cabo "fluindo" (handoff busy)
+CABLE_DASH_PERIOD = CABLE_DASH_ON + CABLE_DASH_OFF  # módulo da fase animada
+CABLE_FLOW_SPEED = 0.03  # unidades de fase por ms (velocidade do fluxo correndo no cabo)
 _RESIZE_CURSOR = {  # combinação de bordas -> nome do cursor
     "n": "ns-resize", "s": "ns-resize", "e": "ew-resize", "w": "ew-resize",
     "nw": "nwse-resize", "se": "nwse-resize", "ne": "nesw-resize", "sw": "nesw-resize",
@@ -309,6 +312,8 @@ class CanvasWindow:
         self._loading = False  # True só no startup: suspende auto-fit p/ restaurar tamanho EXATO
         self._group_resize = None  # estado do resize de grupo (alça canto inf-dir)
         self._edge_state: dict[tuple[str, str], str] = {}  # cor do cabo por handoff (V7-S4)
+        self._cable_anim_phase = 0.0  # fase do tracejado animado (cabo "fluindo")
+        self._cable_tick_id = None  # id do add_tick_callback enquanto há cabo "busy"
         self._active_edge: tuple[str, str] | None = None
         self._pan: tuple[float, float] | None = None
         self._focused_nid: str | None = None  # terminal em foco (p/ fechar via teclado)
@@ -1877,6 +1882,29 @@ class CanvasWindow:
         for e in self.edges.list():
             if set(e) == {frm, to}:
                 self._edge_state[e] = state
+        self._sync_cable_anim()
+
+    # -- animação de fluxo do cabo (só enquanto há handoff "busy": poupa bateria) --
+    def _has_flowing_edge(self) -> bool:
+        return any(st == "busy" for st in self._edge_state.values())
+
+    def _sync_cable_anim(self) -> None:
+        """Liga/desliga o tick de animação conforme exista cabo em handoff ativo."""
+        flowing = self._has_flowing_edge()
+        if flowing and self._cable_tick_id is None:
+            self._cable_tick_id = self.plane.add_tick_callback(self._cable_tick)
+        elif not flowing and self._cable_tick_id is not None:
+            self.plane.remove_tick_callback(self._cable_tick_id)
+            self._cable_tick_id = None
+
+    def _cable_tick(self, _widget, frame_clock) -> bool:  # pragma: no cover - precisa de GTK
+        if not self._has_flowing_edge():  # parou: encerra o tick
+            self._cable_tick_id = None
+            return GLib.SOURCE_REMOVE
+        t = frame_clock.get_frame_time()  # microssegundos (relógio monotônico do frame)
+        self._cable_anim_phase = (t / 1000.0 * CABLE_FLOW_SPEED) % CABLE_DASH_PERIOD
+        self.plane.queue_draw()
+        return GLib.SOURCE_CONTINUE
 
     def _ask_hint(self, src: str, dst: str) -> None:
         """Avisa ambos os terminais que podem conversar pelo cabo (maestro-ask)."""
@@ -1990,10 +2018,19 @@ class CanvasWindow:
                     cr.set_source_rgb(c.red, c.green, c.blue)
                 else:
                     cr.set_source_rgb(0.23, 0.51, 0.96)
+                # cabo em handoff ativo: tracejado correndo origem→destino (offset negativo
+                # avança o padrão no sentido do fluxo); demais ficam sólidos. Escala c/ zoom.
+                if st == "busy":
+                    cr.set_dash(
+                        [CABLE_DASH_ON * z, CABLE_DASH_OFF * z], -self._cable_anim_phase * z
+                    )
+                else:
+                    cr.set_dash([])
                 x0, y0, c1x, c1y, c2x, c2y, x3, y3 = cable_bezier(sbox, dbox)
                 cr.move_to(x0, y0)
                 cr.curve_to(c1x, c1y, c2x, c2y, x3, y3)
                 cr.stroke()
+            cr.set_dash([])  # reset p/ não vazar tracejado em outros desenhos do cr
 
     # -- rodar time da engine (headless) refletindo nas cores --
     def _run_team(self):
@@ -2048,6 +2085,7 @@ class CanvasWindow:
     def _run_handoff(self, src: str, dst: str, intent: str) -> None:
         self._active_edge = (src, dst)
         self._edge_state[(src, dst)] = "busy"
+        self._sync_cable_anim()
         self.plane.queue_draw()
         run_edge_handoff_in_thread(self.controller, src, dst, intent, self._on_handoff_step_ts)
 
@@ -2065,6 +2103,7 @@ class CanvasWindow:
                         self._edge_state[(src, dst)] = "done"
                 else:  # A ou B escalou -> cabo reflete o estado
                     self._edge_state[(src, dst)] = _ST_MAP.get(sp.state, "blocked")
+        self._sync_cable_anim()
         self.plane.queue_draw()
         return False
 

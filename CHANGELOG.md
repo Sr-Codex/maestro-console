@@ -3,6 +3,21 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.34.0] — Cabo melhor: sai pela borda mais próxima + fluxo animado no handoff
+- **Saída pela borda mais próxima:** o cabo (bezier) agora **escolhe o eixo dominante** pela
+  distância entre os centros — se |Δx| ≥ |Δy| sai/entra pela **esquerda/direita** (controles
+  horizontais), senão por **cima/baixo** (controles verticais). Antes era fixo direita→esquerda,
+  o que fazia uma **volta feia** quando o destino estava atrás/acima da origem. `cable_bezier`
+  (função pura em `state.py`) reescrita; piso de curvatura (40) preservado nos dois eixos.
+- **Fluxo animado durante o handoff:** enquanto um cabo está em handoff ativo (`busy`), a linha
+  vira um **tracejado correndo** da origem pro destino — feedback vivo de que algo passa pela
+  conexão. Os demais cabos seguem **sólidos**. Tracejado e velocidade escalam com o zoom.
+- **Economia de bateria (uConsole):** a animação só roda quando há cabo `busy` — um
+  `add_tick_callback` (frame clock GTK4) liga ao virar `busy` e **se desliga sozinho** quando
+  nenhum cabo está fluindo (`_sync_cable_anim`/`_cable_tick`). Sem tick em canvas parado.
+- Cor por estado intacta (azul ocioso · `STATE_COLORS` em handoff). Testes do `cable_bezier`
+  cobrindo os casos vertical e destino-à-esquerda; `reset` do dash p/ não vazar a outros desenhos.
+
 ## [0.33.0] — Nota conectada: agente lê/escreve + sabe que tem nota — Fase 4b
 - **O agente lê e escreve a nota conectada:** cada nota ligada a um nó vira o arquivo
   `<workspace>/notes/<id>.md` (markdown) no workspace do agente — ele lê/edita como arquivo normal.

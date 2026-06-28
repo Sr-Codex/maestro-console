@@ -141,19 +141,38 @@ def snap_point(point: tuple[float, float], grid: int = GRID) -> tuple[float, flo
 
 
 def cable_bezier(src_box, dst_box):
-    """Curva tipo corda (C5) entre dois nós: cubic bezier da DIREITA da origem
-    pra ESQUERDA do destino, com pontos de controle HORIZONTAIS (direção do fluxo).
+    """Curva tipo corda (C5) entre dois nós: cubic bezier que SAI/ENTRA pela borda
+    mais próxima do outro endpoint (não mais fixo direita→esquerda).
+
+    Escolhe o eixo dominante pela distância entre os CENTROS: se |Δx| ≥ |Δy| o cabo
+    sai pela esquerda/direita (controles horizontais); senão pela cima/baixo (controles
+    verticais). Assim o destino atrás/acima da origem não gera a "volta" feia.
 
     Recebe boxes `(x, y, w, h)` (já em coords de tela/escaladas) e devolve
     `(x0, y0, c1x, c1y, c2x, c2y, x3, y3)` p/ `cr.move_to`+`cr.curve_to`.
     """
     ax, ay, aw, ah = src_box
-    bx, by, _bw, bh = dst_box
-    x0, y0 = ax + aw, ay + ah / 2.0  # direita-centro da origem
-    x3, y3 = bx, by + bh / 2.0  # esquerda-centro do destino
-    # curvatura = metade da distância horizontal, com piso p/ nós próximos/sobrepostos
-    dx = max(abs(x3 - x0) * 0.5, 40.0)
-    return (x0, y0, x0 + dx, y0, x3 - dx, y3, x3, y3)
+    bx, by, bw, bh = dst_box
+    acx, acy = ax + aw / 2.0, ay + ah / 2.0  # centro da origem
+    bcx, bcy = bx + bw / 2.0, by + bh / 2.0  # centro do destino
+    dx, dy = bcx - acx, bcy - acy
+    if abs(dx) >= abs(dy):  # eixo HORIZONTAL domina: sai pela esquerda/direita
+        if dx >= 0:  # destino à direita
+            x0, y0, x3, y3 = ax + aw, acy, bx, bcy
+        else:  # destino à esquerda
+            x0, y0, x3, y3 = ax, acy, bx + bw, bcy
+        # curvatura = metade da distância horizontal, com piso p/ nós próximos/sobrepostos
+        k = max(abs(x3 - x0) * 0.5, 40.0)
+        s = 1.0 if x3 >= x0 else -1.0
+        return (x0, y0, x0 + s * k, y0, x3 - s * k, y3, x3, y3)
+    # eixo VERTICAL domina: sai por cima/baixo (controles verticais)
+    if dy >= 0:  # destino abaixo
+        x0, y0, x3, y3 = acx, ay + ah, bcx, by
+    else:  # destino acima
+        x0, y0, x3, y3 = acx, ay, bcx, by + bh
+    k = max(abs(y3 - y0) * 0.5, 40.0)
+    s = 1.0 if y3 >= y0 else -1.0
+    return (x0, y0, x0, y0 + s * k, x3, y3 - s * k, x3, y3)
 
 
 def minimap_layout(rects, mm_w: float, mm_h: float, pad: float = 4.0):

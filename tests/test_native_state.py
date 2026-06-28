@@ -81,6 +81,23 @@ def test_cable_bezier_piso_de_curvatura_quando_proximos():
     assert c1x - 100 == 40 and 100 - c2x == 40  # piso aplicado dos dois lados
 
 
+def test_cable_bezier_borda_mais_proxima_vertical():
+    # destino bem ABAIXO (Δy domina Δx): sai pela BORDA INFERIOR da origem e entra
+    # pela SUPERIOR do destino, com controles VERTICAIS (não a antiga volta horizontal).
+    x0, y0, c1x, c1y, c2x, c2y, x3, y3 = cable_bezier((0, 0, 100, 40), (0, 300, 100, 40))
+    assert (x0, y0) == (50, 40)  # baixo-centro da origem
+    assert (x3, y3) == (50, 300)  # cima-centro do destino
+    assert c1x == x0 and c2x == x3  # controles VERTICAIS (saída/entrada retas)
+    assert c1y > y0 and c2y < y3  # curva "abre" no eixo vertical
+
+
+def test_cable_bezier_destino_a_esquerda_sai_pela_esquerda():
+    # destino à ESQUERDA: origem sai pela borda esquerda, destino entra pela direita
+    x0, _y0, _c1x, _c1y, _c2x, _c2y, x3, _y3 = cable_bezier((300, 0, 100, 40), (0, 0, 100, 40))
+    assert x0 == 300  # borda esquerda da origem (x da origem)
+    assert x3 == 100  # borda direita do destino (x+w do destino)
+
+
 def test_position_default_e_persistencia(tmp_path):
     with Store(tmp_path / "m.db") as s:
         m = CanvasModel(s)
