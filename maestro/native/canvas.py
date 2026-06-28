@@ -33,7 +33,7 @@ from ..engine.ask_router import AskRouter, policy_from_env  # noqa: E402
 from ..engine.attention import attention_items, notify  # noqa: E402
 from ..engine.envelope import EnvelopeState  # noqa: E402
 from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
-from ..engine.notes import md_line_prefix, md_wrap  # noqa: E402
+from ..engine.notes import md_line_prefix, md_to_pango, md_wrap  # noqa: E402
 from ..engine.state.store import Store  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from ..engine.workspace_registry import WorkspaceRegistry  # noqa: E402
@@ -769,6 +769,8 @@ class CanvasWindow:
         bar.append(self._ctx_btn("#", "Título (heading)", lambda: self._note_line_prefix("# ")))
         bar.append(self._ctx_btn("☑", "Checklist", lambda: self._note_line_prefix("- [ ] ")))
         bar.append(self._ctx_btn("•", "Lista", lambda: self._note_line_prefix("- ")))
+        # M — alterna ver (markdown formatado) ↔ editar
+        bar.append(self._ctx_btn("M", "Ver/editar (markdown)", self._note_toggle_render))
         # ações
         dup = self._fab_button("edit-copy-symbolic", "⧉", "Duplicar nota", self._note_duplicate)
         dup.add_css_class("note-ctx-btn")
@@ -2290,7 +2292,22 @@ class CanvasWindow:
         nw = max(MIN_NOTE_W, getattr(note, "width", NOTE_W_DEFAULT) or NOTE_W_DEFAULT)
         nh = max(MIN_NOTE_H, getattr(note, "height", NOTE_H_DEFAULT) or NOTE_H_DEFAULT)
         scroller.set_size_request(int(nw), int(nh))  # tamanho salvo (resize persistido)
-        scroller.set_child(body)
+        # corpo = Stack: "edit" (TextView) ↔ "view" (Label com markdown renderizado) — botão M
+        view_lbl = Gtk.Label()
+        view_lbl.set_use_markup(True)
+        view_lbl.set_wrap(True)
+        view_lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        view_lbl.set_xalign(0.0)
+        view_lbl.set_yalign(0.0)
+        view_lbl.set_selectable(True)
+        view_lbl.add_css_class(self._note_font_class(note.id))  # mesma fonte da nota
+        frame._body_label = view_lbl
+        stack = Gtk.Stack()
+        stack.add_named(body, "edit")
+        stack.add_named(view_lbl, "view")
+        stack.set_visible_child_name("edit")
+        frame._body_stack = stack
+        scroller.set_child(stack)
         frame._body_scroll = scroller
         overlay = Gtk.Overlay()
         overlay.set_child(scroller)
@@ -2380,7 +2397,7 @@ class CanvasWindow:
         self._rebuild_note_colors()
         frame.add_css_class(f"note-c-{key}")  # classes estáveis por nota (idempotente)
         for attr, prefix in (("_note_head", "note-h-"), ("_body_view", "note-b-"),
-                             ("_note_ph", "note-p-")):
+                             ("_body_label", "note-b-"), ("_note_ph", "note-p-")):
             w = getattr(frame, attr, None)
             if w is not None:
                 w.add_css_class(f"{prefix}{key}")
@@ -2490,6 +2507,26 @@ class CanvasWindow:
         buf.place_cursor(buf.get_iter_at_offset(ncur))
         frame._body_view.grab_focus()
         self._save_note(frame)
+
+    def _note_toggle_render(self) -> None:
+        """Alterna a nota entre EDITAR (TextView) e VER (markdown formatado no Label)."""
+        frame = self._ctx_note_frame()
+        stack = getattr(frame, "_body_stack", None) if frame is not None else None
+        if stack is None:
+            return
+        ph = getattr(frame, "_note_ph", None)
+        if stack.get_visible_child_name() == "edit":  # editar -> ver (renderiza o buffer atual)
+            buf = frame._body_view.get_buffer()
+            text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+            frame._body_label.set_markup(md_to_pango(text))
+            if ph is not None:
+                ph.set_visible(False)  # placeholder só faz sentido editando
+            stack.set_visible_child_name("view")
+        else:  # ver -> editar
+            stack.set_visible_child_name("edit")
+            if ph is not None:
+                buf = frame._body_view.get_buffer()
+                ph.set_visible(buf.get_char_count() == 0)
 
     def _note_duplicate(self) -> None:
         """Cria uma cópia da nota selecionada (título/corpo/cor), deslocada."""

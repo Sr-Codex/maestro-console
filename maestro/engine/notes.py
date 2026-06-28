@@ -7,6 +7,7 @@ ele lê/escreve; depois relemos o arquivo de volta para a nota. Sem PTY.
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,6 +65,40 @@ def md_line_prefix(text: str, cursor: int, prefix: str) -> tuple[str, int]:
     line_start = text.rfind("\n", 0, cursor) + 1  # 0 se não houver \n antes
     new = text[:line_start] + prefix + text[line_start:]
     return new, cursor + len(prefix)
+
+
+def _md_inline(s: str) -> str:
+    """Inline markdown → Pango (em texto já escapado). Ordem evita colisão (código→negrito→
+    tachado→itálico; negrito antes do itálico p/ não confundir ** com *)."""
+    s = re.sub(r"`([^`]+)`", r"<tt>\1</tt>", s)
+    s = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", s)
+    s = re.sub(r"~~([^~]+)~~", r"<s>\1</s>", s)
+    s = re.sub(r"\*([^*]+)\*", r"<i>\1</i>", s)
+    return s
+
+
+def md_to_pango(text: str) -> str:
+    """Markdown simples (o que a pílula insere) → markup do Pango, p/ exibir a nota formatada
+    num Gtk.Label. Escapa &,<,> antes; cobre heading, lista, checkbox e inline. Não é um parser
+    markdown completo — casos exóticos ficam como texto."""
+    out = []
+    for raw in text.split("\n"):
+        line = raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        stripped = line.lstrip(" ")
+        indent = line[: len(line) - len(stripped)]
+        heading = False
+        if stripped.startswith("# "):
+            line, heading = indent + stripped[2:], True
+        elif stripped[:6] in ("- [ ] ", "- [x] ", "- [X] "):
+            mark = "☐" if stripped[3] == " " else "☑"  # ☐ / ☑
+            line = indent + mark + " " + stripped[6:]
+        elif stripped[:2] in ("- ", "* "):
+            line = indent + "• " + stripped[2:]  # •
+        line = _md_inline(line)
+        if heading:
+            line = f'<span size="larger" weight="bold">{line}</span>'
+        out.append(line)
+    return "\n".join(out)
 
 
 def note_to_file(note: Note, directory: str | Path, filename: str = NOTE_FILENAME) -> Path:
