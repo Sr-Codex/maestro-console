@@ -434,7 +434,7 @@ class CanvasWindow:
             # seleção: borda azul tracejada (outline não desloca o layout) p/ saber qual
             # nó/nota/árvore está selecionado (e recebe scroll do SELECT+trackball)
             ".selected { outline-color: #89b4fa; outline-style: dashed; outline-width: 2px;"
-            " outline-offset: 0; }",  # linha NA borda do card → coincide c/ as zonas de resize
+            " outline-offset: 3px; }",  # 3px de folga: a linha não fica colada no card
             # barra flutuante de ferramentas (pílula no topo-centro, estilo Maestri)
             ".fab-bar { background-color: rgba(30,30,46,0.95); border: 1px solid #45475a;"
             " border-radius: 22px; padding: 4px 8px; box-shadow: 0 4px 14px rgba(0,0,0,0.55); }",
