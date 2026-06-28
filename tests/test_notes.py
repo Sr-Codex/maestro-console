@@ -30,10 +30,23 @@ def test_font_default_e_persistencia(tmp_path):
     store.close()
 
 
+def test_size_default_e_persistencia(tmp_path):
+    n, store = _notes(tmp_path)
+    a = n.create("t", "b")
+    assert a.width == 200.0 and a.height == 110.0  # defaults == tamanho atual do corpo
+    a.width, a.height = 320.0, 240.0
+    n.save(a)
+    got = n.get(a.id)
+    assert got.width == 320.0 and got.height == 240.0
+    assert n.list()[0].height == 240.0
+    store.close()
+
+
 def test_cor_e_pin_default_e_persistencia(tmp_path):
     n, store = _notes(tmp_path)
     a = n.create("t", "b")
     assert a.color == "" and a.pinned is False and a.font == ""  # defaults
+    assert a.width == 200.0 and a.height == 110.0
     a.color = "green"
     a.pinned = True
     n.save(a)
@@ -73,6 +86,7 @@ def test_migracao_db_antigo_sem_colunas(tmp_path):
     got = n.get("n1")
     # migrou sem perder; colunas novas vêm com default
     assert got is not None and got.color == "" and got.pinned is False and got.font == ""
+    assert got.width == 200.0 and got.height == 110.0
 
 
 # -- CRUD --------------------------------------------------------------
@@ -170,6 +184,16 @@ def test_note_to_file_e_volta(tmp_path):
     assert atualizada.id == "i"  # id/pos preservados
     store_check = (atualizada.x, atualizada.y)
     assert store_check == (0, 0)
+
+
+def test_file_to_note_preserva_font_e_tamanho(tmp_path):
+    # guarda o bug latente: o round-trip agent-to-note não pode descartar font/width/height
+    note = Note("i", "T", "x", 0, 0, color="blue", pinned=True,
+                font="Mono 13", width=333.0, height=222.0)
+    note_to_file(note, tmp_path / "ws")
+    upd = file_to_note(note, tmp_path / "ws")
+    assert upd.font == "Mono 13" and upd.width == 333.0 and upd.height == 222.0
+    assert upd.color == "blue" and upd.pinned is True
 
 
 def test_file_to_note_sem_arquivo_mantem(tmp_path):

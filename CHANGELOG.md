@@ -3,6 +3,22 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.30.0] — Resize pela borda (nós e notas, 4 lados + cantos)
+- **Redimensionar pelas BORDAS — detecção no nível do CANVAS** (mesmo mecanismo do resize de
+  grupo). Ao selecionar um card (borda azul tracejada), o cursor vira o de resize quando entra
+  numa **faixa de ~6px em volta da borda — por fora E por dentro** (`_resize_edge_at` via
+  `compute_bounds`); arrasta nos **4 lados + cantos**. Arrastar pela borda **superior/esquerda**
+  move a posição (borda oposta ancorada). **Sem nada visível** (nenhum widget/alça) e **sem tremor**
+  (offset vem do plano, que não se move). Padrão p/ **todos os nós e notas**, existentes e futuros.
+- **Nó (terminal):** remove o antigo grip "⤡" do rodapé. Tamanho **e** posição persistem
+  (`set_node_size`/`set_position`).
+- **Nota:** o **corpo rola** (não cresce). Novas colunas `notes.width/height` (migração idempotente,
+  espelha `font`); tamanho e posição persistem; duplicar copia o tamanho.
+- Integrado em `_pan_begin/update/end` (com `_resize_rect`/`_item_resize_*`); snap à grade; piso
+  nó `240×120`, nota `160×90`. Folga de 3px da linha tracejada preservada.
+- **Bug latente corrigido:** `file_to_note` (round-trip agent-to-note) descartava `font` — agora
+  preserva `font`/`width`/`height` (além de `color`/`pinned`).
+
 ## [0.29.0] — Bloco de nota estilo sticky-note + seletor de cor (Maestri)
 - **Nota INTEIRA colorida** (sticky-note): a cor pastel preenche o card todo — frame + corpo —
   com leve transparência. Cabeçalho = só uma **faixa fina superior** (tom que combina e contrasta

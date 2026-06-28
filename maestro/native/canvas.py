@@ -76,6 +76,13 @@ from .toolbar import action_menu_items  # noqa: E402
 
 BASE_W, BASE_H = 420, 220
 MIN_NODE_W, MIN_NODE_H = 240, 120  # piso ao redimensionar um card (arrastar a alça ⤡)
+MIN_NOTE_W, MIN_NOTE_H = 160, 90  # piso ao redimensionar uma nota
+NOTE_W_DEFAULT, NOTE_H_DEFAULT = 200, 110  # tamanho padrão do corpo da nota
+RESIZE_BAND = 6  # faixa (px de tela) em volta da borda do card onde o cursor vira resize
+_RESIZE_CURSOR = {  # combinação de bordas -> nome do cursor
+    "n": "ns-resize", "s": "ns-resize", "e": "ew-resize", "w": "ew-resize",
+    "nw": "nwse-resize", "se": "nwse-resize", "ne": "nesw-resize", "sw": "nesw-resize",
+}
 PAN_SCROLL_STEP = 90.0  # px de pan por unidade de scroll (SELECT + trackball) — velocidade do pan
 # estado do envelope (passo done) -> estado visual do nó
 _ST_MAP = {"DONE": "done", "BLOCKED": "blocked", "FAILED": "failed", "NEEDS_INPUT": "blocked"}
@@ -873,19 +880,7 @@ class CanvasWindow:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(head)
         box.append(term)
-        # rodapé com alça de redimensionar: arraste o ⤡ p/ dar mais colunas/linhas
-        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        foot.set_halign(Gtk.Align.END)
-        grip = Gtk.Label(label="⤡")
-        grip.set_tooltip_text("arraste p/ redimensionar (mais colunas/linhas pro agente)")
-        grip.set_cursor(Gdk.Cursor.new_from_name("nwse-resize", None))
-        rg = Gtk.GestureDrag()
-        rg.connect("drag-begin", self._resize_node_begin, nid)
-        rg.connect("drag-update", self._resize_node_update, nid)
-        rg.connect("drag-end", self._resize_node_end, nid)
-        grip.add_controller(rg)
-        foot.append(grip)
-        box.append(foot)
+        # resize é detectado no nível do CANVAS (faixa em volta da borda) — sem widgets aqui
         frame.set_child(box)
         bx, by = self.model.position(nid, default)
         self._base_pos[nid] = (bx, by)
@@ -905,39 +900,96 @@ class CanvasWindow:
 
     # (arrastar nó: agora via o gesto do PLANO — ver _pan_begin/_pan_update/_pan_end)
 
-    # -- redimensionar um card (arrastar a alça ⤡) --
-    def _resize_node_begin(self, _g, _x, _y, nid):
-        self._resize_origin = self._node_size.get(nid, (BASE_W, BASE_H))
+    # -- redimensionar nó/nota pelo CANVAS (faixa em volta da borda; estável, sem widgets) --
+    def _resize_edge_at(self, x, y):
+        """(kind, id, edges) se o cursor está na FAIXA (±RESIZE_BAND px) da borda do card
+        SELECIONADO (nó/nota), senão None. x,y em coords do plano (= tela estável)."""
+        sel = self._selected
+        if sel is None or sel[0] not in ("node", "note"):
+            return None
+        kind, tid = sel
+        frame = self.frames.get(tid) if kind == "node" else self.note_frames.get(tid)
+        if frame is None:
+            return None
+        ok, r = frame.compute_bounds(self.plane)  # retângulo do card em coords-plano
+        if not ok:
+            return None
+        left, top = r.origin.x, r.origin.y
+        right, bottom = left + r.size.width, top + r.size.height
+        b = RESIZE_BAND
+        if not (left - b <= x <= right + b and top - b <= y <= bottom + b):
+            return None
+        edges = ""
+        if abs(y - top) <= b:
+            edges += "n"
+        elif abs(y - bottom) <= b:
+            edges += "s"
+        if abs(x - left) <= b:
+            edges += "w"
+        elif abs(x - right) <= b:
+            edges += "e"
+        return (kind, tid, edges) if edges else None
 
-    def _resize_node_update(self, _g, off_x, off_y, nid):
-        o = getattr(self, "_resize_origin", None)
-        if o is None:
-            return
-        # a alça vive na subárvore escalada por z -> off já vem em unidades-base (=/z)
-        w = max(MIN_NODE_W, o[0] + off_x)
-        h = max(MIN_NODE_H, o[1] + off_y)
-        self._node_size[nid] = (w, h)
-        frame = self.frames.get(nid)
-        term = getattr(frame, "_term", None) if frame is not None else None
-        if term is not None:
-            term.set_size_request(int(w), int(h))  # VTE reflui cols/linhas (PTY) sozinho
-        self._resize_plane()
-        self.plane.queue_draw()
+    def _update_resize_cursor(self, x, y) -> None:
+        """Cursor de resize quando o ponteiro entra na faixa da borda (senão limpa)."""
+        rz = self._resize_edge_at(x, y)
+        name = _RESIZE_CURSOR.get(rz[2]) if rz is not None else None
+        self.plane.set_cursor(Gdk.Cursor.new_from_name(name, None) if name else None)
 
-    def _resize_node_end(self, _g, _ox, _oy, nid):
-        self._resize_origin = None
-        w, h = self._node_size.get(nid, (BASE_W, BASE_H))
-        w = max(MIN_NODE_W, snap_to_grid(w, GRID))  # C3: tamanho imanta à grade
-        h = max(MIN_NODE_H, snap_to_grid(h, GRID))
-        self._node_size[nid] = (w, h)
-        frame = self.frames.get(nid)
-        term = getattr(frame, "_term", None) if frame is not None else None
-        if term is not None:
-            term.set_size_request(int(w), int(h))  # reflui VTE p/ o tamanho alinhado
-        self.model.set_node_size(nid, w, h)  # persiste o tamanho
-        self._autofit_all_groups()  # C2: grupo cresce se o nó ficou maior que ele
-        self._resize_plane()
-        self.plane.queue_draw()
+    @staticmethod
+    def _resize_rect(origin, dx, dy, edges, min_w, min_h):
+        """Novo (x,y,w,h) em unidades-base ao arrastar `edges` (n/s/e/w). Borda oposta fica
+        ancorada: arrastar W/N muda tamanho E posição; E/S só muda tamanho. Respeita o piso."""
+        x0, y0, w0, h0 = origin
+        w1 = w0 + dx if "e" in edges else (w0 - dx if "w" in edges else w0)
+        h1 = h0 + dy if "s" in edges else (h0 - dy if "n" in edges else h0)
+        w1 = max(min_w, w1)
+        h1 = max(min_h, h1)
+        x1 = x0 + (w0 - w1) if "w" in edges else x0  # ancora a borda direita
+        y1 = y0 + (h0 - h1) if "n" in edges else y0  # ancora a borda inferior
+        return x1, y1, w1, h1
+
+    def _resize_min(self, kind):
+        return (MIN_NODE_W, MIN_NODE_H) if kind == "node" else (MIN_NOTE_W, MIN_NOTE_H)
+
+    def _item_resize_origin(self, kind, tid):
+        """(x, y, w, h) base do card: posição + tamanho do terminal (nó) / corpo (nota)."""
+        if kind == "node":
+            x, y = self._base_pos.get(tid, (0.0, 0.0))
+            w, h = self._node_size.get(tid, (BASE_W, BASE_H))
+        else:
+            frame = self.note_frames.get(tid)
+            w, h = frame._body_scroll.get_size_request() if frame is not None else (0, 0)
+            if w <= 0 or h <= 0:
+                w, h = NOTE_W_DEFAULT, NOTE_H_DEFAULT
+            x, y = self._note_base.get(tid, (0.0, 0.0))
+        return (x, y, w, h)
+
+    def _item_resize_apply(self, kind, tid, x, y, w, h) -> None:
+        frame = self.frames.get(tid) if kind == "node" else self.note_frames.get(tid)
+        if kind == "node":
+            self._node_size[tid] = (w, h)
+            self._base_pos[tid] = (x, y)
+            term = getattr(frame, "_term", None) if frame is not None else None
+            if term is not None:
+                term.set_size_request(int(w), int(h))  # VTE reflui cols/linhas
+        else:
+            self._note_base[tid] = (x, y)
+            if frame is not None:
+                frame._body_scroll.set_size_request(int(w), int(h))
+        if frame is not None:
+            self._place(frame, (x, y), self.model.zoom())
+
+    def _item_resize_persist(self, kind, tid, x, y, w, h) -> None:
+        if kind == "node":
+            self.model.set_node_size(tid, w, h)
+            self.model.set_position(tid, x, y)
+        elif self.notes is not None:
+            note = self.notes.get(tid)
+            if note is not None:
+                note.width, note.height = float(w), float(h)
+                note.x, note.y = float(x), float(y)
+                self.notes.save(note)
 
     def _maybe_rename(self, _gesture, n_press, _x, _y, nid):
         if n_press >= 2:  # duplo-clique
@@ -1082,10 +1134,13 @@ class CanvasWindow:
         if new is not None:
             new.add_css_class("selected")
         self._update_note_ctx()  # mostra/esconde a pílula de contexto da nota
+        if sel is None or sel[0] not in ("node", "note"):
+            self.plane.set_cursor(None)  # limpa o cursor de resize ao desmarcar
 
     def _on_motion(self, _c, x, y):
         """Rastreia qual elemento está sob o cursor (p/ rotear o scroll do SELECT+trackball)."""
         self._ptr_over = self._elem_at(self.plane.pick(x, y, Gtk.PickFlags.DEFAULT))
+        self._update_resize_cursor(x, y)  # cursor de resize na faixa da borda do selecionado
 
     def _on_canvas_click(self, _g, n_press, x, y):
         if n_press < 2:  # só duplo-clique
@@ -1100,6 +1155,16 @@ class CanvasWindow:
 
     def _pan_begin(self, gesture, x, y):
         # x,y vêm em coords do scrolled (que NÃO rola) = coords de TELA -> estável.
+        self._item_resize = None
+        rz = self._resize_edge_at(x, y)  # faixa da borda do card SELECIONADO → resize
+        if rz is not None:
+            kind, tid, edges = rz
+            self._item_resize = {
+                "kind": kind, "id": tid, "edges": edges,
+                "origin": self._item_resize_origin(kind, tid),
+            }
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            return
         picked = self.plane.pick(x, y, Gtk.PickFlags.DEFAULT)
         self._select(self._elem_at(picked))  # pressionar seleciona o nó/nota/árvore (ou limpa no fundo)
         camx, camy = self._cam
@@ -1149,6 +1214,14 @@ class CanvasWindow:
 
     def _pan_update(self, _g, off_x, off_y):
         z = self.model.zoom()
+        if getattr(self, "_item_resize", None) is not None:  # resize de nó/nota pela borda
+            r = self._item_resize
+            mw, mh = self._resize_min(r["kind"])
+            x, y, w, h = self._resize_rect(r["origin"], off_x / z, off_y / z, r["edges"], mw, mh)
+            self._item_resize_apply(r["kind"], r["id"], x, y, w, h)
+            self._resize_plane()
+            self.plane.queue_draw()
+            return
         if self._group_resize is not None:  # C2: redimensiona o grupo
             gid, o = self._group_resize["id"], self._group_resize["size"]
             w = max(GROUP_MIN_W, o[0] + off_x / z)
@@ -1194,6 +1267,27 @@ class CanvasWindow:
         self._reposition_all()
 
     def _pan_end(self, _g, _ox, _oy):
+        if getattr(self, "_item_resize", None) is not None:  # fim do resize de nó/nota
+            r = self._item_resize
+            self._item_resize = None
+            kind, tid, edges, o = r["kind"], r["id"], r["edges"], r["origin"]
+            _x, _y, w, h = self._item_resize_origin(kind, tid)  # tamanho aplicado ao vivo
+            mw, mh = self._resize_min(kind)
+            w = max(mw, snap_to_grid(w, GRID))  # imanta à grade
+            h = max(mh, snap_to_grid(h, GRID))
+            x, y = (self._base_pos if kind == "node" else self._note_base).get(tid, (0.0, 0.0))
+            if "w" in edges:  # reposiciona com o tamanho snapado mantendo a borda ancorada
+                x = o[0] + (o[2] - w)
+            if "n" in edges:
+                y = o[1] + (o[3] - h)
+            x, y = snap_point((x, y), GRID)
+            self._item_resize_apply(kind, tid, x, y, w, h)
+            self._item_resize_persist(kind, tid, x, y, w, h)
+            self._autofit_all_groups()
+            self._resize_plane()
+            self.plane.queue_draw()
+            self._mm_refresh()
+            return
         if self._group_resize is not None:  # C2: fim do resize MANUAL do grupo (vira o piso)
             gid = self._group_resize["id"]
             self._group_resize = None
@@ -2193,7 +2287,9 @@ class CanvasWindow:
         scroller = Gtk.ScrolledWindow()
         scroller.add_css_class("note-scroll")
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_size_request(200, 110)
+        nw = max(MIN_NOTE_W, getattr(note, "width", NOTE_W_DEFAULT) or NOTE_W_DEFAULT)
+        nh = max(MIN_NOTE_H, getattr(note, "height", NOTE_H_DEFAULT) or NOTE_H_DEFAULT)
+        scroller.set_size_request(int(nw), int(nh))  # tamanho salvo (resize persistido)
         scroller.set_child(body)
         frame._body_scroll = scroller
         overlay = Gtk.Overlay()
@@ -2224,6 +2320,7 @@ class CanvasWindow:
             rrow.append(acombo)
             rrow.append(rb)
             box.append(rrow)
+        # resize é detectado no nível do CANVAS (faixa em volta da borda) — sem widgets aqui
         frame.set_child(box)
         # note.x/note.y são coords-base; o zoom escala como nos nós (P5)
         self._note_base[note.id] = (note.x, note.y)
@@ -2408,6 +2505,7 @@ class CanvasWindow:
         dup = self.notes.create(src.title, src.body, x=bx + 30, y=by + 30)
         dup.color = src.color
         dup.font = src.font
+        dup.width, dup.height = src.width, src.height
         self.notes.save(dup)
         self._add_note_widget(dup)
 
