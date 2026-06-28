@@ -901,18 +901,39 @@ class CanvasWindow:
 
     # (arrastar nó: agora via o gesto do PLANO — ver _pan_begin/_pan_update/_pan_end)
 
-    # -- redimensionar um card (arrastar a alça ⤡) --
-    def _resize_node_begin(self, _g, _x, _y, nid, edges):
+    # -- rastreio do cursor em coords ESTÁVEIS do plano (não no widget que se move durante o
+    #    resize por N/W) — evita realimentação/tremor; compute_point aplica o transform atual --
+    def _resize_track_begin(self, g, sx, sy) -> None:
+        grip = g.get_widget()
+        ok, p = grip.compute_point(self.plane, Graphene.Point().init(sx, sy))
+        self._resize_start_plane = (p.x, p.y) if ok else (0.0, 0.0)
+
+    def _resize_delta(self, g):
+        """Delta do arraste em unidades-base, medido no plano (estável)."""
+        grip = g.get_widget()
+        ok, cx, cy = g.get_point(g.get_current_sequence())
+        if not ok:
+            return None
+        ok2, p = grip.compute_point(self.plane, Graphene.Point().init(cx, cy))
+        if not ok2:
+            return None
+        z = self.model.zoom() or 1.0
+        sx, sy = getattr(self, "_resize_start_plane", (0.0, 0.0))
+        return ((p.x - sx) / z, (p.y - sy) / z)
+
+    # -- redimensionar um card (arrastar a borda; reposiciona em N/W) --
+    def _resize_node_begin(self, g, sx, sy, nid, edges):
         x, y = self._base_pos.get(nid, (0.0, 0.0))
         w, h = self._node_size.get(nid, (BASE_W, BASE_H))
         self._resize_origin = (x, y, w, h)
+        self._resize_track_begin(g, sx, sy)
 
-    def _resize_node_update(self, _g, dx, dy, nid, edges):
+    def _resize_node_update(self, g, _ox, _oy, nid, edges):
         o = getattr(self, "_resize_origin", None)
-        if o is None:
+        d = self._resize_delta(g)
+        if o is None or d is None:
             return
-        # a alça vive na subárvore escalada por z -> off já vem em unidades-base (=/z)
-        x, y, w, h = self._resize_rect(o, dx, dy, edges, MIN_NODE_W, MIN_NODE_H)
+        x, y, w, h = self._resize_rect(o, d[0], d[1], edges, MIN_NODE_W, MIN_NODE_H)
         self._node_size[nid] = (w, h)
         self._base_pos[nid] = (x, y)
         frame = self.frames.get(nid)
@@ -999,7 +1020,7 @@ class CanvasWindow:
         for h in getattr(frame, "_resize_handles", ()):  # noqa: E741 (h = handle)
             h.set_visible(visible)
 
-    def _resize_note_begin(self, _g, _x, _y, nid, edges):
+    def _resize_note_begin(self, g, sx, sy, nid, edges):
         frame = self.note_frames.get(nid)
         if frame is None:
             return
@@ -1008,15 +1029,17 @@ class CanvasWindow:
             w, h = NOTE_W_DEFAULT, NOTE_H_DEFAULT
         x, y = self._note_base.get(nid, (0.0, 0.0))
         self._resize_origin = (x, y, w, h)
+        self._resize_track_begin(g, sx, sy)
 
-    def _resize_note_update(self, _g, dx, dy, nid, edges):
+    def _resize_note_update(self, g, _ox, _oy, nid, edges):
         o = getattr(self, "_resize_origin", None)
-        if o is None:
+        d = self._resize_delta(g)
+        if o is None or d is None:
             return
         frame = self.note_frames.get(nid)
         if frame is None:
             return
-        x, y, w, h = self._resize_rect(o, dx, dy, edges, MIN_NOTE_W, MIN_NOTE_H)
+        x, y, w, h = self._resize_rect(o, d[0], d[1], edges, MIN_NOTE_W, MIN_NOTE_H)
         frame._body_scroll.set_size_request(int(w), int(h))
         self._note_base[nid] = (x, y)
         self._place(frame, (x, y), self.model.zoom())
