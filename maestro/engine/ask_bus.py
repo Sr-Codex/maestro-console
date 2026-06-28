@@ -97,6 +97,46 @@ def install_ask_skill(workspace: str | Path, node: str) -> None:
             f.write(f"{sep}\n{text}\n")
 
 
+NOTES_SKILL_BEGIN = "<!-- maestro-notes:begin -->"
+NOTES_SKILL_END = "<!-- maestro-notes:end -->"
+
+
+def connected_notes_skill_text(node: str, notes: list[tuple[str, str]]) -> str:
+    """Bloco que lista as NOTAS ligadas a `node` por cabo. `notes` = [(título, caminho_rel)]."""
+    lines = [
+        NOTES_SKILL_BEGIN,
+        "## Notas conectadas (cabo)",
+        f"Você é '{node}'. Estas notas do canvas estão LIGADAS a você por cabo.",
+        "Prefira LER e EDITAR estes arquivos markdown; suas edições voltam para a nota no canvas:",
+    ]
+    if notes:
+        lines += [f'- "{title or "(sem título)"}" → {rel}' for title, rel in notes]
+    else:
+        lines.append("- (nenhuma nota conectada no momento)")
+    lines.append(NOTES_SKILL_END)
+    return "\n".join(lines)
+
+
+def install_connected_notes_skill(
+    workspace: str | Path, node: str, notes: list[tuple[str, str]]
+) -> None:
+    """Escreve/SUBSTITUI o bloco de notas conectadas no CLAUDE.md/AGENTS.md do workspace.
+    Diferente do maestro-ask (append-once): conexões mudam, então o bloco é regravado."""
+    text = connected_notes_skill_text(node, notes)
+    for fname in ("CLAUDE.md", "AGENTS.md"):
+        p = Path(workspace) / fname
+        existing = p.read_text(encoding="utf-8") if p.exists() else ""
+        if NOTES_SKILL_BEGIN in existing and NOTES_SKILL_END in existing:
+            pre = existing[: existing.index(NOTES_SKILL_BEGIN)]
+            post = existing[existing.index(NOTES_SKILL_END) + len(NOTES_SKILL_END):]
+            new = pre + text + post
+        else:
+            sep = "" if not existing or existing.endswith("\n") else "\n"
+            new = existing + f"{sep}\n{text}\n"
+        if new != existing:  # guard: evita churn de mtime quando nada mudou
+            p.write_text(new, encoding="utf-8")
+
+
 def _check_id(rid: object) -> str:
     if not isinstance(rid, str) or not _SAFE_ID.match(rid):
         raise AskBusError(f"id inválido: {rid!r}")

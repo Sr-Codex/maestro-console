@@ -186,3 +186,26 @@ def to_base(display: tuple[float, float], zoom: float) -> tuple[float, float]:
     """Posição no plano -> coordenada-base: base = display / zoom (zoom<=0 cai p/ 1.0)."""
     z = zoom if zoom and zoom > 0 else 1.0  # 'or' deixava passar negativos
     return (display[0] / z, display[1] / z)
+
+
+def connected_notes(edges, node_id: str, note_ids) -> set:
+    """Ids de NOTAS ligadas por cabo a `node_id`. `edges` = lista (src,dst); `note_ids` =
+    conjunto de ids de nota conhecidos. Sem GTK (testável)."""
+    out = set()
+    for a, b in edges:
+        if a == node_id and b in note_ids:
+            out.add(b)
+        elif b == node_id and a in note_ids:
+            out.add(a)
+    return out
+
+
+def nodes_for_note(edges, note_id: str, node_ids) -> set:
+    """Ids de NÓS ligados por cabo a `note_id`."""
+    out = set()
+    for a, b in edges:
+        if a == note_id and b in node_ids:
+            out.add(b)
+        elif b == note_id and a in node_ids:
+            out.add(a)
+    return out

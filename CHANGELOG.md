@@ -3,6 +3,21 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.33.0] — Nota conectada: agente lê/escreve + sabe que tem nota — Fase 4b
+- **O agente lê e escreve a nota conectada:** cada nota ligada a um nó vira o arquivo
+  `<workspace>/notes/<id>.md` (markdown) no workspace do agente — ele lê/edita como arquivo normal.
+- **O agente SABE que tem nota conectada:** bloco delimitado (`<!-- maestro-notes -->`) no
+  `AGENTS.md`/`CLAUDE.md` do workspace lista as notas ligadas (título + caminho) — regravado quando
+  as conexões mudam (`install_connected_notes_skill`).
+- **Sincronização nos 2 sentidos:** edição do usuário no canvas reescreve o(s) arquivo(s)
+  (`_save_note` → fan-out); edição do agente no arquivo volta pra nota por **poll de 500ms**
+  (`_note_files_tick` → `file_to_note`), com a UI atualizando (sem clobber se você está digitando).
+- **Conflito:** last-writer por mtime (só adota o arquivo se `mtime > a que gravamos`). **Isolamento:**
+  o `notes/` de um nó só tem as notas ligadas a ele. Nota em vários nós = cópia por nó (fan-out).
+- **Limpeza:** desconectar/apagar poda o arquivo e atualiza o manifesto (`_prune_node_note_files`).
+- Reusa `note_to_file`/`file_to_note`, o padrão do `install_ask_skill` e do `start_ask_watcher`.
+  Funções puras `connected_notes`/`nodes_for_note` (`state.py`). Nó shell-only não recebe notas.
+
 ## [0.32.0] — Conectar NOTA por cabo (visual) — Fase 4a
 - **Cabo nota↔nó:** no modo conectar (🔌 / Ctrl+Shift+L), clicar em **qualquer área** de um nó ou
   **nota** liga o cabo (usa `_elem_at`); `_connect_pick` generalizado p/ `(kind, id)`. O bezier é

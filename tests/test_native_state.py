@@ -5,13 +5,26 @@ from maestro.native.state import (
     GRID,
     CanvasModel,
     cable_bezier,
+    connected_notes,
     minimap_layout,
+    nodes_for_note,
     snap_point,
     snap_to_grid,
     state_activity,
     to_base,
     to_display,
 )
+
+
+def test_connected_notes_e_nodes_for_note():
+    edges = [("note-a", "node-1"), ("node-2", "note-a"), ("node-1", "node-2"), ("ft-x", "note-a")]
+    note_ids = {"note-a", "note-b"}
+    node_ids = {"node-1", "node-2"}
+    # notas ligadas ao node-1: só note-a (ignora node↔node e ft)
+    assert connected_notes(edges, "node-1", note_ids) == {"note-a"}
+    # nós ligados à note-a: node-1 e node-2 (ignora ft-x e ids desconhecidos)
+    assert nodes_for_note(edges, "note-a", node_ids) == {"node-1", "node-2"}
+    assert connected_notes(edges, "node-9", note_ids) == set()  # nó sem cabo
 
 
 def test_minimap_layout_vazio_e_encaixe():
