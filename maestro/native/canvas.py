@@ -2284,7 +2284,6 @@ class CanvasWindow:
         overlay = Gtk.Overlay()
         overlay.set_child(scroller)
         overlay.add_overlay(ph)
-        self._build_note_resize_handles(frame, overlay)  # alças (só visíveis qd selecionado)
         buf = body.get_buffer()
         ph.set_visible(buf.get_char_count() == 0)
         buf.connect("changed", lambda b, lbl=ph: lbl.set_visible(b.get_char_count() == 0))
@@ -2310,7 +2309,12 @@ class CanvasWindow:
             rrow.append(acombo)
             rrow.append(rb)
             box.append(rrow)
-        frame.set_child(box)
+        # alças de resize nas BORDAS do card (na linha da seleção, não sobre o texto):
+        # overlay EXTERNO envolvendo o card inteiro
+        outer = Gtk.Overlay()
+        outer.set_child(box)
+        self._build_note_resize_handles(frame, outer)  # só visíveis quando selecionado
+        frame.set_child(outer)
         # note.x/note.y são coords-base; o zoom escala como nos nós (P5)
         self._note_base[note.id] = (note.x, note.y)
         self.plane.put(frame, 0, 0)  # posição real vem no transform (_place)
