@@ -2257,6 +2257,12 @@ class CanvasWindow:
         frame = Gtk.Frame()
         frame._note_id = note.id
         frame.add_css_class("node-card")  # UI-1
+        # seleciona ao clicar em QUALQUER área da nota (fase CAPTURE = antes do TextView consumir;
+        # não claima, então editar/arrastar seguem) — espelha o card de nó (v0.26.1)
+        selclick = Gtk.GestureClick()
+        selclick.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        selclick.connect("pressed", lambda *_a, n=note.id: self._select(("note", n)))
+        frame.add_controller(selclick)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         # cabeçalho = só uma FAIXA FINA (tom levemente + claro) p/ MOVER a nota (sem título,
         # sem fechar; cor/apagar ficam na pílula de contexto — estilo Maestri).

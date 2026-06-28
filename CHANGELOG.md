@@ -14,6 +14,8 @@ versionamento incremental. Datas em 2026.
   cor e fonte da nota valem nas duas. Placeholder some no modo ver.
 - Honesto: o modo "ver" é **read-only** (checkbox não clica ali; edita no "editar"); estado do
   toggle em memória (reabre em "editar"); conversor simples (cobre o que a pílula insere).
+- **Fix:** a nota agora **seleciona ao clicar em qualquer área** (não só na barra superior) —
+  `GestureClick` em fase CAPTURE no frame, espelhando o card de nó.
 
 ## [0.30.0] — Resize pela borda (nós e notas, 4 lados + cantos)
 - **Redimensionar pelas BORDAS — detecção no nível do CANVAS** (mesmo mecanismo do resize de
