@@ -280,7 +280,7 @@ class CanvasWindow:
         self.frames: dict[str, Gtk.Widget] = {}
         self.order: list[str] = []
         self._connect_mode = False
-        self._connect_src: str | None = None
+        self._connect_src: tuple[str, str] | None = None  # (kind, id) da origem do cabo
         self._pan = None  # estado do pan da vista (fundo)
         self._drag = None  # estado do arrasto de nó (via gesto do plano, estável)
         self._note_pinned: set[str] = set()  # notas fixadas (não arrastam) — C4
@@ -1041,8 +1041,9 @@ class CanvasWindow:
             self.order.remove(nid)
         self.heads.pop(nid, None)
         self._base_pos.pop(nid, None)
-        if self._connect_src == nid:
+        if self._connect_src is not None and self._connect_src[1] == nid:
             self._cancel_connect()
+        self._remove_edges_for(nid)  # tira cabos órfãos do store (+ hook 4b)
         term = getattr(frame, "_term", None)
         if term is not None and term in self.terms:
             self.terms.remove(term)
@@ -1173,6 +1174,12 @@ class CanvasWindow:
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
             return
         picked = self.plane.pick(x, y, Gtk.PickFlags.DEFAULT)
+        if self._connect_mode:  # modo conectar: clicar em QUALQUER área do nó/nota liga o cabo
+            el = self._elem_at(picked)
+            if el is not None and el[0] in ("node", "note"):
+                self._connect_pick(el[0], el[1])
+                gesture.set_state(Gtk.EventSequenceState.DENIED)
+                return
         self._select(self._elem_at(picked))  # pressionar seleciona o nó/nota/árvore (ou limpa no fundo)
         camx, camy = self._cam
         px, py = x - camx, y - camy  # coords base*zoom (p/ hit-test de grupo)
@@ -1180,12 +1187,8 @@ class CanvasWindow:
         self._drag = None
         self._group_resize = None
         target = self._drag_handle(picked)
-        if target is not None:  # alça: conectar (nó, se no modo) ou mover
+        if target is not None:  # alça: mover (conexão é tratada acima, no modo conectar)
             kind, tid = target
-            if kind == "node" and self._connect_mode:
-                self._connect_pick(tid)
-                gesture.set_state(Gtk.EventSequenceState.DENIED)
-                return
             # pertença ao grupo é decidida pelo CURSOR ao vivo (simétrico): ENTRA quando o
             # cursor entra no grupo, SAI quando o cursor não está sobre nenhum. Ctrl só
             # CONGELA o auto-fit (grupo não persegue) p/ dar pra sair limpo.
@@ -1519,18 +1522,23 @@ class CanvasWindow:
             self._cancel_connect()
         self._update_hintbar()
 
-    def _connect_pick(self, nid: str) -> None:
-        """1º clique escolhe a origem; 2º cria (ou remove, se já existe) o cabo."""
+    def _connect_pick(self, kind: str, nid: str) -> None:
+        """1º clique escolhe a origem; 2º cria (ou remove, se já existe) o cabo. Aceita
+        nó ou NOTA como endpoint (edges guardam ids string)."""
         if self.edges is None:
             return
         if self._connect_src is None:
-            self._connect_src = nid
-            self.set_node_state(nid, "busy")  # realça a origem pendente
+            self._connect_src = (kind, nid)
+            if kind == "node":
+                self.set_node_state(nid, "busy")  # realça a origem pendente (nota usa seleção)
+            else:
+                self._select(("note", nid))
             self._update_hintbar()  # B2: agora "clique no DESTINO"
             return
-        src, dst = self._connect_src, nid
+        (skind, src), (dkind, dst) = self._connect_src, (kind, nid)
         self._connect_src = None
-        self.set_node_state(src, "idle")
+        if skind == "node":
+            self.set_node_state(src, "idle")
         self._update_hintbar()
         if src == dst:
             return
@@ -1541,14 +1549,35 @@ class CanvasWindow:
             self.edges.remove(dst, src)
             self._edge_state.pop((src, dst), None)
             self._edge_state.pop((dst, src), None)
+            self._on_cable_removed(src, dst)  # hook (4b); no-op no 4a
         else:
             self.edges.add(src, dst)
-            self._ask_hint(src, dst)  # avisa os terminais sobre o maestro-ask (ADR-11)
+            if skind == "node" and dkind == "node":
+                self._ask_hint(src, dst)  # cabo IA↔IA: maestro-ask (ADR-11)
+            else:
+                self._on_note_cable_added(src, dst, skind, dkind)  # hook (4b); no-op no 4a
         self.plane.queue_draw()
+
+    def _on_cable_removed(self, a: str, b: str) -> None:
+        """Hook ao remover um cabo (4b: rematerializa o nó p/ podar a nota). No-op no 4a."""
+
+    def _on_note_cable_added(self, src: str, dst: str, skind: str, dkind: str) -> None:
+        """Hook ao criar um cabo nota↔nó (4b: materializa a nota no workspace). No-op no 4a."""
+
+    def _remove_edges_for(self, eid: str) -> None:
+        """Remove do store todos os cabos que tocam `eid` (ao apagar nó/nota)."""
+        if self.edges is None:
+            return
+        for a, b in list(self.edges.list()):
+            if a == eid or b == eid:
+                self.edges.remove(a, b)
+                self._edge_state.pop((a, b), None)
+                self._on_cable_removed(a, b)  # hook (4b); no-op no 4a
 
     def _cancel_connect(self) -> None:
         if self._connect_src is not None:
-            self.set_node_state(self._connect_src, "idle")
+            if self._connect_src[0] == "node":
+                self.set_node_state(self._connect_src[1], "idle")
             self._connect_src = None
         self._update_hintbar()
 
@@ -1794,6 +1823,10 @@ class CanvasWindow:
             nw, nh = self._node_size.get(nid, (BASE_W, BASE_H))
             dx, dy = to_display((bx, by), z)
             rects.append((dx, dy, dx + nw * z, dy + nh * z))
+        for note_id in self._note_base:  # notas entram no bbox (cabo até nota distante)
+            nb = self._cable_box(note_id, z)
+            if nb is not None:
+                rects.append((nb[0], nb[1], nb[0] + nb[2], nb[1] + nb[3]))
         for gid in self._group_base:
             gx, gy, gw, gh = self._group_disp_rect(gid)
             rects.append((gx, gy, gx + gw, gy + gh))
@@ -1806,16 +1839,26 @@ class CanvasWindow:
         pad = 60.0
         return (x0 - pad, y0 - pad, (x1 - x0) + 2 * pad, (y1 - y0) + 2 * pad)
 
+    def _cable_box(self, eid, z):
+        """(x,y,w,h) em coords-tela do endpoint de cabo (NÓ ou NOTA), ou None se ausente."""
+        if eid in self.frames:  # nó
+            bx, by = to_display(self._base_pos.get(eid, (0.0, 0.0)), z)
+            nw, nh = self._node_size.get(eid, (BASE_W, BASE_H))
+            return (bx, by, nw * z, nh * z)
+        if eid in self.note_frames:  # nota: posição base + tamanho do corpo (scroller)
+            bx, by = to_display(self._note_base.get(eid, (0.0, 0.0)), z)
+            fr = self.note_frames.get(eid)
+            w, h = fr._body_scroll.get_size_request() if fr is not None else (0, 0)
+            if w <= 0 or h <= 0:
+                w, h = NOTE_W_DEFAULT, NOTE_H_DEFAULT
+            return (bx, by, w * z, h * z)
+        return None
+
     # -- cabos (handoffs): desenhados no snapshot do _Plane --
     def _draw_cables_cr(self, cr):
         z = self.model.zoom()
         # grid agora é background CSS (GPU), não cairo — ver _apply_grid()
         self._draw_groups_cr(cr)  # C2: grupos/áreas, atrás dos cabos e dos nós
-
-        def box(nid):  # (x,y,w,h) no plano = base*zoom + tamanho do nó * zoom
-            bx, by = to_display(self._base_pos.get(nid, (0.0, 0.0)), z)
-            nw, nh = self._node_size.get(nid, (BASE_W, BASE_H))
-            return (bx, by, nw * z, nh * z)
 
         # SÓ cabos EXPLÍCITOS do usuário (sem auto-conexão por ordem): o usuário
         # decide se/quem conectar (modo conectar). Cor azul; estado durante handoff.
@@ -1823,7 +1866,8 @@ class CanvasWindow:
         if self.edges is not None:
             cr.set_line_width(2.5)
             for src, dst in self.edges.list():
-                if src not in self.frames or dst not in self.frames:
+                sbox, dbox = self._cable_box(src, z), self._cable_box(dst, z)
+                if sbox is None or dbox is None:  # endpoint ausente (nó/nota inexistente)
                     continue
                 st = self._edge_state.get((src, dst))
                 if st is not None:
@@ -1831,7 +1875,7 @@ class CanvasWindow:
                     cr.set_source_rgb(c.red, c.green, c.blue)
                 else:
                     cr.set_source_rgb(0.23, 0.51, 0.96)
-                x0, y0, c1x, c1y, c2x, c2y, x3, y3 = cable_bezier(box(src), box(dst))
+                x0, y0, c1x, c1y, c2x, c2y, x3, y3 = cable_bezier(sbox, dbox)
                 cr.move_to(x0, y0)
                 cr.curve_to(c1x, c1y, c2x, c2y, x3, y3)
                 cr.stroke()
@@ -2448,6 +2492,9 @@ class CanvasWindow:
             return
         if self.notes is not None:
             self.notes.delete(note_id)
+        self._remove_edges_for(note_id)  # tira cabos órfãos do store (+ hook 4b)
+        if self._connect_src is not None and self._connect_src[1] == note_id:
+            self._cancel_connect()
         self.note_frames.pop(note_id, None)
         self._note_base.pop(note_id, None)
         self._note_pinned.discard(note_id)
