@@ -470,9 +470,11 @@ class CanvasWindow:
             " background-color: rgba(255,255,255,0.06); padding: 6px; }",
             ".note-morecolors:hover { background-color: rgba(255,255,255,0.12); }",
             ".note-poprow-sep { background-color: rgba(255,255,255,0.10); min-height: 1px; }",
-            # alças de resize da nota (só visíveis quando selecionada): sutil, realça no hover
-            ".note-resize { background-color: rgba(137,180,250,0.0); border-radius: 3px; }",
-            ".note-resize:hover { background-color: rgba(137,180,250,0.55); }",
+            # alças de resize (só quando selecionado): quadradinhos brancos c/ borda azul, na
+            # linha — padrão de apps de design (Figma/Canvas X). Realçam no hover.
+            ".note-resize { background-color: #f5f5f5; border: 1px solid #89b4fa;"
+            " border-radius: 2px; }",
+            ".note-resize:hover { background-color: #89b4fa; }",
         ]
         for i, hexc in enumerate(NOTE_PALETTE):  # swatches circulares da paleta v2
             rules.append(f".palsw-{i} {{ background-color: {hexc}; }}")
@@ -956,21 +958,22 @@ class CanvasWindow:
     def _build_resize_handles(self, overlay, iid, begin, update, end) -> tuple:
         """3 alças nas bordas (direita/inferior/canto) sobre o overlay EXTERNO do card → ficam
         na linha da seleção. Subárvore escalada → offsets do GestureDrag em unidades-base."""
-        st, en, fi = Gtk.Align.START, Gtk.Align.END, Gtk.Align.FILL
-        specs = [  # (w,h,halign,valign,cursor,edges) — bordas antes; cantos por último (no topo)
-            (-1, 6, fi, st, "ns-resize", "n"),
-            (-1, 6, fi, en, "ns-resize", "s"),
-            (6, -1, en, fi, "ew-resize", "e"),
-            (6, -1, st, fi, "ew-resize", "w"),
-            (14, 14, st, st, "nwse-resize", "nw"),
-            (14, 14, en, st, "nesw-resize", "ne"),
-            (14, 14, st, en, "nesw-resize", "sw"),
-            (14, 14, en, en, "nwse-resize", "se"),
+        st, ce, en = Gtk.Align.START, Gtk.Align.CENTER, Gtk.Align.END
+        sq = 11  # quadradinho de alça (padrão de apps de design: cantos + meio dos lados)
+        specs = [  # (halign, valign, cursor, edges) — 4 cantos + 4 meios de borda
+            (st, st, "nwse-resize", "nw"),
+            (ce, st, "ns-resize", "n"),
+            (en, st, "nesw-resize", "ne"),
+            (en, ce, "ew-resize", "e"),
+            (en, en, "nwse-resize", "se"),
+            (ce, en, "ns-resize", "s"),
+            (st, en, "nesw-resize", "sw"),
+            (st, ce, "ew-resize", "w"),
         ]
         handles = []
-        for w, h, ha, va, cur, edges in specs:
+        for ha, va, cur, edges in specs:
             grip = Gtk.DrawingArea()
-            grip.set_size_request(w, h)
+            grip.set_size_request(sq, sq)
             grip.set_halign(ha)
             grip.set_valign(va)
             grip.add_css_class("note-resize")
