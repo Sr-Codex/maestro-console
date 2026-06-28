@@ -28,12 +28,23 @@ gi.require_version("Vte", "3.91")
 gi.require_version("Pango", "1.0")
 from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Pango, Vte  # noqa: E402
 
-from ..engine.ask_bus import AskBus, install_ask_skill, install_client  # noqa: E402
+from ..engine.ask_bus import (  # noqa: E402
+    AskBus,
+    install_ask_skill,
+    install_client,
+    install_connected_notes_skill,
+)
 from ..engine.ask_router import AskRouter, policy_from_env  # noqa: E402
 from ..engine.attention import attention_items, notify  # noqa: E402
 from ..engine.envelope import EnvelopeState  # noqa: E402
 from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
-from ..engine.notes import md_line_prefix, md_to_pango, md_wrap  # noqa: E402
+from ..engine.notes import (  # noqa: E402
+    file_to_note,
+    md_line_prefix,
+    md_to_pango,
+    md_wrap,
+    note_to_file,
+)
 from ..engine.state.store import Store  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from ..engine.workspace_registry import WorkspaceRegistry  # noqa: E402
@@ -65,7 +76,9 @@ from .state import (  # noqa: E402
     CanvasModel,
     EdgeModel,
     cable_bezier,
+    connected_notes,
     minimap_layout,
+    nodes_for_note,
     snap_point,
     snap_to_grid,
     state_activity,
@@ -281,6 +294,7 @@ class CanvasWindow:
         self.order: list[str] = []
         self._connect_mode = False
         self._connect_src: tuple[str, str] | None = None  # (kind, id) da origem do cabo
+        self._note_file_mtime: dict[tuple[str, str], float] = {}  # (nid,note_id)->mtime gravada
         self._pan = None  # estado do pan da vista (fundo)
         self._drag = None  # estado do arrasto de nó (via gesto do plano, estável)
         self._note_pinned: set[str] = set()  # notas fixadas (não arrastam) — C4
@@ -1559,10 +1573,108 @@ class CanvasWindow:
         self.plane.queue_draw()
 
     def _on_cable_removed(self, a: str, b: str) -> None:
-        """Hook ao remover um cabo (4b: rematerializa o nó p/ podar a nota). No-op no 4a."""
+        """Ao remover um cabo: rematerializa o(s) nó(s) p/ podar a nota desligada."""
+        for nid in (a, b):
+            if nid in self.frames:
+                self._materialize_node_notes(nid)
 
     def _on_note_cable_added(self, src: str, dst: str, skind: str, dkind: str) -> None:
-        """Hook ao criar um cabo nota↔nó (4b: materializa a nota no workspace). No-op no 4a."""
+        """Ao criar cabo nota↔nó: materializa a nota no workspace do nó + avisa o agente."""
+        nid = src if skind == "node" else (dst if dkind == "node" else None)
+        if nid is not None:
+            self._materialize_node_notes(nid)
+
+    # -- Fase 4b: nota conectada vira arquivo no workspace do agente (ler/escrever + ciência) --
+    def _node_ws(self, nid: str):
+        base_home = Path(self._ask_bus_dir).parent
+        return Workspace(str(base_home / "workspaces")).path(nid)
+
+    def _materialize_node_notes(self, nid: str) -> None:
+        """Grava as notas ligadas ao nó como notes/<id>.md no workspace + atualiza o manifesto."""
+        if self.notes is None or self.edges is None or not self._ask_bus_dir:
+            return
+        if nid not in self.frames:  # só nós-agente reais (têm workspace/AGENTS.md)
+            return
+        note_ids = connected_notes(self.edges.list(), nid, set(self.note_frames))
+        nd = self._node_ws(nid) / "notes"
+        manifest = []
+        for note_id in note_ids:
+            note = self.notes.get(note_id)
+            if note is None:
+                continue
+            p = note_to_file(note, nd, f"{note_id}.md")  # reusa engine/notes
+            self._note_file_mtime[(nid, note_id)] = p.stat().st_mtime
+            manifest.append((note.title, f"notes/{note_id}.md"))
+        self._prune_node_note_files(nid, note_ids)
+        install_connected_notes_skill(str(self._node_ws(nid)), nid, manifest)
+
+    def _prune_node_note_files(self, nid: str, keep_ids) -> None:
+        """Remove notes/<id>.md de notas que não estão mais ligadas ao nó."""
+        nd = self._node_ws(nid) / "notes"
+        if not nd.is_dir():
+            return
+        for f in nd.glob("*.md"):
+            if f.stem not in keep_ids:
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+                self._note_file_mtime.pop((nid, f.stem), None)
+
+    def _materialize_note_everywhere(self, note_id: str) -> None:
+        """Reescreve o arquivo da nota em todos os nós ligados a ela (após edição no canvas)."""
+        if self.edges is None:
+            return
+        for nid in nodes_for_note(self.edges.list(), note_id, set(self.frames)):
+            self._materialize_node_notes(nid)
+
+    def _materialize_all_connected_notes(self) -> None:
+        """Startup: materializa as notas dos cabos restaurados do banco."""
+        for nid in list(self.frames):
+            self._materialize_node_notes(nid)
+
+    def _note_files_tick(self) -> bool:
+        """Poll (500ms): se o agente editou notes/<id>.md, sincroniza de volta na nota do canvas."""
+        if self.notes is None:
+            return True
+        try:
+            for (nid, note_id), seen in list(self._note_file_mtime.items()):
+                p = self._node_ws(nid) / "notes" / f"{note_id}.md"
+                if not p.exists():
+                    continue
+                m = p.stat().st_mtime
+                if m <= seen:  # nós mesmos gravamos / sem mudança
+                    continue
+                self._note_file_mtime[(nid, note_id)] = m
+                note = self.notes.get(note_id)
+                if note is None:
+                    continue
+                updated = file_to_note(note, p.parent, p.name)
+                if updated.body == note.body and updated.title == note.title:
+                    continue
+                self.notes.save(updated)
+                self._refresh_note_widget(note_id, updated)
+                self._materialize_note_everywhere(note_id)  # propaga p/ outros nós
+        except Exception as exc:
+            _log.error("note_files_tick: %s", exc)
+        return True
+
+    def _refresh_note_widget(self, note_id: str, note) -> None:
+        """Reflete na UI uma nota alterada pelo agente (sem clobber se o usuário está digitando)."""
+        frame = self.note_frames.get(note_id)
+        if frame is None:
+            return
+        body = getattr(frame, "_body_view", None)
+        if body is not None and body.has_focus():
+            return  # usuário editando — não sobrescreve
+        if body is not None:
+            body.get_buffer().set_text(note.body)
+        ph = getattr(frame, "_note_ph", None)
+        if ph is not None:
+            ph.set_visible(not note.body.strip())
+        if getattr(frame, "_body_stack", None) is not None:  # re-renderiza no modo atual
+            view = frame._body_stack.get_visible_child_name() == "view"
+            self._set_note_view(frame, view)
 
     def _remove_edges_for(self, eid: str) -> None:
         """Remove do store todos os cabos que tocam `eid` (ao apagar nó/nota)."""
@@ -1583,7 +1695,10 @@ class CanvasWindow:
 
     # -- cabos interativos: maestro-ask (ADR-11, Fase 3) --
     def start_ask_watcher(self, interval_ms: int = 500) -> None:
-        """Liga o poll do mailbox (host roteia os 'maestro-ask' dos agentes)."""
+        """Liga o poll do mailbox (host roteia os 'maestro-ask' dos agentes) + sync das notas."""
+        # 4b: materializa notas dos cabos restaurados e liga o poll de sync agente→nota
+        self._materialize_all_connected_notes()
+        GLib.timeout_add(interval_ms, self._note_files_tick)
         if self._ask_bus is None:
             return
         self._ask_bus.cleanup(max_age_seconds=3600)  # limpa órfãos (broker sobrevive)
@@ -2418,6 +2533,7 @@ class CanvasWindow:
         note.x, note.y = self._note_base.get(frame._note_id, (0.0, 0.0))  # coords-base
         # cor/pin já persistem nos seus handlers; preserva-os (get traz do store)
         self.notes.save(note)
+        self._materialize_note_everywhere(frame._note_id)  # 4b: atualiza o arquivo nos nós ligados
         return False
 
     # -- C4 v2: cor da nota por HEX (frame pastel + faixa clara + corpo + placeholder) --
