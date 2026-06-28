@@ -22,5 +22,8 @@ dist/
 maestro/state/*.db
 maestro/state/logs/
 
+# workspaces criados em runtime (registro local de workspaces; não é fonte)
+codex/workspaces.json
+
 # spike — código descartável (benchmarks/protótipos; não faz parte do produto)
 spike/
