@@ -3,6 +3,20 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.31.0] — Nota: ver markdown formatado (toggle "M") — Fase 3
+- **Botão "M" na pílula** alterna a nota entre **editar** (texto cru com marcadores `**`, `- [ ]`…)
+  e **ver** (markdown **renderizado**: negrito, itálico, tachado, código, títulos, listas e
+  checkboxes). Antes os marcadores ficavam visíveis como texto.
+- Conversor **`md_to_pango`** (em `engine/notes.py`, puro/gi-free, **sem dependência nova**):
+  escapa `&<>`, converte blocos (`#`, `- [ ]`/`- [x]`→☐/☑, `-`/`*`→•) e inline
+  (`` ` ``→`<tt>`, `**`→`<b>`, `~~`→`<s>`, `*`→`<i>`) p/ markup do Pango.
+- O corpo vira um `Gtk.Stack` (páginas **edit** = `TextView` / **view** = `Gtk.Label` com markup);
+  cor e fonte da nota valem nas duas. Placeholder some no modo ver.
+- Honesto: o modo "ver" é **read-only** (checkbox não clica ali; edita no "editar"); estado do
+  toggle em memória (reabre em "editar"); conversor simples (cobre o que a pílula insere).
+- **Fix:** a nota agora **seleciona ao clicar em qualquer área** (não só na barra superior) —
+  `GestureClick` em fase CAPTURE no frame, espelhando o card de nó.
+
 ## [0.30.0] — Resize pela borda (nós e notas, 4 lados + cantos)
 - **Redimensionar pelas BORDAS — detecção no nível do CANVAS** (mesmo mecanismo do resize de
   grupo). Ao selecionar um card (borda azul tracejada), o cursor vira o de resize quando entra

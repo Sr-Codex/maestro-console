@@ -5,6 +5,7 @@ from maestro.engine.notes import (
     Notes,
     file_to_note,
     md_line_prefix,
+    md_to_pango,
     md_wrap,
     note_to_file,
     parse_markdown,
@@ -170,6 +171,39 @@ def test_md_line_prefix_linha_do_meio():
     assert new == "linha1\n- [ ] linha2"
     assert new[7:13] == "- [ ] "  # prefixo no início da 2ª linha
     assert ncur == 15  # cursor acompanha o deslocamento (+6)
+
+
+# -- render markdown -> Pango (Fase 3) --------------------------------
+def test_md_to_pango_inline():
+    assert md_to_pango("**oi**") == "<b>oi</b>"
+    assert md_to_pango("*oi*") == "<i>oi</i>"
+    assert md_to_pango("~~oi~~") == "<s>oi</s>"
+    assert md_to_pango("`x`") == "<tt>x</tt>"
+
+
+def test_md_to_pango_blocos():
+    assert md_to_pango("# Título") == '<span size="larger" weight="bold">Título</span>'
+    assert md_to_pango("- [ ] a") == "☐ a"
+    assert md_to_pango("- [x] b") == "☑ b"
+    assert md_to_pango("- item") == "• item"
+    assert md_to_pango("* item") == "• item"
+
+
+def test_md_to_pango_escapa_entidades():
+    # <, &, > viram entidades ANTES de inserir tags (senão quebra o markup do Pango)
+    assert md_to_pango("a < b & c > d") == "a &lt; b &amp; c &gt; d"
+    assert md_to_pango("**a & b**") == "<b>a &amp; b</b>"
+
+
+def test_md_to_pango_multilinha_e_combinado():
+    assert md_to_pango("**a**\n- x") == "<b>a</b>\n• x"
+    assert md_to_pango("# T\n`c` e *i*") == (
+        '<span size="larger" weight="bold">T</span>\n<tt>c</tt> e <i>i</i>'
+    )
+
+
+def test_md_to_pango_vazio():
+    assert md_to_pango("") == ""
 
 
 # -- agent-to-note (ponte arquivo) ------------------------------------
