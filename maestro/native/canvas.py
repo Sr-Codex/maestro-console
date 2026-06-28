@@ -76,6 +76,8 @@ from .toolbar import action_menu_items  # noqa: E402
 
 BASE_W, BASE_H = 420, 220
 MIN_NODE_W, MIN_NODE_H = 240, 120  # piso ao redimensionar um card (arrastar a alça ⤡)
+MIN_NOTE_W, MIN_NOTE_H = 160, 90  # piso ao redimensionar uma nota
+NOTE_W_DEFAULT, NOTE_H_DEFAULT = 200, 110  # tamanho padrão do corpo da nota
 PAN_SCROLL_STEP = 90.0  # px de pan por unidade de scroll (SELECT + trackball) — velocidade do pan
 # estado do envelope (passo done) -> estado visual do nó
 _ST_MAP = {"DONE": "done", "BLOCKED": "blocked", "FAILED": "failed", "NEEDS_INPUT": "blocked"}
@@ -468,6 +470,9 @@ class CanvasWindow:
             " background-color: rgba(255,255,255,0.06); padding: 6px; }",
             ".note-morecolors:hover { background-color: rgba(255,255,255,0.12); }",
             ".note-poprow-sep { background-color: rgba(255,255,255,0.10); min-height: 1px; }",
+            # alças de resize da nota (só visíveis quando selecionada): sutil, realça no hover
+            ".note-resize { background-color: rgba(137,180,250,0.0); border-radius: 3px; }",
+            ".note-resize:hover { background-color: rgba(137,180,250,0.55); }",
         ]
         for i, hexc in enumerate(NOTE_PALETTE):  # swatches circulares da paleta v2
             rules.append(f".palsw-{i} {{ background-color: {hexc}; }}")
@@ -939,6 +944,80 @@ class CanvasWindow:
         self._resize_plane()
         self.plane.queue_draw()
 
+    # -- redimensionar uma NOTA (alças que só aparecem quando selecionada) --
+    def _build_note_resize_handles(self, frame, overlay) -> None:
+        """3 alças sobre o corpo da nota (canto + bordas direita/inferior). Ficam na mesma
+        subárvore escalada → offsets do GestureDrag já vêm em unidades-base (igual ao nó)."""
+        nid = frame._note_id
+        specs = [  # (w, h, halign, valign, cursor, axis) — direita/inferior antes; canto por último
+            (6, -1, Gtk.Align.END, Gtk.Align.FILL, "ew-resize", "x"),
+            (-1, 6, Gtk.Align.FILL, Gtk.Align.END, "ns-resize", "y"),
+            (12, 12, Gtk.Align.END, Gtk.Align.END, "nwse-resize", "both"),
+        ]
+        handles = []
+        for w, h, ha, va, cur, axis in specs:
+            grip = Gtk.DrawingArea()
+            grip.set_size_request(w, h)
+            grip.set_halign(ha)
+            grip.set_valign(va)
+            grip.add_css_class("note-resize")
+            grip.set_cursor(Gdk.Cursor.new_from_name(cur, None))
+            grip.set_visible(False)
+            gd = Gtk.GestureDrag()
+            gd.connect("drag-begin", self._resize_note_begin, nid, axis)
+            gd.connect("drag-update", self._resize_note_update, nid, axis)
+            gd.connect("drag-end", self._resize_note_end, nid, axis)
+            grip.add_controller(gd)
+            overlay.add_overlay(grip)  # canto entra por último → fica no topo no pixel BR
+            handles.append(grip)
+        frame._note_handles = tuple(handles)
+
+    def _set_note_handles_visible(self, frame, visible: bool) -> None:
+        for h in getattr(frame, "_note_handles", ()):  # noqa: E741 (h = handle)
+            h.set_visible(visible)
+
+    def _resize_note_begin(self, _g, _x, _y, nid, axis):
+        frame = self.note_frames.get(nid)
+        if frame is None:
+            return
+        w, h = frame._body_scroll.get_size_request()  # tamanho vivo (base units)
+        if w <= 0 or h <= 0:
+            w, h = NOTE_W_DEFAULT, NOTE_H_DEFAULT
+        self._resize_note_origin = (w, h)
+
+    def _resize_note_update(self, _g, off_x, off_y, nid, axis):
+        o = getattr(self, "_resize_note_origin", None)
+        if o is None:
+            return
+        w = o[0] + off_x if axis in ("x", "both") else o[0]
+        h = o[1] + off_y if axis in ("y", "both") else o[1]
+        w = max(MIN_NOTE_W, w)
+        h = max(MIN_NOTE_H, h)
+        frame = self.note_frames.get(nid)
+        if frame is not None:
+            frame._body_scroll.set_size_request(int(w), int(h))
+        self._resize_plane()
+        self.plane.queue_draw()
+
+    def _resize_note_end(self, _g, _ox, _oy, nid, axis):
+        self._resize_note_origin = None
+        frame = self.note_frames.get(nid)
+        if frame is None:
+            return
+        w, h = frame._body_scroll.get_size_request()
+        w = max(MIN_NOTE_W, snap_to_grid(w, GRID))  # imanta à grade (igual nó)
+        h = max(MIN_NOTE_H, snap_to_grid(h, GRID))
+        frame._body_scroll.set_size_request(int(w), int(h))
+        if self.notes is not None:  # persiste (carrega a nota inteira p/ não perder campos)
+            note = self.notes.get(nid)
+            if note is not None:
+                note.width, note.height = float(w), float(h)
+                self.notes.save(note)
+        self._autofit_all_groups()
+        self._resize_plane()
+        self.plane.queue_draw()
+        self._mm_refresh()
+
     def _maybe_rename(self, _gesture, n_press, _x, _y, nid):
         if n_press >= 2:  # duplo-clique
             self._rename_node(nid)
@@ -1077,10 +1156,14 @@ class CanvasWindow:
         old = self._frame_of(self._selected)
         if old is not None:
             old.remove_css_class("selected")
+            if self._selected[0] == "note":  # esconde alças de resize da nota desmarcada
+                self._set_note_handles_visible(old, False)
         self._selected = sel
         new = self._frame_of(sel)
         if new is not None:
             new.add_css_class("selected")
+            if sel[0] == "note":  # mostra alças de resize da nota selecionada
+                self._set_note_handles_visible(new, True)
         self._update_note_ctx()  # mostra/esconde a pílula de contexto da nota
 
     def _on_motion(self, _c, x, y):
@@ -2193,12 +2276,15 @@ class CanvasWindow:
         scroller = Gtk.ScrolledWindow()
         scroller.add_css_class("note-scroll")
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_size_request(200, 110)
+        nw = max(MIN_NOTE_W, getattr(note, "width", NOTE_W_DEFAULT) or NOTE_W_DEFAULT)
+        nh = max(MIN_NOTE_H, getattr(note, "height", NOTE_H_DEFAULT) or NOTE_H_DEFAULT)
+        scroller.set_size_request(int(nw), int(nh))  # tamanho salvo (resize persistido)
         scroller.set_child(body)
         frame._body_scroll = scroller
         overlay = Gtk.Overlay()
         overlay.set_child(scroller)
         overlay.add_overlay(ph)
+        self._build_note_resize_handles(frame, overlay)  # alças (só visíveis qd selecionado)
         buf = body.get_buffer()
         ph.set_visible(buf.get_char_count() == 0)
         buf.connect("changed", lambda b, lbl=ph: lbl.set_visible(b.get_char_count() == 0))
@@ -2408,6 +2494,7 @@ class CanvasWindow:
         dup = self.notes.create(src.title, src.body, x=bx + 30, y=by + 30)
         dup.color = src.color
         dup.font = src.font
+        dup.width, dup.height = src.width, src.height
         self.notes.save(dup)
         self._add_note_widget(dup)
 

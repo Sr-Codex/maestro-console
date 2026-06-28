@@ -26,6 +26,8 @@ class Note:
     color: str = ""  # cor da nota (C4); "" = padrão (amarelo)
     pinned: bool = False  # fixada: não arrasta (C4)
     font: str = ""  # fonte da nota (Pango desc, ex.: "Sans 12"); "" = padrão do tema
+    width: float = 200.0  # tamanho do corpo (resize); persistido
+    height: float = 110.0
 
 
 def render_markdown(note: Note) -> str:
@@ -88,6 +90,9 @@ def file_to_note(note: Note, directory: str | Path, filename: str = NOTE_FILENAM
         y=note.y,
         color=note.color,
         pinned=note.pinned,
+        font=note.font,  # preserva fonte/tamanho no round-trip do agent-to-note
+        width=note.width,
+        height=note.height,
     )
 
 
@@ -113,6 +118,8 @@ class Notes:
             color=row["color"] if "color" in row.keys() else "",
             pinned=bool(row["pinned"]) if "pinned" in row.keys() else False,
             font=row["font"] if "font" in row.keys() else "",
+            width=row["width"] if "width" in row.keys() else 200.0,
+            height=row["height"] if "height" in row.keys() else 110.0,
         )
 
     def get(self, note_id: str) -> Note | None:
@@ -124,7 +131,8 @@ class Notes:
 
     def save(self, note: Note) -> None:
         self._store.upsert_note(
-            note.id, note.title, note.body, note.x, note.y, note.color, int(note.pinned), note.font
+            note.id, note.title, note.body, note.x, note.y, note.color, int(note.pinned),
+            note.font, note.width, note.height
         )
 
     def set_position(self, note_id: str, x: float, y: float) -> None:

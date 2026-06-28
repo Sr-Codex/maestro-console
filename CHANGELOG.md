@@ -3,6 +3,17 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.30.0] — Resize da nota (arrastar a borda quando selecionada)
+- **Redimensionar a nota:** ao selecioná-la, aparecem **3 alças** — canto inferior-direito
+  (diagonal), borda direita (horizontal) e borda inferior (vertical), com os cursores certos.
+  Arrastar muda o tamanho; o **corpo rola** (não cresce). As alças somem ao desselecionar.
+- **Persistido:** novas colunas `notes.width/height` (migração idempotente, espelha `font`);
+  reabrir restaura o tamanho. Duplicar copia o tamanho.
+- Reusa o padrão de resize dos nós (alças na subárvore escalada → offsets em unidades-base;
+  snap à grade; piso `MIN_NOTE_W/H = 160×90`). Sem conflito com pan/seleção (alças sem tag).
+- **Bug latente corrigido:** `file_to_note` (round-trip agent-to-note) descartava `font` — agora
+  preserva `font`/`width`/`height` (além de `color`/`pinned`).
+
 ## [0.29.0] — Bloco de nota estilo sticky-note + seletor de cor (Maestri)
 - **Nota INTEIRA colorida** (sticky-note): a cor pastel preenche o card todo — frame + corpo —
   com leve transparência. Cabeçalho = só uma **faixa fina superior** (tom que combina e contrasta
