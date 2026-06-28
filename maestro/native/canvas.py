@@ -451,6 +451,9 @@ class CanvasWindow:
             # 2ª pílula (contexto da nota): menor que a principal, com mais respiro
             ".note-ctx-bar { border-radius: 16px; padding: 3px 9px; }",
             ".note-ctx-btn { min-width: 26px; min-height: 26px; padding: 2px; font-size: 12px; }",
+            # botão M ativo (modo "ver"): borda quadrada + leve realce; inativo = transparente
+            ".note-md-on { border: 1px solid rgba(255,255,255,0.65); border-radius: 4px;"
+            " background-color: rgba(255,255,255,0.14); }",
             # corpo: rola em vez de crescer; barra minimalista (direita, pontas arredondadas)
             ".note-scroll { background: transparent; }",
             ".note-scroll scrollbar { background: transparent; border: none; }",
@@ -769,8 +772,9 @@ class CanvasWindow:
         bar.append(self._ctx_btn("#", "Título (heading)", lambda: self._note_line_prefix("# ")))
         bar.append(self._ctx_btn("☑", "Checklist", lambda: self._note_line_prefix("- [ ] ")))
         bar.append(self._ctx_btn("•", "Lista", lambda: self._note_line_prefix("- ")))
-        # M — alterna ver (markdown formatado) ↔ editar
-        bar.append(self._ctx_btn("M", "Ver/editar (markdown)", self._note_toggle_render))
+        # M — alterna ver (markdown formatado) ↔ editar; borda realça quando "ver" está ativo
+        self._ctx_md_btn = self._ctx_btn("M", "Ver/editar (markdown)", self._note_toggle_render)
+        bar.append(self._ctx_md_btn)
         # ações
         dup = self._fab_button("edit-copy-symbolic", "⧉", "Duplicar nota", self._note_duplicate)
         dup.add_css_class("note-ctx-btn")
@@ -787,6 +791,7 @@ class CanvasWindow:
         if bar is not None:
             bar.set_visible(bool(self._selected) and self._selected[0] == "note")
         self._update_ctx_color_swatch()  # bolinha da cor atual
+        self._update_md_btn()  # estado (borda) do botão M conforme o modo da nota
 
     def _draw_cur_color(self, _area, cr, w, h) -> None:
         """Desenha a bolinha da cor ATUAL no botão de cor da pílula."""
@@ -2322,6 +2327,8 @@ class CanvasWindow:
         ph.set_visible(buf.get_char_count() == 0)
         buf.connect("changed", lambda b, lbl=ph: lbl.set_visible(b.get_char_count() == 0))
         self._apply_note_color(frame, note.color)  # frame + faixa + corpo + placeholder
+        # já abre com formatação ATIVA (modo "ver") se a nota tem conteúdo; vazia abre p/ editar
+        self._set_note_view(frame, bool(note.body.strip()))
         # salvar ao perder foco (GTK4: EventControllerFocus)
         fc = Gtk.EventControllerFocus()
         fc.connect("leave", lambda _c, fr=frame: self._save_note(fr))
@@ -2514,25 +2521,42 @@ class CanvasWindow:
         frame._body_view.grab_focus()
         self._save_note(frame)
 
+    def _set_note_view(self, frame, view: bool) -> None:
+        """Põe a nota em VER (markdown formatado) ou EDITAR (TextView)."""
+        stack = getattr(frame, "_body_stack", None) if frame is not None else None
+        if stack is None:
+            return
+        ph = getattr(frame, "_note_ph", None)
+        buf = frame._body_view.get_buffer()
+        if view:  # renderiza o buffer atual no Label
+            text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+            frame._body_label.set_markup(md_to_pango(text))
+            if ph is not None:
+                ph.set_visible(False)  # placeholder só faz sentido editando
+            stack.set_visible_child_name("view")
+        else:
+            stack.set_visible_child_name("edit")
+            if ph is not None:
+                ph.set_visible(buf.get_char_count() == 0)
+        self._update_md_btn()
+
+    def _update_md_btn(self) -> None:
+        """Realça o botão M (borda quadrada) quando a nota selecionada está em modo "ver"."""
+        btn = getattr(self, "_ctx_md_btn", None)
+        if btn is None:
+            return
+        frame = self._ctx_note_frame()
+        stack = getattr(frame, "_body_stack", None) if frame is not None else None
+        on = stack is not None and stack.get_visible_child_name() == "view"
+        (btn.add_css_class if on else btn.remove_css_class)("note-md-on")
+
     def _note_toggle_render(self) -> None:
         """Alterna a nota entre EDITAR (TextView) e VER (markdown formatado no Label)."""
         frame = self._ctx_note_frame()
         stack = getattr(frame, "_body_stack", None) if frame is not None else None
         if stack is None:
             return
-        ph = getattr(frame, "_note_ph", None)
-        if stack.get_visible_child_name() == "edit":  # editar -> ver (renderiza o buffer atual)
-            buf = frame._body_view.get_buffer()
-            text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
-            frame._body_label.set_markup(md_to_pango(text))
-            if ph is not None:
-                ph.set_visible(False)  # placeholder só faz sentido editando
-            stack.set_visible_child_name("view")
-        else:  # ver -> editar
-            stack.set_visible_child_name("edit")
-            if ph is not None:
-                buf = frame._body_view.get_buffer()
-                ph.set_visible(buf.get_char_count() == 0)
+        self._set_note_view(frame, stack.get_visible_child_name() != "view")
 
     def _note_duplicate(self) -> None:
         """Cria uma cópia da nota selecionada (título/corpo/cor), deslocada."""
