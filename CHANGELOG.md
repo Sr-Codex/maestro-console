@@ -3,6 +3,28 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.29.0] — Bloco de nota estilo sticky-note + seletor de cor (Maestri)
+- **Nota INTEIRA colorida** (sticky-note): a cor pastel preenche o card todo — frame + corpo —
+  com leve transparência. Cabeçalho = só uma **faixa fina superior** (tom que combina e contrasta
+  de leve com a cor) p/ **mover** a nota; removidos título, 📌 pin, 🎨 do card, grip "≡" e ✕
+  (cor/apagar ficam na pílula). Sem campo de título, a 1ª linha do corpo vira o título.
+- **Cor da letra adaptativa:** texto preto em notas claras, branco em notas escuras (luminância);
+  placeholder e faixa acompanham a direção do contraste. Mantém tudo legível em qualquer cor.
+- **Placeholder "Clique para editar..."** (overlay clicável-através) some quando há texto; cor
+  acompanha a tonalidade do card (tom escurecido).
+- **Corpo rola em vez de crescer:** `Gtk.ScrolledWindow` de altura fixa + **barra de rolagem
+  minimalista** à direita (slider fino, pontas arredondadas).
+- **Seletor de cor estilo Maestri (pílula):** botão mostra a **cor atual numa bolinha**; abre um
+  **popover escuro** (translúcido, cantos, sombra, seta) com **paleta de 10 cores em círculos**
+  (`NOTE_PALETTE`) + **"🎨 Mais cores"** → seletor nativo (`Gtk.ColorDialog`) p/ **cor custom**.
+  Cores das notas passam a ser guardadas em **HEX** (`note.color`), aplicadas por **provider CSS
+  por-nota** (frame/faixa/corpo/placeholder); back-compat com nomes antigos. **Grupos seguem com a
+  paleta `NOTE_COLORS`** (intactos).
+- **Botão "Aa" de FONTE:** seletor nativo (`Gtk.FontDialog`) aplica família+tamanho+peso+estilo ao
+  corpo; **persistido** em nova coluna `notes.font` (migração idempotente). Duplicar copia cor+fonte.
+- **2ª pílula com mais respiro** (spacing 6, padding 3×9).
+- Limpeza: import `..engine.notes` reordenado (corrige I001 herdado do PR #22).
+
 ## [0.28.0] — Barra de contexto da NOTA (2ª pílula, estilo Maestri) — Fase 1
 - **2ª pílula flutuante** que aparece **ao selecionar uma nota** e some ao desselecionar
   (`_update_note_ctx` no `_select`), logo abaixo da barra principal. Espelha o Maestri: ao clicar

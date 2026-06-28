@@ -25,13 +25,15 @@ gi.require_version("Gsk", "4.0")
 gi.require_version("Graphene", "1.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("Vte", "3.91")
-from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Vte  # noqa: E402
+gi.require_version("Pango", "1.0")
+from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Pango, Vte  # noqa: E402
 
 from ..engine.ask_bus import AskBus, install_ask_skill, install_client  # noqa: E402
 from ..engine.ask_router import AskRouter, policy_from_env  # noqa: E402
 from ..engine.attention import attention_items, notify  # noqa: E402
 from ..engine.envelope import EnvelopeState  # noqa: E402
 from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
+from ..engine.notes import md_line_prefix, md_wrap  # noqa: E402
 from ..engine.state.store import Store  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from ..engine.workspace_registry import WorkspaceRegistry  # noqa: E402
@@ -46,7 +48,6 @@ from .ask_capture import (  # noqa: E402
 )
 from .filetree import list_children  # noqa: E402
 from .floors_ui import floor_rows, merge_text, preview_text  # noqa: E402
-from ..engine.notes import md_line_prefix, md_wrap  # noqa: E402
 from .notes_ui import note_title_display  # noqa: E402
 from .orchestrate import (  # noqa: E402
     _run_sync,
@@ -87,6 +88,51 @@ NOTE_COLORS = {
     "mauve": "#cba6f7",
 }
 NOTE_COLOR_DEFAULT = "yellow"
+# C4 v2: paleta rápida das NOTAS (hex; estilo das imagens #4/#6/#7). Notas guardam HEX em
+# note.color (cor custom via "Mais cores"); GRUPOS seguem usando NOTE_COLORS acima.
+NOTE_PALETTE = [
+    "#f7e6a8",  # creme/amarelo
+    "#f5c9d8",  # rosa
+    "#bcd9f5",  # azul claro
+    "#c4e8bf",  # verde claro
+    "#fcdcab",  # pêssego/laranja claro
+    "#ddc7f0",  # lilás
+    "#f5f5f5",  # branco
+    "#3a3a42",  # cinza escuro
+    "#3c5560",  # azul petróleo
+    "#1f2db5",  # azul escuro
+]
+NOTE_HEX_DEFAULT = "#f7e6a8"
+
+
+def _hex_to_rgb(h: str) -> tuple[int, int, int]:
+    h = h.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _mix(h: str, target: int, f: float) -> str:
+    """Mistura a cor com `target` (0=preto, 255=branco) por fração f. f>0 escurece/clareia."""
+    r, g, b = _hex_to_rgb(h)
+    return "#%02x%02x%02x" % tuple(int(c + (target - c) * f) for c in (r, g, b))
+
+
+def _contrast_text(h: str) -> str:
+    """Cor de texto legível sobre `h`: preto em fundo claro, branco em fundo escuro."""
+    r, g, b = _hex_to_rgb(h)
+    lum = 0.299 * r + 0.587 * g + 0.114 * b  # luminância perceptual (0–255)
+    return "#1e1e2e" if lum > 150 else "#f5f5f5"
+
+
+def note_hex(color: str) -> str:
+    """Resolve a cor de uma nota p/ hex: aceita hex (#rrggbb), nome antigo (NOTE_COLORS)
+    ou vazio → default. Mantém compatibilidade com notas salvas antes da paleta v2."""
+    if color.startswith("#") and len(color) == 7:
+        return color
+    if color in NOTE_COLORS:
+        return NOTE_COLORS[color]
+    return NOTE_HEX_DEFAULT
+
+
 # C2: geometria dos grupos (coords-base; *zoom na hora de desenhar)
 GROUP_TITLE_H = 22  # faixa do título (alça de arrasto)
 GROUP_MIN_W, GROUP_MIN_H = 200, 140
@@ -395,11 +441,37 @@ class CanvasWindow:
             ".fab-btn:hover { background-color: rgba(255,255,255,0.08); border-radius: 10px; }",
             ".fab-btn:disabled { opacity: 0.35; }",
             ".fab-run { color: #89b4fa; }",  # o play (azul)
-            # 2ª pílula (contexto da nota): menor que a principal
-            ".note-ctx-bar { border-radius: 16px; padding: 2px 5px; }",
+            # 2ª pílula (contexto da nota): menor que a principal, com mais respiro
+            ".note-ctx-bar { border-radius: 16px; padding: 3px 9px; }",
             ".note-ctx-btn { min-width: 26px; min-height: 26px; padding: 2px; font-size: 12px; }",
+            # corpo: rola em vez de crescer; barra minimalista (direita, pontas arredondadas)
+            ".note-scroll { background: transparent; }",
+            ".note-scroll scrollbar { background: transparent; border: none; }",
+            ".note-scroll scrollbar trough { background: transparent; border: none; }",
+            ".note-scroll scrollbar slider { min-width: 5px; border-radius: 6px;"
+            " background-color: rgba(30,30,46,0.40); }",
+            ".note-scroll scrollbar slider:hover { background-color: rgba(30,30,46,0.70); }",
+            # sticky-note: faixa fina superior p/ mover (cor vem do provider por-nota,
+            # .note-h-<id>); cor/faixa/corpo/placeholder são gerados em _rebuild_note_colors.
+            ".notehead-min { padding: 0; min-height: 12px; border-radius: 8px 8px 0 0; }",
+            ".note-ph { margin: 6px 8px; }",  # placeholder alinhado ao texto
+            # seletor de cor: popover escuro translúcido + swatches circulares + "Mais cores"
+            ".note-pop > contents { background-color: rgba(30,30,46,0.97); border-radius: 16px;"
+            " box-shadow: 0 8px 24px rgba(0,0,0,0.6); padding: 10px; }",
+            # swatch circular: achata o botão (background-image padrão do tema esconde a cor)
+            ".csw { border-radius: 50%; min-width: 26px; min-height: 26px; padding: 0;"
+            " background-image: none; box-shadow: none;"
+            " border: 1px solid rgba(255,255,255,0.18); }",
+            ".csw:hover { border-color: rgba(255,255,255,0.7); }",
+            ".note-curcolor { border-radius: 50%; min-width: 22px; min-height: 22px; }",
+            ".note-morecolors { border-radius: 9px; color: #cdd6f4;"
+            " background-color: rgba(255,255,255,0.06); padding: 6px; }",
+            ".note-morecolors:hover { background-color: rgba(255,255,255,0.12); }",
+            ".note-poprow-sep { background-color: rgba(255,255,255,0.10); min-height: 1px; }",
         ]
-        for cname, hexc in NOTE_COLORS.items():  # C4: classes de cor das notas
+        for i, hexc in enumerate(NOTE_PALETTE):  # swatches circulares da paleta v2
+            rules.append(f".palsw-{i} {{ background-color: {hexc}; }}")
+        for cname, hexc in NOTE_COLORS.items():  # C4: cores dos GRUPOS (swatch do grupo)
             rules.append(f".notecol-{cname} {{ background-color: {hexc}; color: #1e1e2e; }}")
         for st, hexc in STATE_COLORS.items():
             rules.append(f".dot-{st} {{ color: {hexc}; }}")
@@ -422,6 +494,20 @@ class CanvasWindow:
                 display, self._grid_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1
             )
         self._apply_grid()
+        # fonte por nota (seletor completo): provider próprio, reconstruído ao trocar a fonte
+        self._note_fonts: dict[str, str] = {}  # note_id -> Pango desc (ex.: "Sans 12")
+        self._font_provider = Gtk.CssProvider()
+        if display is not None:
+            Gtk.StyleContext.add_provider_for_display(
+                display, self._font_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 2
+            )
+        # cor por nota (hex; suporta cor custom de "Mais cores"): provider próprio
+        self._note_colors: dict[str, str] = {}  # note_id -> hex (#rrggbb)
+        self._color_provider = Gtk.CssProvider()
+        if display is not None:
+            Gtk.StyleContext.add_provider_for_display(
+                display, self._color_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 3
+            )
 
     def _apply_grid(self) -> None:
         """Grid de pontos via radial-gradient no CSS do plano (GPU; rola liso, sem lag).
@@ -441,6 +527,14 @@ class CanvasWindow:
                 f"background-repeat: repeat; background-size: {s:.1f}px {s:.1f}px; "
                 f"background-position: {px:.1f}px {py:.1f}px; }}"
             )
+        if hasattr(prov, "load_from_string"):
+            prov.load_from_string(css)
+        else:  # GTK4 < 4.12
+            prov.load_from_data(css.encode())
+
+    @staticmethod
+    def _css_load(prov, css: str) -> None:
+        """Carrega CSS num provider (string no GTK≥4.12; bytes nos anteriores)."""
         if hasattr(prov, "load_from_string"):
             prov.load_from_string(css)
         else:  # GTK4 < 4.12
@@ -606,33 +700,59 @@ class CanvasWindow:
     def _build_note_ctx(self) -> Gtk.Widget:
         """2ª pílula flutuante (estilo Maestri): ferramentas da NOTA selecionada.
         Aparece só quando uma nota está selecionada (ver _update_note_ctx)."""
-        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         bar.add_css_class("fab-bar")
         bar.add_css_class("note-ctx-bar")  # menor que a principal
         bar.set_halign(Gtk.Align.CENTER)
         bar.set_valign(Gtk.Align.START)
         bar.set_margin_top(66)  # folga clara abaixo da barra principal (margin_top=12)
         bar.set_visible(False)
-        # 🎨 cor — popover com os 5 presets, age na nota selecionada
-        colorbtn = Gtk.MenuButton(label="🎨")
+        # cor — botão mostra a COR ATUAL numa bolinha; popover escuro c/ paleta circular + custom
+        colorbtn = Gtk.MenuButton()
         colorbtn.set_has_frame(False)
         colorbtn.add_css_class("fab-btn")
         colorbtn.add_css_class("note-ctx-btn")
         colorbtn.set_tooltip_text("cor da nota")
+        swatch = Gtk.DrawingArea()
+        swatch.set_size_request(22, 22)
+        swatch.set_draw_func(self._draw_cur_color)
+        self._ctx_color_swatch = swatch
+        colorbtn.set_child(swatch)
         cpop = Gtk.Popover()
-        crow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
-        for cname in NOTE_COLORS:
+        cpop.add_css_class("note-pop")
+        cgrid = Gtk.Grid()
+        cgrid.set_row_spacing(8)
+        cgrid.set_column_spacing(8)
+        per_row = 7
+        for i, hexc in enumerate(NOTE_PALETTE):
             sw = Gtk.Button()
-            sw.add_css_class(f"notecol-{cname}")
-            sw.set_size_request(22, 22)
+            sw.set_has_frame(False)  # achata: deixa o background-color (palsw) aparecer
+            sw.add_css_class("csw")
+            sw.add_css_class(f"palsw-{i}")
+            sw.set_tooltip_text(hexc)
             sw.connect(
                 "clicked",
-                lambda _b, c=cname, p=cpop: (p.popdown(), self._ctx_set_color(c)),
+                lambda _b, c=hexc, p=cpop: (p.popdown(), self._ctx_set_color(c)),
             )
-            crow.append(sw)
-        cpop.set_child(crow)
+            cgrid.attach(sw, i % per_row, i // per_row, 1, 1)
+        sep = Gtk.Box()
+        sep.add_css_class("note-poprow-sep")
+        sep.set_margin_top(8)
+        sep.set_margin_bottom(8)
+        more = Gtk.Button(label="🎨 Mais cores")
+        more.set_has_frame(False)
+        more.add_css_class("note-morecolors")
+        more.set_hexpand(True)
+        more.connect("clicked", lambda _b, p=cpop: (p.popdown(), self._ctx_pick_custom_color()))
+        cbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        cbox.append(cgrid)
+        cbox.append(sep)
+        cbox.append(more)
+        cpop.set_child(cbox)
         colorbtn.set_popover(cpop)
         bar.append(colorbtn)
+        # Aa — seletor de fonte (família + tamanho) da nota
+        bar.append(self._ctx_btn("Aa", "Fonte da nota", self._ctx_pick_font))
         # formatação inline (envolve a seleção com markdown)
         bar.append(self._ctx_btn("B", "Negrito (**)", lambda: self._note_wrap("**", "**")))
         bar.append(self._ctx_btn("I", "Itálico (*)", lambda: self._note_wrap("*", "*")))
@@ -657,6 +777,28 @@ class CanvasWindow:
         bar = getattr(self, "_note_ctx_bar", None)
         if bar is not None:
             bar.set_visible(bool(self._selected) and self._selected[0] == "note")
+        self._update_ctx_color_swatch()  # bolinha da cor atual
+
+    def _draw_cur_color(self, _area, cr, w, h) -> None:
+        """Desenha a bolinha da cor ATUAL no botão de cor da pílula."""
+        hexc = getattr(self, "_cur_color_hex", NOTE_HEX_DEFAULT)
+        r, g, b = _hex_to_rgb(hexc)
+        rad = min(w, h) / 2 - 1
+        cr.arc(w / 2, h / 2, rad, 0, 6.283185307179586)
+        cr.set_source_rgb(r / 255, g / 255, b / 255)
+        cr.fill_preserve()
+        cr.set_source_rgba(1, 1, 1, 0.35)
+        cr.set_line_width(1)
+        cr.stroke()
+
+    def _update_ctx_color_swatch(self) -> None:
+        sw = getattr(self, "_ctx_color_swatch", None)
+        if sw is None:
+            return
+        frame = self._ctx_note_frame()
+        if frame is not None:
+            self._cur_color_hex = self._note_colors.get(frame._note_id, NOTE_HEX_DEFAULT)
+        sw.queue_draw()
 
     def _add_node(self, nid, title, argv, default):
         frame = Gtk.Frame()
@@ -2020,64 +2162,53 @@ class CanvasWindow:
         frame._note_id = note.id
         frame.add_css_class("node-card")  # UI-1
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        # barra de título (arraste pelo "≡" + edição do título)
+        # cabeçalho = só uma FAIXA FINA (tom levemente + claro) p/ MOVER a nota (sem título,
+        # sem fechar; cor/apagar ficam na pílula de contexto — estilo Maestri).
         head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         head.add_css_class("notehead")
-        grip = Gtk.Label(label=" ≡ ")
-        head.append(grip)
-        title = Gtk.Entry()
-        title.set_text(note_title_display(note) if note.title else "Nota")
-        title.set_hexpand(True)
-        head.append(title)
-        # 🎨 cor (C4): popover com swatches
-        colorbtn = Gtk.MenuButton(label="🎨")
-        colorbtn.set_has_frame(False)
-        colorbtn.set_tooltip_text("cor da nota")
-        cpop = Gtk.Popover()
-        crow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
-        for cname in NOTE_COLORS:
-            sw = Gtk.Button()
-            sw.add_css_class(f"notecol-{cname}")
-            sw.set_size_request(22, 22)
-            sw.connect(
-                "clicked",
-                lambda _b, fr=frame, c=cname, p=cpop: (p.popdown(), self._set_note_color(fr, c)),
-            )
-            crow.append(sw)
-        cpop.set_child(crow)
-        colorbtn.set_popover(cpop)
-        head.append(colorbtn)
-        # 📌 pin (C4): fixa a nota (não arrasta)
-        pinbtn = Gtk.ToggleButton(label="📌" if note.pinned else "📍")
-        pinbtn.set_has_frame(False)
-        pinbtn.set_tooltip_text("fixar a nota (não arrasta)")
-        pinbtn.set_active(note.pinned)
-        if note.pinned:
-            self._note_pinned.add(note.id)
-        pinbtn.connect("toggled", lambda b, fr=frame: self._toggle_note_pin(fr, b))
-        head.append(pinbtn)
-        nclose = Gtk.Button(label="✕")
-        nclose.set_has_frame(False)
-        nclose.set_tooltip_text("apagar esta nota")
-        nclose.connect("clicked", lambda _b, fr=frame: self._close_note(fr))
-        head.append(nclose)
+        head.add_css_class("notehead-min")
+        head.set_size_request(-1, 12)
+        head.set_tooltip_text("arraste p/ mover a nota")
         head._drag_note = note.id  # arrasto via gesto do PLANO (estável) — ver _pan_*
         frame._note_head = head
-        self._apply_note_color(frame, note.color)  # aplica a cor salva
-        # corpo (markdown editável)
+        frame._title_entry = None  # sem título no cabeçalho (Maestri)
+        # corpo (markdown editável) — na MESMA cor pastel (sticky-note inteira)
         body = Gtk.TextView()
         body.set_wrap_mode(Gtk.WrapMode.WORD)
         body.get_buffer().set_text(note.body)
-        body.set_size_request(200, 110)
-        # salvar ao perder foco (GTK4: EventControllerFocus)
-        for w in (title, body):
-            fc = Gtk.EventControllerFocus()
-            fc.connect("leave", lambda _c, fr=frame: self._save_note(fr))
-            w.add_controller(fc)
-        frame._title_entry = title
         frame._body_view = body
+        body.add_css_class(self._note_font_class(note.id))  # fonte por nota (CSS dedicado)
+        if getattr(note, "font", ""):  # fonte salva: registra e aplica
+            self._note_fonts[note.id] = note.font
+            self._rebuild_note_fonts()
+        # placeholder "Clique para editar..." (some quando há texto) — overlay clicável-através
+        ph = Gtk.Label(label="Clique para editar...")
+        ph.add_css_class("note-ph")
+        ph.set_halign(Gtk.Align.START)
+        ph.set_valign(Gtk.Align.START)
+        ph.set_can_target(False)  # cliques passam p/ o TextView
+        frame._note_ph = ph
+        # rola em vez de crescer: corpo dentro de um ScrolledWindow de altura fixa, com
+        # barra de rolagem minimalista (à direita, pontas arredondadas) — ver CSS .note-scroll
+        scroller = Gtk.ScrolledWindow()
+        scroller.add_css_class("note-scroll")
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_size_request(200, 110)
+        scroller.set_child(body)
+        frame._body_scroll = scroller
+        overlay = Gtk.Overlay()
+        overlay.set_child(scroller)
+        overlay.add_overlay(ph)
+        buf = body.get_buffer()
+        ph.set_visible(buf.get_char_count() == 0)
+        buf.connect("changed", lambda b, lbl=ph: lbl.set_visible(b.get_char_count() == 0))
+        self._apply_note_color(frame, note.color)  # frame + faixa + corpo + placeholder
+        # salvar ao perder foco (GTK4: EventControllerFocus)
+        fc = Gtk.EventControllerFocus()
+        fc.connect("leave", lambda _c, fr=frame: self._save_note(fr))
+        body.add_controller(fc)
         box.append(head)
-        box.append(body)
+        box.append(overlay)
         # agent-to-note: rodar um agente com a nota (V9-S4)
         if self.controller is not None:
             agents = installed_agents()
@@ -2109,21 +2240,54 @@ class CanvasWindow:
         if note is None:
             return
         buf = frame._body_view.get_buffer()
-        note.title = frame._title_entry.get_text().strip()
         note.body = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+        # sem campo de título no cabeçalho: usa a 1ª linha do corpo (p/ minimapa/run)
+        stripped = note.body.strip()
+        note.title = stripped.splitlines()[0].strip()[:60] if stripped else ""
         note.x, note.y = self._note_base.get(frame._note_id, (0.0, 0.0))  # coords-base
         # cor/pin já persistem nos seus handlers; preserva-os (get traz do store)
         self.notes.save(note)
         return False
 
-    # -- C4: cor e pin da nota --
+    # -- C4 v2: cor da nota por HEX (frame pastel + faixa clara + corpo + placeholder) --
+    @staticmethod
+    def _nid_key(note_id: str) -> str:
+        return note_id.replace("-", "")  # sufixo de classe CSS válido
+
+    def _rebuild_note_colors(self) -> None:
+        """Regenera o CSS por-nota a partir de self._note_colors (hex)."""
+        rules = []
+        for nid, hexc in self._note_colors.items():
+            if not hexc:
+                continue
+            key = self._nid_key(nid)
+            r, g, b = _hex_to_rgb(hexc)
+            txt = _contrast_text(hexc)  # texto legível: preto p/ claro, branco p/ escuro
+            tgt = 0 if txt == "#1e1e2e" else 255  # combina com a cor: card claro→faixa + escura
+            head_c = _mix(hexc, tgt, 0.16)  # faixa de mover: tom que contrasta de leve e combina
+            ph_c = _mix(hexc, tgt, 0.45)  # placeholder: muted na direção do contraste
+            rules += [
+                f".note-c-{key} {{ background-color: rgba({r},{g},{b},0.95); }}",  # frame
+                f".note-h-{key} {{ background-color: {head_c}; }}",  # faixa superior
+                # cor no NÓ textview (cascateia p/ o subnó text por herança) + no subnó (robusto)
+                f".note-b-{key} {{ background-color: {hexc}; color: {txt}; }}",  # corpo
+                f".note-b-{key} text {{ background-color: {hexc}; color: {txt}; }}",
+                f".note-p-{key} {{ color: {ph_c}; }}",  # placeholder
+            ]
+        self._css_load(self._color_provider, "\n".join(rules))
+
     def _apply_note_color(self, frame, color: str) -> None:
-        head = getattr(frame, "_note_head", None)
-        if head is None:
-            return
-        for cname in NOTE_COLORS:
-            head.remove_css_class(f"notecol-{cname}")
-        head.add_css_class(f"notecol-{color if color in NOTE_COLORS else NOTE_COLOR_DEFAULT}")
+        nid = frame._note_id
+        key = self._nid_key(nid)
+        self._note_colors[nid] = note_hex(color)
+        self._rebuild_note_colors()
+        frame.add_css_class(f"note-c-{key}")  # classes estáveis por nota (idempotente)
+        for attr, prefix in (("_note_head", "note-h-"), ("_body_view", "note-b-"),
+                             ("_note_ph", "note-p-")):
+            w = getattr(frame, attr, None)
+            if w is not None:
+                w.add_css_class(f"{prefix}{key}")
+        self._update_ctx_color_swatch()
 
     def _set_note_color(self, frame, color: str) -> None:
         if self.notes is None:
@@ -2131,9 +2295,9 @@ class CanvasWindow:
         note = self.notes.get(frame._note_id)
         if note is None:
             return
-        note.color = color
+        note.color = note_hex(color)  # guarda HEX (paleta ou custom)
         self.notes.save(note)
-        self._apply_note_color(frame, color)
+        self._apply_note_color(frame, note.color)
         self._mm_refresh()
 
     def _toggle_note_pin(self, frame, btn) -> None:
@@ -2175,6 +2339,28 @@ class CanvasWindow:
         frame = self._ctx_note_frame()
         if frame is not None:
             self._set_note_color(frame, color)
+
+    def _ctx_pick_custom_color(self) -> None:
+        """"Mais cores": abre o seletor nativo (Gtk.ColorDialog) p/ cor custom."""
+        frame = self._ctx_note_frame()
+        if frame is None:
+            return
+        dialog = Gtk.ColorDialog()
+        init = Gdk.RGBA()
+        init.parse(self._note_colors.get(frame._note_id, NOTE_HEX_DEFAULT))
+
+        def done(dlg, res):
+            try:
+                rgba = dlg.choose_rgba_finish(res)
+            except GLib.Error:
+                return  # cancelado
+            if rgba is not None:
+                hexc = "#%02x%02x%02x" % (
+                    round(rgba.red * 255), round(rgba.green * 255), round(rgba.blue * 255)
+                )
+                self._set_note_color(frame, hexc)
+
+        dialog.choose_rgba(self.win, init, None, done)
 
     def _note_wrap(self, left: str, right: str) -> None:
         """Envolve a seleção (ou o cursor) do corpo da nota com marcadores markdown."""
@@ -2221,6 +2407,7 @@ class CanvasWindow:
         bx, by = self._note_base.get(frame._note_id, (src.x, src.y))
         dup = self.notes.create(src.title, src.body, x=bx + 30, y=by + 30)
         dup.color = src.color
+        dup.font = src.font
         self.notes.save(dup)
         self._add_note_widget(dup)
 
@@ -2229,6 +2416,63 @@ class CanvasWindow:
         if frame is not None:
             self._close_note(frame)
             self._select(None)  # limpa seleção -> esconde a pílula de contexto
+
+    # -- fonte por nota (seletor completo: Gtk.FontDialog) --
+    @staticmethod
+    def _note_font_class(note_id: str) -> str:
+        return "nf-" + note_id.replace("-", "")  # classe CSS válida (não começa com dígito)
+
+    def _rebuild_note_fonts(self) -> None:
+        """Regenera o CSS do provider de fontes a partir de self._note_fonts."""
+        styles = {Pango.Style.NORMAL: "normal", Pango.Style.OBLIQUE: "oblique",
+                  Pango.Style.ITALIC: "italic"}
+        rules = []
+        for nid, desc_str in self._note_fonts.items():
+            if not desc_str:
+                continue
+            d = Pango.FontDescription.from_string(desc_str)
+            fam = d.get_family() or "sans-serif"
+            size = d.get_size() / Pango.SCALE
+            size_css = f"{size:g}px" if d.get_size_is_absolute() else f"{size:g}pt"
+            weight = int(d.get_weight())
+            style = styles.get(d.get_style(), "normal")
+            rules.append(
+                f'.{self._note_font_class(nid)} {{ font-family: "{fam}"; font-size: {size_css};'
+                f" font-weight: {weight}; font-style: {style}; }}"
+            )
+        self._css_load(self._font_provider, "\n".join(rules))
+
+    def _apply_note_font(self, frame, desc_str: str) -> None:
+        nid = frame._note_id
+        self._note_fonts[nid] = desc_str
+        self._rebuild_note_fonts()
+        body = getattr(frame, "_body_view", None)
+        if body is not None:
+            body.add_css_class(self._note_font_class(nid))
+        if self.notes is not None:
+            note = self.notes.get(nid)
+            if note is not None:
+                note.font = desc_str
+                self.notes.save(note)
+
+    def _ctx_pick_font(self) -> None:
+        """Abre o seletor nativo de fonte e aplica à nota selecionada."""
+        frame = self._ctx_note_frame()
+        if frame is None:
+            return
+        dialog = Gtk.FontDialog()
+        init = self._note_fonts.get(frame._note_id)
+        init_desc = Pango.FontDescription.from_string(init) if init else None
+
+        def done(dlg, res):
+            try:
+                desc = dlg.choose_font_finish(res)
+            except GLib.Error:
+                return  # cancelado/erro: mantém a fonte atual
+            if desc is not None:
+                self._apply_note_font(frame, desc.to_string())
+
+        dialog.choose_font(self.win, init_desc, None, done)
 
     # -- grupos/áreas (C2): desenhados via cairo (atrás dos nós) + hit-test --
     def _load_group(self, g) -> None:
@@ -2488,14 +2732,16 @@ class CanvasWindow:
         note = self.notes.get(frame._note_id)
         if note is None:
             return
-        frame._title_entry.set_text(f"{note_title_display(note)} · rodando {agent}…")
+        if frame._title_entry is not None:
+            frame._title_entry.set_text(f"{note_title_display(note)} · rodando {agent}…")
 
         def done(env, updated, updated_note):
             def apply():
                 fresh = self.notes.get(frame._note_id)
                 if fresh is not None:
                     frame._body_view.get_buffer().set_text(fresh.body)
-                    frame._title_entry.set_text(note_title_display(fresh))
+                    if frame._title_entry is not None:
+                        frame._title_entry.set_text(note_title_display(fresh))
                 return False
 
             GLib.idle_add(apply)
