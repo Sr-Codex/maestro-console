@@ -3,6 +3,14 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.32.0] — Conectar NOTA por cabo (visual) — Fase 4a
+- **Cabo nota↔nó:** no modo conectar (🔌 / Ctrl+Shift+L), clicar em **qualquer área** de um nó ou
+  **nota** liga o cabo (usa `_elem_at`); `_connect_pick` generalizado p/ `(kind, id)`. O bezier é
+  desenhado até a nota (`_cable_box` resolve posição/tamanho de nó ou nota).
+- **Limpeza de cabos órfãos:** apagar nó/nota agora remove seus cabos do store (`_remove_edges_for`)
+  — antes ficavam órfãos. Cabo IA↔IA mantém o aviso `maestro-ask`; nota↔nó usa hooks (corpo na 4b).
+- Persistência sem migração (edges guardam ids string). Base p/ a 4b (ler/escrever + ciência do agente).
+
 ## [0.31.0] — Nota: ver markdown formatado (toggle "M") — Fase 3
 - **Botão "M" na pílula** alterna a nota entre **editar** (texto cru com marcadores `**`, `- [ ]`…)
   e **ver** (markdown **renderizado**: negrito, itálico, tachado, código, títulos, listas e

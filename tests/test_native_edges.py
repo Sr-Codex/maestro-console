@@ -54,6 +54,17 @@ def test_persiste_entre_aberturas(tmp_path):
     s2.close()
 
 
+def test_cabo_nota_para_no(tmp_path):
+    # Fase 4: a nota é endpoint de cabo (id string arbitrário) — sem migração de schema
+    s = _store(tmp_path)
+    m = EdgeModel(s)
+    assert m.add("note-abc", "node-1") is True
+    assert ("note-abc", "node-1") in m.list()
+    m.remove("note-abc", "node-1")
+    assert m.list() == []
+    s.close()
+
+
 def test_direcao_importa(tmp_path):
     s = _store(tmp_path)
     m = EdgeModel(s)
