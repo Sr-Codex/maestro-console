@@ -878,20 +878,14 @@ class CanvasWindow:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(head)
         box.append(term)
-        # rodapé com alça de redimensionar: arraste o ⤡ p/ dar mais colunas/linhas
-        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        foot.set_halign(Gtk.Align.END)
-        grip = Gtk.Label(label="⤡")
-        grip.set_tooltip_text("arraste p/ redimensionar (mais colunas/linhas pro agente)")
-        grip.set_cursor(Gdk.Cursor.new_from_name("nwse-resize", None))
-        rg = Gtk.GestureDrag()
-        rg.connect("drag-begin", self._resize_node_begin, nid)
-        rg.connect("drag-update", self._resize_node_update, nid)
-        rg.connect("drag-end", self._resize_node_end, nid)
-        grip.add_controller(rg)
-        foot.append(grip)
-        box.append(foot)
-        frame.set_child(box)
+        # resize: alças nas BORDAS (4 lados + cantos) na linha da seleção, só quando selecionado
+        outer = Gtk.Overlay()
+        outer.set_child(box)
+        frame._resize_handles = self._build_resize_handles(
+            outer, nid,
+            self._resize_node_begin, self._resize_node_update, self._resize_node_end,
+        )
+        frame.set_child(outer)
         bx, by = self.model.position(nid, default)
         self._base_pos[nid] = (bx, by)
         self.plane.put(frame, 0, 0)  # posição real vem no transform (_place)
@@ -911,51 +905,70 @@ class CanvasWindow:
     # (arrastar nó: agora via o gesto do PLANO — ver _pan_begin/_pan_update/_pan_end)
 
     # -- redimensionar um card (arrastar a alça ⤡) --
-    def _resize_node_begin(self, _g, _x, _y, nid):
-        self._resize_origin = self._node_size.get(nid, (BASE_W, BASE_H))
+    def _resize_node_begin(self, _g, _x, _y, nid, edges):
+        x, y = self._base_pos.get(nid, (0.0, 0.0))
+        w, h = self._node_size.get(nid, (BASE_W, BASE_H))
+        self._resize_origin = (x, y, w, h)
 
-    def _resize_node_update(self, _g, off_x, off_y, nid):
+    def _resize_node_update(self, _g, dx, dy, nid, edges):
         o = getattr(self, "_resize_origin", None)
         if o is None:
             return
         # a alça vive na subárvore escalada por z -> off já vem em unidades-base (=/z)
-        w = max(MIN_NODE_W, o[0] + off_x)
-        h = max(MIN_NODE_H, o[1] + off_y)
+        x, y, w, h = self._resize_rect(o, dx, dy, edges, MIN_NODE_W, MIN_NODE_H)
         self._node_size[nid] = (w, h)
+        self._base_pos[nid] = (x, y)
         frame = self.frames.get(nid)
         term = getattr(frame, "_term", None) if frame is not None else None
         if term is not None:
             term.set_size_request(int(w), int(h))  # VTE reflui cols/linhas (PTY) sozinho
+        if frame is not None:
+            self._place(frame, (x, y), self.model.zoom())
         self._resize_plane()
         self.plane.queue_draw()
 
-    def _resize_node_end(self, _g, _ox, _oy, nid):
+    def _resize_node_end(self, _g, _ox, _oy, nid, edges):
+        o = getattr(self, "_resize_origin", None)
         self._resize_origin = None
         w, h = self._node_size.get(nid, (BASE_W, BASE_H))
         w = max(MIN_NODE_W, snap_to_grid(w, GRID))  # C3: tamanho imanta à grade
         h = max(MIN_NODE_H, snap_to_grid(h, GRID))
         self._node_size[nid] = (w, h)
+        x, y = self._base_pos.get(nid, (0.0, 0.0))
+        if o is not None:  # reposiciona com o tamanho snapado mantendo a borda ancorada
+            x = o[0] + (o[2] - w) if "w" in edges else x
+            y = o[1] + (o[3] - h) if "n" in edges else y
+        x, y = snap_point((x, y), GRID)
+        self._base_pos[nid] = (x, y)
         frame = self.frames.get(nid)
         term = getattr(frame, "_term", None) if frame is not None else None
         if term is not None:
             term.set_size_request(int(w), int(h))  # reflui VTE p/ o tamanho alinhado
+        if frame is not None:
+            self._place(frame, (x, y), self.model.zoom())
         self.model.set_node_size(nid, w, h)  # persiste o tamanho
+        self.model.set_position(nid, x, y)  # persiste a posição (resize por N/W move)
         self._autofit_all_groups()  # C2: grupo cresce se o nó ficou maior que ele
         self._resize_plane()
         self.plane.queue_draw()
 
-    # -- redimensionar uma NOTA (alças que só aparecem quando selecionada) --
-    def _build_note_resize_handles(self, frame, overlay) -> None:
-        """3 alças sobre o corpo da nota (canto + bordas direita/inferior). Ficam na mesma
-        subárvore escalada → offsets do GestureDrag já vêm em unidades-base (igual ao nó)."""
-        nid = frame._note_id
-        specs = [  # (w, h, halign, valign, cursor, axis) — direita/inferior antes; canto por último
-            (6, -1, Gtk.Align.END, Gtk.Align.FILL, "ew-resize", "x"),
-            (-1, 6, Gtk.Align.FILL, Gtk.Align.END, "ns-resize", "y"),
-            (12, 12, Gtk.Align.END, Gtk.Align.END, "nwse-resize", "both"),
+    # -- redimensionar item do canvas (nota/nó): alças nas BORDAS, só visíveis quando selecionado --
+    def _build_resize_handles(self, overlay, iid, begin, update, end) -> tuple:
+        """3 alças nas bordas (direita/inferior/canto) sobre o overlay EXTERNO do card → ficam
+        na linha da seleção. Subárvore escalada → offsets do GestureDrag em unidades-base."""
+        st, en, fi = Gtk.Align.START, Gtk.Align.END, Gtk.Align.FILL
+        specs = [  # (w,h,halign,valign,cursor,edges) — bordas antes; cantos por último (no topo)
+            (-1, 6, fi, st, "ns-resize", "n"),
+            (-1, 6, fi, en, "ns-resize", "s"),
+            (6, -1, en, fi, "ew-resize", "e"),
+            (6, -1, st, fi, "ew-resize", "w"),
+            (14, 14, st, st, "nwse-resize", "nw"),
+            (14, 14, en, st, "nesw-resize", "ne"),
+            (14, 14, st, en, "nesw-resize", "sw"),
+            (14, 14, en, en, "nwse-resize", "se"),
         ]
         handles = []
-        for w, h, ha, va, cur, axis in specs:
+        for w, h, ha, va, cur, edges in specs:
             grip = Gtk.DrawingArea()
             grip.set_size_request(w, h)
             grip.set_halign(ha)
@@ -964,54 +977,77 @@ class CanvasWindow:
             grip.set_cursor(Gdk.Cursor.new_from_name(cur, None))
             grip.set_visible(False)
             gd = Gtk.GestureDrag()
-            gd.connect("drag-begin", self._resize_note_begin, nid, axis)
-            gd.connect("drag-update", self._resize_note_update, nid, axis)
-            gd.connect("drag-end", self._resize_note_end, nid, axis)
+            gd.connect("drag-begin", begin, iid, edges)
+            gd.connect("drag-update", update, iid, edges)
+            gd.connect("drag-end", end, iid, edges)
             grip.add_controller(gd)
-            overlay.add_overlay(grip)  # canto entra por último → fica no topo no pixel BR
+            overlay.add_overlay(grip)  # cantos entram por último → ficam no topo
             handles.append(grip)
-        frame._note_handles = tuple(handles)
+        return tuple(handles)
 
-    def _set_note_handles_visible(self, frame, visible: bool) -> None:
-        for h in getattr(frame, "_note_handles", ()):  # noqa: E741 (h = handle)
+    @staticmethod
+    def _resize_rect(origin, dx, dy, edges, min_w, min_h):
+        """Novo (x,y,w,h) em unidades-base ao arrastar `edges` (n/s/e/w). Borda oposta fica
+        ancorada: arrastar W/N muda tamanho E posição; E/S só muda tamanho. Respeita o piso."""
+        x0, y0, w0, h0 = origin
+        w1 = w0 + dx if "e" in edges else (w0 - dx if "w" in edges else w0)
+        h1 = h0 + dy if "s" in edges else (h0 - dy if "n" in edges else h0)
+        w1 = max(min_w, w1)
+        h1 = max(min_h, h1)
+        x1 = x0 + (w0 - w1) if "w" in edges else x0  # ancora a borda direita
+        y1 = y0 + (h0 - h1) if "n" in edges else y0  # ancora a borda inferior
+        return x1, y1, w1, h1
+
+    def _set_resize_handles_visible(self, frame, visible: bool) -> None:
+        for h in getattr(frame, "_resize_handles", ()):  # noqa: E741 (h = handle)
             h.set_visible(visible)
 
-    def _resize_note_begin(self, _g, _x, _y, nid, axis):
+    def _resize_note_begin(self, _g, _x, _y, nid, edges):
         frame = self.note_frames.get(nid)
         if frame is None:
             return
         w, h = frame._body_scroll.get_size_request()  # tamanho vivo (base units)
         if w <= 0 or h <= 0:
             w, h = NOTE_W_DEFAULT, NOTE_H_DEFAULT
-        self._resize_note_origin = (w, h)
+        x, y = self._note_base.get(nid, (0.0, 0.0))
+        self._resize_origin = (x, y, w, h)
 
-    def _resize_note_update(self, _g, off_x, off_y, nid, axis):
-        o = getattr(self, "_resize_note_origin", None)
+    def _resize_note_update(self, _g, dx, dy, nid, edges):
+        o = getattr(self, "_resize_origin", None)
         if o is None:
             return
-        w = o[0] + off_x if axis in ("x", "both") else o[0]
-        h = o[1] + off_y if axis in ("y", "both") else o[1]
-        w = max(MIN_NOTE_W, w)
-        h = max(MIN_NOTE_H, h)
         frame = self.note_frames.get(nid)
-        if frame is not None:
-            frame._body_scroll.set_size_request(int(w), int(h))
+        if frame is None:
+            return
+        x, y, w, h = self._resize_rect(o, dx, dy, edges, MIN_NOTE_W, MIN_NOTE_H)
+        frame._body_scroll.set_size_request(int(w), int(h))
+        self._note_base[nid] = (x, y)
+        self._place(frame, (x, y), self.model.zoom())
         self._resize_plane()
         self.plane.queue_draw()
 
-    def _resize_note_end(self, _g, _ox, _oy, nid, axis):
-        self._resize_note_origin = None
+    def _resize_note_end(self, _g, _ox, _oy, nid, edges):
+        o = getattr(self, "_resize_origin", None)
+        self._resize_origin = None
         frame = self.note_frames.get(nid)
         if frame is None:
             return
         w, h = frame._body_scroll.get_size_request()
-        w = max(MIN_NOTE_W, snap_to_grid(w, GRID))  # imanta à grade (igual nó)
+        w = max(MIN_NOTE_W, snap_to_grid(w, GRID))  # imanta à grade
         h = max(MIN_NOTE_H, snap_to_grid(h, GRID))
+        x, y = self._note_base.get(nid, (0.0, 0.0))
+        if o is not None:  # reposiciona com o tamanho snapado mantendo a borda ancorada
+            x = o[0] + (o[2] - w) if "w" in edges else x
+            y = o[1] + (o[3] - h) if "n" in edges else y
+        x, y = snap_point((x, y), GRID)
         frame._body_scroll.set_size_request(int(w), int(h))
+        self._note_base[nid] = (x, y)
+        self._place(frame, (x, y), self.model.zoom())
         if self.notes is not None:  # persiste (carrega a nota inteira p/ não perder campos)
             note = self.notes.get(nid)
             if note is not None:
                 note.width, note.height = float(w), float(h)
+                note.x, note.y = float(x), float(y)
                 self.notes.save(note)
         self._autofit_all_groups()
         self._resize_plane()
@@ -1156,14 +1192,12 @@ class CanvasWindow:
         old = self._frame_of(self._selected)
         if old is not None:
             old.remove_css_class("selected")
-            if self._selected[0] == "note":  # esconde alças de resize da nota desmarcada
-                self._set_note_handles_visible(old, False)
+            self._set_resize_handles_visible(old, False)  # esconde alças (no-op se não tiver)
         self._selected = sel
         new = self._frame_of(sel)
         if new is not None:
             new.add_css_class("selected")
-            if sel[0] == "note":  # mostra alças de resize da nota selecionada
-                self._set_note_handles_visible(new, True)
+            self._set_resize_handles_visible(new, True)  # mostra alças do item selecionado
         self._update_note_ctx()  # mostra/esconde a pílula de contexto da nota
 
     def _on_motion(self, _c, x, y):
@@ -2313,7 +2347,10 @@ class CanvasWindow:
         # overlay EXTERNO envolvendo o card inteiro
         outer = Gtk.Overlay()
         outer.set_child(box)
-        self._build_note_resize_handles(frame, outer)  # só visíveis quando selecionado
+        frame._resize_handles = self._build_resize_handles(  # só visíveis quando selecionado
+            outer, note.id,
+            self._resize_note_begin, self._resize_note_update, self._resize_note_end,
+        )
         frame.set_child(outer)
         # note.x/note.y são coords-base; o zoom escala como nos nós (P5)
         self._note_base[note.id] = (note.x, note.y)

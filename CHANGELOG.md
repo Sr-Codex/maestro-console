@@ -3,14 +3,18 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
-## [0.30.0] — Resize da nota (arrastar a borda quando selecionada)
-- **Redimensionar a nota:** ao selecioná-la, aparecem **3 alças** — canto inferior-direito
-  (diagonal), borda direita (horizontal) e borda inferior (vertical), com os cursores certos.
-  Arrastar muda o tamanho; o **corpo rola** (não cresce). As alças somem ao desselecionar.
-- **Persistido:** novas colunas `notes.width/height` (migração idempotente, espelha `font`);
-  reabrir restaura o tamanho. Duplicar copia o tamanho.
-- Reusa o padrão de resize dos nós (alças na subárvore escalada → offsets em unidades-base;
-  snap à grade; piso `MIN_NOTE_W/H = 160×90`). Sem conflito com pan/seleção (alças sem tag).
+## [0.30.0] — Resize na linha da seleção (nós e notas, 4 lados + cantos)
+- **Redimensionar pelas BORDAS:** ao selecionar um card (borda azul tracejada), aparecem **8 alças**
+  na linha — 4 lados (cima/baixo/esq/dir) + 4 cantos — com os cursores certos. Arrastar redimensiona;
+  arrastar pela borda **superior/esquerda** move a posição (a borda oposta fica ancorada). Somem ao
+  desselecionar. **Padrão para todos os nós (terminais) e notas**, existentes e futuros (construtor
+  genérico `_build_resize_handles` + `_resize_rect`).
+- **Nó (terminal):** substitui o antigo grip "⤡" fixo no rodapé pelas alças na linha (consistente
+  com a nota). Tamanho **e** posição persistem (`set_node_size`/`set_position`).
+- **Nota:** o **corpo rola** (não cresce). Novas colunas `notes.width/height` (migração idempotente,
+  espelha `font`); tamanho e posição persistem; duplicar copia o tamanho.
+- Alças na subárvore escalada → offsets do `GestureDrag` em unidades-base; a reposição muda só a
+  translação (delta invariante → sem jitter). Snap à grade; piso nó `240×120`, nota `160×90`.
 - **Bug latente corrigido:** `file_to_note` (round-trip agent-to-note) descartava `font` — agora
   preserva `font`/`width`/`height` (além de `color`/`pinned`).
 
