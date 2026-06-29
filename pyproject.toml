@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "maestro-console"
-version = "0.37.2"
+version = "0.38.0"
 description = "Orquestrador de agentes de IA em terminal (terminal-first) para handhelds Linux ARM (ClockworkPi uConsole)."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,6 +25,8 @@ maestro = "maestro.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["maestro"]
+# ícones symbolic próprios (assets do canvas) — garante que entrem no wheel
+artifacts = ["maestro/native/icons/**/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
