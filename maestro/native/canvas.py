@@ -12,11 +12,13 @@ independentes do zoom: display = base * zoom (helpers `to_display`/`to_base`).
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
 import sys
 import threading
+import unicodedata
 from pathlib import Path
 
 import gi
@@ -156,6 +158,51 @@ TERM_ICON_NAMES = [
     "wrench", "zap", "cpu", "memory-stick", "laptop", "monitor", "paintbrush", "folder",
     "file-text", "box", "shield", "eye", "wand-sparkles", "rocket", "database", "clock",
 ]
+# Emojis curados (grade própria): o Gtk.EmojiChooser fica VAZIO neste device — não há
+# en.gresource p/ o locale en_US. Renderizados pelo Noto Color Emoji (instalado).
+TERM_EMOJIS = [
+    "🤖", "🚀", "🐳", "🐍", "🔥", "⚡", "✨", "🧠", "💻", "🖥️", "🌐", "🛠️",
+    "🔧", "⚙️", "📦", "🗄️", "🔒", "🛡️", "👁️", "📁", "📝", "📊", "⏰", "🎯",
+]
+# blocos Unicode de emoji (picker próprio com busca — o Gtk.EmojiChooser fica vazio em en_US)
+_EMOJI_BLOCKS = [
+    (0x1F300, 0x1F5FF), (0x1F600, 0x1F64F), (0x1F680, 0x1F6FF), (0x1F900, 0x1F9FF),
+    (0x1FA70, 0x1FAFF), (0x2600, 0x26FF), (0x2700, 0x27BF),
+]
+_EMOJI_CATALOG: list[tuple[str, str]] | None = None  # [(char, nome em minúsculas)] — cache
+
+
+def emoji_catalog() -> list[tuple[str, str]]:
+    """Catálogo (char, nome) de todos os emojis nomeados — via unicodedata (sem dado externo).
+    Construído 1x e cacheado. Nome em minúsculas p/ busca por substring."""
+    global _EMOJI_CATALOG
+    if _EMOJI_CATALOG is None:
+        cat: list[tuple[str, str]] = []
+        for a, b in _EMOJI_BLOCKS:
+            for cp in range(a, b + 1):
+                ch = chr(cp)
+                try:
+                    cat.append((ch, unicodedata.name(ch).lower()))
+                except ValueError:
+                    pass  # codepoint sem nome/atribuição → ignora
+        _EMOJI_CATALOG = cat
+    return _EMOJI_CATALOG
+
+
+_ICON_CATALOG: list[tuple[str, str]] | None = None  # [(nome, texto-de-busca)] — cache
+
+
+def icon_catalog() -> list[tuple[str, str]]:
+    """Catálogo (nome, texto-de-busca) dos ícones dev bundlados — de icons/dev-icons.json
+    (nome + tags do Lucide). Cacheado. Vazio se o índice faltar (degradação suave)."""
+    global _ICON_CATALOG
+    if _ICON_CATALOG is None:
+        p = Path(__file__).resolve().parent / "icons" / "dev-icons.json"
+        try:
+            _ICON_CATALOG = sorted(json.loads(p.read_text(encoding="utf-8")).items())
+        except OSError:
+            _ICON_CATALOG = []
+    return _ICON_CATALOG
 
 
 def _hex_to_rgb(h: str) -> tuple[int, int, int]:
@@ -1192,6 +1239,56 @@ class CanvasWindow:
         applies.append(apply)
         return box
 
+    def _search_picker(self, label, entries, render, pick) -> Gtk.Widget:
+        """MenuButton com popover de BUSCA (genérico: serve ícone e emoji). `entries` = lista de
+        (key, texto_busca); `render(key)` → filho do botão; `pick(key)` → ação ao clicar.
+        Popula ao abrir (lazy) e ao digitar; limita o render p/ a tela pequena."""
+        mb = Gtk.MenuButton(label=label)
+        mb.set_halign(Gtk.Align.START)
+        pop = Gtk.Popover()
+        pv = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        pv.set_size_request(330, -1)
+        search = Gtk.SearchEntry()
+        search.set_placeholder_text("buscar (em inglês: ex. rocket, git, server)")
+        pv.append(search)
+        scr = Gtk.ScrolledWindow()
+        scr.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scr.set_min_content_height(220)
+        scr.set_max_content_height(220)
+        flow = Gtk.FlowBox()
+        flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        flow.set_max_children_per_line(10)
+        flow.set_homogeneous(True)
+        scr.set_child(flow)
+        pv.append(scr)
+        pop.set_child(pv)
+        mb.set_popover(pop)
+
+        def repop(*_):
+            child = flow.get_first_child()
+            while child is not None:
+                flow.remove(child)
+                child = flow.get_first_child()
+            q = search.get_text().strip().lower()
+            shown = 0
+            for key, text in entries:
+                if q and q not in text:
+                    continue
+                b = Gtk.Button()
+                b.add_css_class("ico-btn")
+                b.set_has_frame(False)
+                b.set_child(render(key))
+                b.set_tooltip_text(key)
+                b.connect("clicked", lambda _b, k=key: (pop.popdown(), pick(k)))
+                flow.insert(b, -1)
+                shown += 1
+                if shown >= 250:  # limite por render (perf na tela pequena)
+                    break
+
+        search.connect("search-changed", repop)
+        mb.connect("notify::active", lambda *_: repop() if mb.get_active() else None)
+        return mb
+
     def _editor_icon_section(self, nid: str, applies: list) -> Gtk.Widget:
         """Seção ÍCONE (Fase 1): grid dos 24 ícones bundlados (Lucide) + emoji custom + sem ícone.
         Transacional: aplica no Salvar (node_cfg 'icon' = 'maestro-<n>' | 'emoji:<e>' | '')."""
@@ -1258,16 +1355,37 @@ class CanvasWindow:
             grid.attach(b, i % per_row, i // per_row, 1, 1)
         box.append(grid)
 
-        # emoji custom: seletor NATIVO (Gtk.EmojiChooser) — clica e escolhe, sem digitar
-        emoji_btn = Gtk.Button(label="😀 Escolher emoji…")
-        emoji_btn.set_halign(Gtk.Align.START)
-        chooser = Gtk.EmojiChooser()
-        chooser.set_parent(emoji_btn)
-        chooser.connect("emoji-picked", lambda _c, e: choose(f"emoji:{e}"))
-        emoji_btn.connect("clicked", lambda _b: chooser.popup())
-        # libera o popover ao destruir o diálogo (evita warning de widget órfão)
-        emoji_btn.connect("destroy", lambda _b: chooser.unparent())
-        box.append(emoji_btn)
+        # 🔎 Mais ícones: busca nos 256 ícones dev bundlados (nome + tags)
+        def _icon_img(n):
+            im = Gtk.Image.new_from_icon_name(f"maestro-{n}")
+            im.set_pixel_size(20)
+            return im
+
+        box.append(self._search_picker(
+            "🔎 Mais ícones…", icon_catalog(), _icon_img,
+            lambda n: choose(f"maestro-{n}")))
+
+        # emoji custom: GRADE PRÓPRIA (o Gtk.EmojiChooser abre vazio neste device — sem
+        # en.gresource p/ en_US). Cada emoji entra em `btns` p/ o destaque do mark() valer também.
+        elbl = Gtk.Label(label="Emoji:", xalign=0)
+        elbl.add_css_class("dim-label")
+        box.append(elbl)
+        egrid = Gtk.Grid()
+        egrid.set_row_spacing(4)
+        egrid.set_column_spacing(4)
+        for i, e in enumerate(TERM_EMOJIS):
+            eb = Gtk.Button(label=e)
+            eb.add_css_class("ico-btn")
+            eval_ = f"emoji:{e}"
+            eb.connect("clicked", lambda _b, v=eval_: choose(v))
+            btns.append((eb, eval_))
+            egrid.attach(eb, i % per_row, i // per_row, 1, 1)
+        box.append(egrid)
+
+        # 🔎 Mais emojis: busca em TODOS (catálogo via unicodedata)
+        box.append(self._search_picker(
+            "🔎 Mais emojis…", emoji_catalog(), lambda e: Gtk.Label(label=e),
+            lambda e: choose(f"emoji:{e}")))
         mark()
 
         def apply():

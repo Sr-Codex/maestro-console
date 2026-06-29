@@ -11,10 +11,12 @@ Aba **Aparência** do diálogo "Editar Terminal", tudo **por terminal** e persis
   do sistema. Aplicado na criação do nó e no Salvar.
 - **Cor accent:** tint da faixa do cabeçalho por terminal — paleta da nota (`.csw`/`.palsw-i`),
   **∅ sem cor** e **🎨 Mais cores** (`Gtk.ColorDialog`). Provider de CSS próprio.
-- **Ícone:** **24 ícones Lucide (ISC)** bundlados em `maestro/native/icons` (cor fixada #cdd6f4,
-  SVG planos — GTK não recolore stroke-`currentColor`; ver pesquisa), grid no editor + **preview
-  "Atual:"** + **seletor de emoji nativo** (`Gtk.EmojiChooser`, sem digitar). Ícone no cabeçalho do
-  nó. `LICENSE-lucide` incluído.
+- **Ícone:** **256 ícones Lucide (ISC) focados em dev** bundlados em `maestro/native/icons` (cor
+  fixada #cdd6f4, SVG planos — GTK não recolore stroke-`currentColor`; ver pesquisa). No editor:
+  grid rápido (24) + **"🔎 Mais ícones…"** com **busca por nome+tags** (índice `dev-icons.json`) +
+  **preview "Atual:"**. **Emoji:** grade rápida (24) + **"🔎 Mais emojis…"** com busca em ~1777
+  (catálogo via `unicodedata` — o `Gtk.EmojiChooser` nativo abre vazio em `en_US`, sem `en.gresource`).
+  Picker de busca genérico (`_search_picker`, ícone+emoji). Ícone no cabeçalho do nó. `LICENSE-lucide`.
 - **Diálogo:** mais largo (560px) + **abas roláveis** (cap 320px) p/ caber na tela do uConsole;
   botões Cancelar/Salvar sempre visíveis. Transacional (aplica no Salvar).
 
