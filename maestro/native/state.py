@@ -7,6 +7,7 @@ Separa a lógica testável da parte gráfica. Persiste via o Store da engine
 from __future__ import annotations
 
 import json
+import math
 
 from ..engine.state.store import Store
 
@@ -140,39 +141,58 @@ def snap_point(point: tuple[float, float], grid: int = GRID) -> tuple[float, flo
     return (snap_to_grid(point[0], grid), snap_to_grid(point[1], grid))
 
 
-def cable_bezier(src_box, dst_box):
-    """Curva tipo corda (C5) entre dois nós: cubic bezier que SAI/ENTRA pela borda
-    mais próxima do outro endpoint (não mais fixo direita→esquerda).
+def _anchor_candidates(box):
+    """8 âncoras de cabo do `box` (x,y,w,h): 4 meios de borda + 4 cantos. Cada item é
+    `(ponto, direção_de_saída)`. A direção é p/ FORA do box (o cabo sai por ali).
+    Ordem: meios de borda primeiro → no empate o auto-roteamento prefere o meio ao canto."""
+    x, y, w, h = box
+    return [
+        ((x + w / 2.0, y), (0.0, -1.0)),  # n
+        ((x + w / 2.0, y + h), (0.0, 1.0)),  # s
+        ((x + w, y + h / 2.0), (1.0, 0.0)),  # e
+        ((x, y + h / 2.0), (-1.0, 0.0)),  # w
+        ((x, y), (-1.0, -1.0)),  # nw
+        ((x + w, y), (1.0, -1.0)),  # ne
+        ((x, y + h), (-1.0, 1.0)),  # sw
+        ((x + w, y + h), (1.0, 1.0)),  # se
+    ]
 
-    Escolhe o eixo dominante pela distância entre os CENTROS: se |Δx| ≥ |Δy| o cabo
-    sai pela esquerda/direita (controles horizontais); senão pela cima/baixo (controles
-    verticais). Assim o destino atrás/acima da origem não gera a "volta" feia.
+
+def _magnet_pair(src_box, dst_box):
+    """ÍMÃ: o PAR de âncoras (uma em cada card, dentre as 8) mais PRÓXIMAS entre si.
+    Devolve `((x0,y0),(d0x,d0y),(x3,y3),(d3x,d3y))` — pontos + direções de saída.
+    Itera meios-de-borda primeiro → no empate de distância prefere o meio ao canto."""
+    best = None
+    best_d2 = None
+    for (p0x, p0y), d0 in _anchor_candidates(src_box):
+        for (p3x, p3y), d3 in _anchor_candidates(dst_box):
+            d2 = (p3x - p0x) ** 2 + (p3y - p0y) ** 2
+            if best_d2 is None or d2 < best_d2:  # `<` estrito: 1º par mínimo (meio antes de canto)
+                best, best_d2 = ((p0x, p0y), d0, (p3x, p3y), d3), d2
+    return best
+
+
+def cable_bezier(src_box, dst_box):
+    """Curva tipo corda (C5) entre dois cards, com AUTO-ROTEAMENTO tipo ÍMÃ por 8 pontos:
+    escolhe o PAR de âncoras (4 meios de borda + 4 cantos de cada card) mais próximas entre
+    si — o cabo "gruda" pelos pontos mais perto. Os pontos de controle saem na direção da
+    âncora (perpendicular no meio, diagonal no canto), dando a leitura de fluxo. Nada fica
+    preso: é tudo automático e segue os cards quando eles se movem.
 
     Recebe boxes `(x, y, w, h)` (já em coords de tela/escaladas) e devolve
     `(x0, y0, c1x, c1y, c2x, c2y, x3, y3)` p/ `cr.move_to`+`cr.curve_to`.
     """
-    ax, ay, aw, ah = src_box
-    bx, by, bw, bh = dst_box
-    acx, acy = ax + aw / 2.0, ay + ah / 2.0  # centro da origem
-    bcx, bcy = bx + bw / 2.0, by + bh / 2.0  # centro do destino
-    dx, dy = bcx - acx, bcy - acy
-    if abs(dx) >= abs(dy):  # eixo HORIZONTAL domina: sai pela esquerda/direita
-        if dx >= 0:  # destino à direita
-            x0, y0, x3, y3 = ax + aw, acy, bx, bcy
-        else:  # destino à esquerda
-            x0, y0, x3, y3 = ax, acy, bx + bw, bcy
-        # curvatura = metade da distância horizontal, com piso p/ nós próximos/sobrepostos
-        k = max(abs(x3 - x0) * 0.5, 40.0)
-        s = 1.0 if x3 >= x0 else -1.0
-        return (x0, y0, x0 + s * k, y0, x3 - s * k, y3, x3, y3)
-    # eixo VERTICAL domina: sai por cima/baixo (controles verticais)
-    if dy >= 0:  # destino abaixo
-        x0, y0, x3, y3 = acx, ay + ah, bcx, by
-    else:  # destino acima
-        x0, y0, x3, y3 = acx, ay, bcx, by + bh
-    k = max(abs(y3 - y0) * 0.5, 40.0)
-    s = 1.0 if y3 >= y0 else -1.0
-    return (x0, y0, x0, y0 + s * k, x3, y3 - s * k, x3, y3)
+    (x0, y0), (d0x, d0y), (x3, y3), (d3x, d3y) = _magnet_pair(src_box, dst_box)
+    # curvatura proporcional à distância entre as âncoras, com piso p/ cards próximos
+    k = max(math.hypot(x3 - x0, y3 - y0) * 0.5, 40.0)
+
+    def _unit(dx, dy):  # normaliza (cantos são diagonais) p/ a curvatura não exagerar
+        m = math.hypot(dx, dy) or 1.0
+        return dx / m, dy / m
+
+    u0x, u0y = _unit(d0x, d0y)
+    u3x, u3y = _unit(d3x, d3y)
+    return (x0, y0, x0 + u0x * k, y0 + u0y * k, x3 + u3x * k, y3 + u3y * k, x3, y3)
 
 
 def minimap_layout(rects, mm_w: float, mm_h: float, pad: float = 4.0):

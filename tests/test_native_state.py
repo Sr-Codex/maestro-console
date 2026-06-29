@@ -98,6 +98,14 @@ def test_cable_bezier_destino_a_esquerda_sai_pela_esquerda():
     assert x3 == 100  # borda direita do destino (x+w do destino)
 
 
+def test_cable_bezier_diagonal_usa_cantos():
+    # destino bem na DIAGONAL (baixo-direita): o auto-roteamento de 8 pontos escolhe os
+    # CANTOS que se encaram — origem pelo canto se, destino pelo canto nw.
+    x0, y0, _c1x, _c1y, _c2x, _c2y, x3, y3 = cable_bezier((0, 0, 100, 40), (300, 300, 100, 40))
+    assert (x0, y0) == (100, 40)  # canto se (inferior-direito) da origem
+    assert (x3, y3) == (300, 300)  # canto nw (superior-esquerdo) do destino
+
+
 def test_position_default_e_persistencia(tmp_path):
     with Store(tmp_path / "m.db") as s:
         m = CanvasModel(s)

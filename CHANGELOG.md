@@ -3,27 +3,32 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
-## [0.34.0] — Cabo melhor (borda + fluxo) + conserto do cursor de resize
-- **Fix: cursor de resize voltou a aparecer nas bordas.** O cursor mudava certo no código, mas
-  temas de cursor incompletos (ex.: **Windows-10-Icons**, sem `Inherits=`) **não têm** os nomes
-  CSS `ns/ew/nwse/nesw-resize` — `new_from_name` caía na seta padrão e "nada acontecia". Agora
-  cada cursor é criado com **fallback pro nome legado X11** (`v_double_arrow`/`h_double_arrow`/
-  `bd_double_arrow`/`fd_double_arrow`) que esses temas têm. A detecção da borda nunca esteve
-  quebrada (confirmado por medição ao vivo); era só o render do cursor.
-- **Faixa de resize 6→10px:** alvo maior em volta da borda do card selecionado, mais fácil de pegar.
-- **Saída pela borda mais próxima:** o cabo (bezier) agora **escolhe o eixo dominante** pela
-  distância entre os centros — se |Δx| ≥ |Δy| sai/entra pela **esquerda/direita** (controles
-  horizontais), senão por **cima/baixo** (controles verticais). Antes era fixo direita→esquerda,
-  o que fazia uma **volta feia** quando o destino estava atrás/acima da origem. `cable_bezier`
-  (função pura em `state.py`) reescrita; piso de curvatura (40) preservado nos dois eixos.
-- **Fluxo animado durante o handoff:** enquanto um cabo está em handoff ativo (`busy`), a linha
-  vira um **tracejado correndo** da origem pro destino — feedback vivo de que algo passa pela
-  conexão. Os demais cabos seguem **sólidos**. Tracejado e velocidade escalam com o zoom.
-- **Economia de bateria (uConsole):** a animação só roda quando há cabo `busy` — um
-  `add_tick_callback` (frame clock GTK4) liga ao virar `busy` e **se desliga sozinho** quando
-  nenhum cabo está fluindo (`_sync_cable_anim`/`_cable_tick`). Sem tick em canvas parado.
-- Cor por estado intacta (azul ocioso · `STATE_COLORS` em handoff). Testes do `cable_bezier`
-  cobrindo os casos vertical e destino-à-esquerda; `reset` do dash p/ não vazar a outros desenhos.
+## [0.34.0] — Cabo: ímã de 8 pontos + bolinha + fluxo direcional + conserto do connect/cursor
+- **Auto-roteamento tipo ÍMÃ por 8 pontos:** o cabo (bezier) gruda no **par de âncoras mais
+  próximas entre si** — 4 meios de borda + 4 cantos de cada card. Lado a lado usa os meios (↔/↕),
+  na diagonal usa os **cantos** que se encaram; segue os cards ao mover. Antes era fixo
+  direita→esquerda (volta feia quando o destino estava atrás/acima). `cable_bezier`/`_magnet_pair`
+  (funções puras em `state.py`); piso de curvatura preservado; controles saem na direção da âncora.
+- **Bolinha na ponta do cabo:** cada extremidade ganha uma bolinha (miolo branco + anel na cor do
+  cabo), visível **só após conectar**. Tamanho fixo de tela.
+- **Âncoras alinhadas na borda real:** `_cable_box` passa a usar os limites REAIS do frame
+  (`compute_bounds` = cabeçalho + corpo) em vez do tamanho do terminal — antes as âncoras de baixo
+  flutuavam acima da borda. Vale p/ nós e notas.
+- **Conectar clicando em QUALQUER área do card:** o connect agora é tratado pelo gesto CAPTURE do
+  frame (`_on_frame_press`), que pega o clique **antes do VTE/TextView consumir** — não precisa
+  mais mirar na barra superior. Fora do modo conectar, terminal/seleção/arraste seguem normais.
+- **Fluxo animado no SENTIDO REAL do dado:** durante um handoff/`maestro-ask` ativo (`busy`) o cabo
+  vira **tracejado correndo de quem ENVIA → quem RECEBE** (`_edge_flow`), independente de como o
+  cabo foi criado (é bidirecional). Só anima enquanto há `busy` e **se desliga sozinho** via
+  `add_tick_callback` (frame clock GTK4) — sem tick em canvas parado (poupa bateria no uConsole).
+  *Nota:* hoje dispara em agente↔agente; cabo nota↔nó ainda não marca `busy`.
+- **Fix: cursor de resize voltou a aparecer nas bordas.** Temas de cursor incompletos (ex.:
+  **Windows-10-Icons**, sem `Inherits=`) não têm os nomes CSS `ns/ew/nwse/nesw-resize` →
+  `new_from_name` caía na seta padrão. Agora cada cursor tem **fallback pro nome legado X11**
+  (`v_double_arrow`/`h_double_arrow`/`bd_double_arrow`/`fd_double_arrow`). A detecção da borda
+  nunca esteve quebrada (confirmado por medição ao vivo); era só o render do cursor. Faixa de
+  resize ajustada p/ **5px**.
+- Testes do `cable_bezier` cobrindo horizontal, vertical, destino-à-esquerda e **diagonal→cantos**.
 
 ## [0.33.0] — Nota conectada: agente lê/escreve + sabe que tem nota — Fase 4b
 - **O agente lê e escreve a nota conectada:** cada nota ligada a um nó vira o arquivo
