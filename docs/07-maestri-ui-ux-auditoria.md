@@ -1,5 +1,9 @@
 # Maestri — análise de UI/UX + auditoria do clone
 
+> ⚠️ **DEFASADO (histórico, 2026-06-26).** O baseline de UI do clone aqui **já foi superado**:
+> "cabos retos sem física", "sem minimapa", "sem grid", "estado a fazer" — tudo entregue desde
+> então (v0.20-0.37). Estado real: [`STATUS.md`](STATUS.md). A *análise do Maestri* segue útil.
+
 > Data: 2026-06-26 · PT-BR · Fontes: site oficial `themaestri.app` + deep-dive (acchapm1).
 > Objetivo: comparar a UI/UX do Maestri com a do maestro console e priorizar melhorias.
 > Realidade: Maestri é macOS/SwiftUI/Metal ("Liquid Glass"); não dá pra clonar pixel a

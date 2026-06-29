@@ -1,5 +1,10 @@
 # Roadmap por fases — ideias escolhidas (catálogo docs/09)
 
+> ⚠️ **PARCIALMENTE DEFASADO.** As **Fases 1-3** (descoberta/velocidade, geometria, organização —
+> minimapa, grupos, grid, notas) **já foram entregues** (v0.19→v0.23); são apresentadas aqui como
+> futuras. As **Fases 4-7** (steering, timeline, diff/commit, kanban, escala, blocos Warp) seguem
+> válidas/futuras. Estado real: [`STATUS.md`](STATUS.md) e `CHANGELOG.md`.
+
 > Data: 2026-06-26 · PT-BR · Critério de ordem: valor alto × esforço baixo primeiro;
 > dependências respeitadas; pesados (engenharia/VTE) por último. Workflow: **PR-por-fase**,
 > cada fase no processo benefícios → plano → busca rápida → implementação → PR.

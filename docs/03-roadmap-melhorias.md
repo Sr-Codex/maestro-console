@@ -1,5 +1,9 @@
 # Roadmap de Melhorias — maestro console (vs Maestri)
 
+> ⚠️ **DEFASADO (histórico) — não é o estado atual.** Gap analysis **vs v0.6.0**; o projeto está
+> em **v0.37.0** e a maioria dos ❌/🟡 abaixo (Fases 1-5: cabos, floors, papéis, notas, routines,
+> attention) **já foi entregue**. Estado real: [`STATUS.md`](STATUS.md) e `CHANGELOG.md`.
+
 > Gap analysis Maestri (themaestri.app, features até ~v0.30/2026) × maestro console **v0.6.0**.
 > Pesquisa: `docs/01-pesquisa-maestri.md` + inventário do código (2026-06-22).
 > **Foundation = decisão do usuário.** Este é um roadmap *proposto*: a ordem/escopo das fases é decisão sua.
