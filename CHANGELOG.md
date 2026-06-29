@@ -3,12 +3,22 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
-## [0.34.0] — Cabo: ímã de 8 pontos + bolinha + fluxo direcional + conserto do connect/cursor
-- **Auto-roteamento tipo ÍMÃ por 8 pontos:** o cabo (bezier) gruda no **par de âncoras mais
+## [0.34.0] — Cabo: física (Verlet/3 modos) + ímã de 8 pontos + bolinha + fluxo + connect/cursor
+- **Física no cabo — corda Verlet + 3 modos comutáveis (Ctrl+Shift+P):** o cabo deixou de ser
+  estático e ganhou **física orgânica** (ADR-14). Modos: **Verlet** (padrão — corda que cai,
+  balança e assenta com inércia), **catenária** (sag estático elegante, sem balanço) e
+  **bezier+mola** (caída leve + atraso suave ao mover, mais esticado). O usuário cicla a gosto;
+  um rótulo **pisca ~2 s** ao trocar e some. Núcleo **puro/testável** em `maestro/native/rope.py`
+  (Jakobsen/GDC 2001; `tests/test_native_rope.py`); desenho via **spline Catmull-Rom**.
+- **Bateria (uConsole):** a simulação roda num `add_tick_callback` (frame clock GTK4) que **dorme
+  ~0,5 s depois de assentar** — canvas parado = sem tick. Passo de tempo **fixo** (estável p/ Verlet).
+- **Troca de âncora suavizada:** ao mover o card e o ímã trocar de borda/canto, a ponta do cabo
+  **escorrega** até a nova âncora em vez de teleportar (acaba o "tranco"). Pesquisa: `docs/12`.
+- **Auto-roteamento tipo ÍMÃ por 8 pontos:** o cabo gruda no **par de âncoras mais
   próximas entre si** — 4 meios de borda + 4 cantos de cada card. Lado a lado usa os meios (↔/↕),
   na diagonal usa os **cantos** que se encaram; segue os cards ao mover. Antes era fixo
-  direita→esquerda (volta feia quando o destino estava atrás/acima). `cable_bezier`/`_magnet_pair`
-  (funções puras em `state.py`); piso de curvatura preservado; controles saem na direção da âncora.
+  direita→esquerda (volta feia quando o destino estava atrás/acima). `cable_anchors`/`_magnet_pair`
+  (funções puras em `state.py`); controles saem na direção da âncora.
 - **Bolinha na ponta do cabo:** cada extremidade ganha uma bolinha (miolo branco + anel na cor do
   cabo), visível **só após conectar**. Tamanho fixo de tela.
 - **Âncoras alinhadas na borda real:** `_cable_box` passa a usar os limites REAIS do frame

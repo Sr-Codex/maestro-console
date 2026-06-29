@@ -195,6 +195,13 @@ def cable_bezier(src_box, dst_box):
     return (x0, y0, x0 + u0x * k, y0 + u0y * k, x3 + u3x * k, y3 + u3y * k, x3, y3)
 
 
+def cable_anchors(src_box, dst_box):
+    """As duas PONTAS do cabo pelo ímã de 8 pontos: `(p0, p3)`. Usado pela corda Verlet,
+    que fixa as pontas aqui e deixa o miolo cair/balançar. Reusa `_magnet_pair`."""
+    (x0, y0), _d0, (x3, y3), _d3 = _magnet_pair(src_box, dst_box)
+    return ((x0, y0), (x3, y3))
+
+
 def minimap_layout(rects, mm_w: float, mm_h: float, pad: float = 4.0):
     """Escala+offset pra encaixar o 'mundo' (lista de rects (x,y,w,h) em coords-base)
     dentro do minimapa mm_w×mm_h, centralizado. Devolve (scale, offx, offy) tal que
