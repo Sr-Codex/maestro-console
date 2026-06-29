@@ -114,6 +114,18 @@ def test_position_default_e_persistencia(tmp_path):
         assert m.position("term1", (0, 0)) == (200.0, 150.0)
 
 
+def test_cable_phys_default_e_persistencia(tmp_path):
+    # default verlet; a escolha sobrevive ao "fechar/reabrir" (nova instância no mesmo store)
+    db = tmp_path / "m.db"
+    with Store(db) as s:
+        m = CanvasModel(s)
+        assert m.cable_phys() == "verlet"  # default
+        m.set_cable_phys("catenary")
+        assert m.cable_phys() == "catenary"
+    with Store(db) as s2:  # reabre
+        assert CanvasModel(s2).cable_phys() == "catenary"  # persistiu
+
+
 def test_zoom_default_persistencia_e_limites(tmp_path):
     with Store(tmp_path / "m.db") as s:
         m = CanvasModel(s)

@@ -347,7 +347,7 @@ class CanvasWindow:
         self._springs: dict[tuple[str, str], tuple[float, float]] = {}  # ctrl suavizado (modo mola)
         self._anchor_sm: dict[tuple[str, str], tuple] = {}  # pontas suavizadas (troca de âncora)
         self._cable_rest = 0  # frames consecutivos em repouso (p/ dormir o tick)
-        self._cable_phys = "verlet"  # "verlet" | "catenary" | "spring" (Ctrl+Shift+P cicla)
+        self._cable_phys = model.cable_phys()  # persistido: verlet|catenary|spring (Ctrl+Shift+P)
         self._phys_label_frames = 0  # frames restantes do rótulo do modo (flash ao trocar)
         self._active_edge: tuple[str, str] | None = None
         self._pan: tuple[float, float] | None = None
@@ -2079,7 +2079,9 @@ class CanvasWindow:
             return True
         if keyval in (Gdk.KEY_p, Gdk.KEY_P) and ctrl and shift:
             order = ["verlet", "catenary", "spring"]  # cicla a física do cabo (gosto do usuário)
-            self._cable_phys = order[(order.index(self._cable_phys) + 1) % len(order)]
+            i = order.index(self._cable_phys) if self._cable_phys in order else 0
+            self._cable_phys = order[(i + 1) % len(order)]
+            self.model.set_cable_phys(self._cable_phys)  # persiste (abre igual fechou)
             self._springs.clear()  # recomeça a mola limpa ao entrar no modo
             self._phys_label_frames = PHYS_LABEL_FRAMES  # flash do nome do modo
             self._wake_cables()
