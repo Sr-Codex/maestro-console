@@ -24,6 +24,16 @@ deste repositório. O fluxo completo está em `CONTRIBUTING.md` — siga-o.
   `terminal_theme`/`native_zoom`/roster de terminais.
 - É parte do "feito": uma config nova só está concluída quando **persiste e foi testada** reabrindo.
 
+## Cápsulas de UI do canvas (arquitetura — obrigatório)
+Padrão de toolbar do canvas nativo, decidido pelo usuário:
+1. **Cápsula principal (FAB, topo):** **toda config de software + criação de elementos.** Cada
+   feature nova / cada tipo de **nó novo** entra aqui (ex.: novo terminal, nova nota, novo grupo).
+2. **Cápsula contextual por elemento:** aparece **ao SELECIONAR** um elemento (1 clique) e mostra as
+   **config/ações DAQUELE elemento** (espelha a pílula da nota). **Todo elemento que tiver config
+   deve ter a sua cápsula contextual** — generalize o padrão da nota, não crie UI ad-hoc por nó.
+3. **Zoom** fica numa **cápsula inferior-esquerda** (rodapé).
+4. **Sem menu "☰ ações" global** — as opções se distribuem entre (1) global e (2) por-elemento.
+
 ## Como rodar/testar
 - Testes: `.venv/bin/pytest -q` · Lint: `.venv/bin/ruff check maestro tests`
 - Canvas nativo (GTK/VTE): python do SISTEMA, via `./bin/maestro-canvas` (não o `.venv`).
