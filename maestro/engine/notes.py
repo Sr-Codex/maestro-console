@@ -116,6 +116,28 @@ def md_wrap_toggle(
     return md_wrap(text, sel_start, sel_end, left, right)  # senão, embrulha
 
 
+_LIST_RE = re.compile(r"^(\s*)(- \[[ xX]\] |[-*] )(.*)$")  # indent, marcador, conteúdo
+
+
+def md_enter_continuation(text: str, cursor: int) -> tuple[str, int] | None:
+    """Enter numa linha de lista/checkbox: devolve `(novo_texto, novo_cursor)` que CONTINUA a
+    lista (próximo item; checkbox novo sempre desmarcado) ou, se o item está VAZIO, SAI da lista
+    (remove o marcador da linha). `None` se a linha do cursor não é lista (Enter normal)."""
+    line_start = text.rfind("\n", 0, cursor) + 1
+    line_end = text.find("\n", cursor)
+    if line_end == -1:
+        line_end = len(text)
+    m = _LIST_RE.match(text[line_start:line_end])
+    if not m:
+        return None
+    indent, marker, content = m.group(1), m.group(2), m.group(3)
+    if content.strip() == "":  # item vazio → sai da lista (apaga o marcador desta linha)
+        return text[:line_start] + text[line_end:], line_start
+    nxt = "- [ ] " if marker.startswith("- [") else marker  # checkbox novo = desmarcado
+    insert = "\n" + indent + nxt
+    return text[:cursor] + insert + text[cursor:], cursor + len(insert)
+
+
 def _md_inline(s: str) -> str:
     """Inline markdown → Pango (em texto já escapado). Ordem evita colisão (código→negrito→
     tachado→itálico; negrito antes do itálico p/ não confundir ** com *)."""

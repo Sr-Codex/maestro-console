@@ -4,6 +4,7 @@ from maestro.engine.notes import (
     Note,
     Notes,
     file_to_note,
+    md_enter_continuation,
     md_line_prefix,
     md_spans,
     md_to_pango,
@@ -184,6 +185,31 @@ def test_md_spans_headings_niveis():
     assert (0, 4, "h1") in md_spans("# oi")  # linha toda vira h1
     assert any(s == "h2" for *_x, s in md_spans("##sub"))
     assert any(s == "h3" for *_x, s in md_spans("### tres"))
+
+
+def test_enter_continua_checkbox():
+    text = "- [ ] tarefa"
+    new, cur = md_enter_continuation(text, len(text))
+    assert new == "- [ ] tarefa\n- [ ] " and cur == len(new)  # próximo checkbox desmarcado
+
+
+def test_enter_checkbox_marcado_gera_desmarcado():
+    new, _ = md_enter_continuation("- [x] feito", len("- [x] feito"))
+    assert new.endswith("\n- [ ] ")  # novo item sempre desmarcado
+
+
+def test_enter_continua_bullet():
+    new, _ = md_enter_continuation("- item", len("- item"))
+    assert new == "- item\n- "
+
+
+def test_enter_item_vazio_sai_da_lista():
+    new, cur = md_enter_continuation("- [ ] ", len("- [ ] "))
+    assert new == "" and cur == 0  # marcador removido (sai da lista)
+
+
+def test_enter_fora_de_lista_retorna_none():
+    assert md_enter_continuation("texto normal", 5) is None
 
 
 def test_md_line_prefix_no_inicio():

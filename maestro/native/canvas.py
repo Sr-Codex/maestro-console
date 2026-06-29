@@ -41,6 +41,7 @@ from ..engine.envelope import EnvelopeState  # noqa: E402
 from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
 from ..engine.notes import (  # noqa: E402
     file_to_note,
+    md_enter_continuation,
     md_line_prefix,
     md_spans,
     md_to_pango,
@@ -2726,6 +2727,14 @@ class CanvasWindow:
         self._note_md_tags(buf)
         buf.connect("changed", lambda b: self._restyle_note(b))
         self._restyle_note(buf)
+        # auto-scroll: o corpo acompanha o cursor ao digitar (não some no fim do bloco). Como o
+        # ScrolledWindow rola o STACK (não o TextView), rolamos manualmente pelo vadjustment.
+        buf.connect("changed", lambda b, fr=frame: GLib.idle_add(self._note_autoscroll, fr))
+        # Enter numa linha de checkbox/lista continua o próximo item (CAPTURE = antes do TextView)
+        keyctl = Gtk.EventControllerKey()
+        keyctl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        keyctl.connect("key-pressed", self._note_body_key, frame)
+        body.add_controller(keyctl)
         self._apply_note_color(frame, note.color)  # frame + faixa + corpo + placeholder
         # já abre com formatação ATIVA (modo "ver") se a nota tem conteúdo; vazia abre p/ editar
         self._set_note_view(frame, bool(note.body.strip()))
@@ -2735,21 +2744,8 @@ class CanvasWindow:
         body.add_controller(fc)
         box.append(head)
         box.append(overlay)
-        # agent-to-note: rodar um agente com a nota (V9-S4)
-        if self.controller is not None:
-            agents = installed_agents()
-            rrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
-            acombo = Gtk.ComboBoxText()
-            for name in agents:
-                acombo.append_text(name)
-            if agents:
-                acombo.set_active(0)
-            acombo.set_hexpand(True)
-            rb = Gtk.Button(label="▶ rodar")
-            rb.connect("clicked", lambda _b, fr=frame, c=acombo: self._run_note(fr, c))
-            rrow.append(acombo)
-            rrow.append(rb)
-            box.append(rrow)
+        # (removido POR ENQUANTO: linha "rodar agente com a nota" — seletor + ▶ rodar; o método
+        # _run_note continua existindo p/ re-religar depois)
         # resize é detectado no nível do CANVAS (faixa em volta da borda) — sem widgets aqui
         frame.set_child(box)
         # note.x/note.y são coords-base; o zoom escala como nos nós (P5)
@@ -2977,6 +2973,42 @@ class CanvasWindow:
     def _note_blur(self, frame) -> None:
         """Saiu do texto (perdeu foco p/ outro widget): formata."""
         self._note_render(frame._note_id)
+
+    def _note_autoscroll(self, frame) -> bool:
+        """Rola o ScrolledWindow da nota p/ manter a linha do cursor visível (o TextView fica
+        dentro de um Stack, então scroll_mark_onscreen não basta — mexemos no vadjustment)."""
+        tv = getattr(frame, "_body_view", None)
+        sc = getattr(frame, "_body_scroll", None)
+        if tv is None or sc is None:
+            return False
+        buf = tv.get_buffer()
+        rect = tv.get_iter_location(buf.get_iter_at_mark(buf.get_insert()))  # coords-buffer
+        vadj = sc.get_vadjustment()
+        margin = 10.0  # respiro embaixo do cursor
+        top = rect.y + tv.get_top_margin()
+        bottom = top + rect.height
+        if bottom + margin > vadj.get_value() + vadj.get_page_size():
+            vadj.set_value(bottom + margin - vadj.get_page_size())  # deixa 10px abaixo do cursor
+        elif top < vadj.get_value():
+            vadj.set_value(top)
+        return False  # one-shot (idle)
+
+    def _note_body_key(self, _ctrl, keyval, _kc, state, frame) -> bool:
+        """Enter numa linha de checkbox/lista cria o próximo item (ou sai, se vazio)."""
+        if keyval not in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            return False
+        if state & (Gdk.ModifierType.SHIFT_MASK | Gdk.ModifierType.CONTROL_MASK):
+            return False  # Shift/Ctrl+Enter = quebra normal
+        buf = frame._body_view.get_buffer()
+        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+        cur = buf.get_iter_at_mark(buf.get_insert()).get_offset()
+        res = md_enter_continuation(text, cur)
+        if res is None:
+            return False  # linha não é lista → Enter normal
+        new, ncur = res
+        buf.set_text(new)  # dispara "changed" → re-estiliza + auto-scroll
+        buf.place_cursor(buf.get_iter_at_offset(ncur))
+        return True  # consumido (não insere a quebra padrão)
 
     def _set_note_view(self, frame, view: bool) -> None:
         """Põe a nota em VER (markdown formatado) ou EDITAR (TextView)."""
