@@ -3,6 +3,12 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.37.2] — Nota: margem da barra de scroll + scroll acompanha as setas
+- **Margem da barra de scroll:** o texto da nota ganha **~14px à direita** (TextView e Label) p/
+  não passar mais **por baixo** da barra de rolagem.
+- **Auto-scroll com as setas:** mover o cursor com **↑/↓** agora rola o corpo junto (antes só a
+  seta saía da vista) — `notify::cursor-position` também chama o `_note_autoscroll`.
+
 ## [0.37.1] — Organização da documentação + conserto do drift de versão
 - **Fix: `maestro --version` reportava 0.18.0** (hardcoded em `maestro/__init__.py`) — agora a
   versão é **resolvida do pacote/`pyproject.toml`** (acaba o drift; o status da Web UI também).

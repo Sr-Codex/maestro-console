@@ -2678,6 +2678,7 @@ class CanvasWindow:
         # corpo (markdown editável) — na MESMA cor pastel (sticky-note inteira)
         body = Gtk.TextView()
         body.set_wrap_mode(Gtk.WrapMode.WORD)
+        body.set_right_margin(14)  # respiro p/ o texto não passar por baixo da barra de scroll
         body.get_buffer().set_text(note.body)
         frame._body_view = body
         body.add_css_class(self._note_font_class(note.id))  # fonte por nota (CSS dedicado)
@@ -2707,6 +2708,7 @@ class CanvasWindow:
         view_lbl.set_xalign(0.0)
         view_lbl.set_yalign(0.0)
         view_lbl.set_selectable(True)
+        view_lbl.set_margin_end(14)  # mesmo respiro do TextView p/ a barra de scroll
         view_lbl.add_css_class(self._note_font_class(note.id))  # mesma fonte da nota
         frame._body_label = view_lbl
         stack = Gtk.Stack()
@@ -2730,6 +2732,11 @@ class CanvasWindow:
         # auto-scroll: o corpo acompanha o cursor ao digitar (não some no fim do bloco). Como o
         # ScrolledWindow rola o STACK (não o TextView), rolamos manualmente pelo vadjustment.
         buf.connect("changed", lambda b, fr=frame: GLib.idle_add(self._note_autoscroll, fr))
+        # também rola ao MOVER o cursor (setas) — senão a seta sai da vista sem o scroll seguir
+        buf.connect(
+            "notify::cursor-position",
+            lambda b, _p, fr=frame: GLib.idle_add(self._note_autoscroll, fr),
+        )
         # Enter numa linha de checkbox/lista continua o próximo item (CAPTURE = antes do TextView)
         keyctl = Gtk.EventControllerKey()
         keyctl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
