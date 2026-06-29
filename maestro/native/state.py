@@ -90,6 +90,14 @@ class CanvasModel:
     def remove_from_roster(self, nid: str) -> None:
         self.set_node_roster([s for s in self.node_roster() if s.get("nid") != nid])
 
+    def terminal_font(self) -> str:
+        """Fonte PADRÃO global dos terminais (Pango desc, ex.: 'JetBrains Mono 11'); '' = a
+        monospace do sistema. Por-terminal sobrepõe via node_cfg(nid, 'font')."""
+        return self._store.get_ui("terminal_font") or ""
+
+    def set_terminal_font(self, desc: str) -> None:
+        self._store.set_ui("terminal_font", desc or "")
+
     def terminal_theme(self) -> str:
         return self._store.get_ui("terminal_theme") or "default"
 

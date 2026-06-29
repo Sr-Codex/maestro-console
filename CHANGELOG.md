@@ -3,6 +3,21 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.40.0] — Editar Terminal (Fase 1): Aparência — Fonte + Cor + Ícone (por terminal)
+Aba **Aparência** do diálogo "Editar Terminal", tudo **por terminal** e persistido (`node_cfg`).
+- **Fonte (avançada):** família+tamanho por terminal via `Gtk.FontDialog` **filtrado p/ monospace**
+  (`CustomFilter`), **zoom de fonte** por terminal (`Vte.set_font_scale`, A−/A+, clamp 0.25–4.0) e
+  **default global** (`terminal_font`) com override por nó. Precedência: nó → global → monospace
+  do sistema. Aplicado na criação do nó e no Salvar.
+- **Cor accent:** tint da faixa do cabeçalho por terminal — paleta da nota (`.csw`/`.palsw-i`),
+  **∅ sem cor** e **🎨 Mais cores** (`Gtk.ColorDialog`). Provider de CSS próprio.
+- **Ícone:** **24 ícones Lucide (ISC)** bundlados em `maestro/native/icons` (cor fixada #cdd6f4,
+  SVG planos — GTK não recolore stroke-`currentColor`; ver pesquisa), grid no editor + **preview
+  "Atual:"** + **seletor de emoji nativo** (`Gtk.EmojiChooser`, sem digitar). Ícone no cabeçalho do
+  nó. `LICENSE-lucide` incluído.
+- **Diálogo:** mais largo (560px) + **abas roláveis** (cap 320px) p/ caber na tela do uConsole;
+  botões Cancelar/Salvar sempre visíveis. Transacional (aplica no Salvar).
+
 ## [0.39.0] — Editar Terminal (Fase 0): diálogo de abas + fundação
 Início do clone do diálogo **"Editar Terminal"** do Maestri (Detalhes/Aparência/Agente).
 - **Botão ⚙ Editar** na cápsula contextual do terminal → abre o **diálogo de abas**

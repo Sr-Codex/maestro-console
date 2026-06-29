@@ -149,6 +149,14 @@ NOTE_PALETTE = [
 ]
 NOTE_HEX_DEFAULT = "#f7e6a8"
 
+# Ícones do terminal (Fase 1): subconjunto Lucide (ISC) bundlado em maestro/native/icons,
+# cor fixada (#cdd6f4), nomes "maestro-<n>" — espelha o grid do Maestri. Theme-independent.
+TERM_ICON_NAMES = [
+    "terminal", "sparkles", "brain", "settings", "message-square", "server", "globe", "hammer",
+    "wrench", "zap", "cpu", "memory-stick", "laptop", "monitor", "paintbrush", "folder",
+    "file-text", "box", "shield", "eye", "wand-sparkles", "rocket", "database", "clock",
+]
+
 
 def _hex_to_rgb(h: str) -> tuple[int, int, int]:
     h = h.lstrip("#")
@@ -513,6 +521,13 @@ class CanvasWindow:
             ".fab-btn:disabled { opacity: 0.35; }",
             ".fab-run { color: #89b4fa; }",  # o play (azul)
             ".fab-attn { color: #f9e2af; font-size: 12px; padding: 0 4px; }",  # ⚠ N
+            # diálogo Editar Terminal: rótulo de seção + caixa de preview da fonte
+            ".editor-section { font-weight: bold; margin-top: 6px; }",
+            ".term-font-preview { font-family: monospace; padding: 6px 8px; border-radius: 6px;"
+            " background-color: rgba(0,0,0,0.25); }",
+            ".node-icon { margin: 0 1px; }",  # ícone do terminal no cabeçalho
+            ".ico-btn { padding: 4px; min-width: 30px; min-height: 30px; }",  # célula do grid
+            ".ico-sel { background-color: rgba(137,180,250,0.25); border-radius: 6px; }",
             ".fab-bar combobox { min-height: 30px; }",  # combo de tema dentro da pílula
             ".zoom-cap { background-color: rgba(30,30,46,0.92); border: 1px solid #45475a;"
             " border-radius: 15px; padding: 1px 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.5); }",
@@ -546,6 +561,7 @@ class CanvasWindow:
             " background-image: none; box-shadow: none;"
             " border: 1px solid rgba(255,255,255,0.18); }",
             ".csw:hover { border-color: rgba(255,255,255,0.7); }",
+            ".csw-sel { border: 2px solid #89b4fa; }",  # swatch selecionado no editor
             ".note-curcolor { border-radius: 50%; min-width: 22px; min-height: 22px; }",
             ".note-morecolors { border-radius: 9px; color: #cdd6f4;"
             " background-color: rgba(255,255,255,0.06); padding: 6px; }",
@@ -590,6 +606,13 @@ class CanvasWindow:
         if display is not None:
             Gtk.StyleContext.add_provider_for_display(
                 display, self._color_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 3
+            )
+        # cor accent por TERMINAL (tint do cabeçalho): provider próprio (Fase 1)
+        self._node_colors: dict[str, str] = {}  # node_id -> hex (#rrggbb)
+        self._node_color_provider = Gtk.CssProvider()
+        if display is not None:
+            Gtk.StyleContext.add_provider_for_display(
+                display, self._node_color_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 3
             )
 
     def _apply_grid(self) -> None:
@@ -905,14 +928,22 @@ class CanvasWindow:
         Só o NOME está ligado; os demais campos são placeholders das próximas fases (ver
         docs/11-maestri-editar-terminal.md). Persistência por-nó via model.node_cfg."""
         win, box = self._dialog("Editar Terminal")
-        win.set_default_size(460, -1)
+        win.set_default_size(560, 420)  # mais largo; altura cabe na tela do uConsole (480)
         stack = Gtk.Stack()
         stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         sw = Gtk.StackSwitcher()
         sw.set_stack(stack)
         sw.set_halign(Gtk.Align.CENTER)
         box.append(sw)
-        box.append(stack)
+        # conteúdo das abas ROLA (cap de altura) — senão a janela estoura a tela pequena
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_max_content_height(320)
+        scroller.set_propagate_natural_height(True)
+        scroller.set_vexpand(True)
+        scroller.set_child(stack)
+        box.append(scroller)
+        applies: list = []  # closures rodadas no Salvar (transacional por aba)
 
         def soon(text: str) -> Gtk.Widget:
             lb = Gtk.Label(label=f"• {text} (em breve)", xalign=0)
@@ -941,11 +972,13 @@ class CanvasWindow:
             soon("SSH Remoto — Fase 7"),
         )
         stack.add_titled(det, "detalhes", "Detalhes")
-        # — Aparência — (Fases 1–2)
-        stack.add_titled(
-            page(soon("Ícone — Fase 1"), soon("Cor — Fase 1"), soon("Fonte — Fase 1"),
-                 soon("Tema (Sistema/Escuro/Claro/Custom) — Fase 2")),
-            "aparencia", "Aparência")
+        # — Aparência — (Fase 1: Fonte; Cor/Ícone nas próximas etapas; Tema na Fase 2)
+        ap = page()
+        ap.append(self._editor_font_section(nid, applies))
+        ap.append(self._editor_color_section(nid, applies))
+        ap.append(self._editor_icon_section(nid, applies))
+        ap.append(soon("Tema (Sistema/Escuro/Claro/Custom) — Fase 2"))
+        stack.add_titled(ap, "aparencia", "Aparência")
         # — Agente — (Fase 5)
         stack.add_titled(
             page(soon("Responsabilidade (role): atribuir/buscar, editar instruções, "
@@ -964,6 +997,8 @@ class CanvasWindow:
             lbl = getattr(fr, "_title_lbl", None) if fr is not None else None
             if lbl is not None:
                 lbl.set_text(f"  {nm or nid}  ")
+            for fn in applies:  # aplica+persiste cada aba (Aparência etc.)
+                fn()
             win.destroy()
 
         cancel = Gtk.Button(label="Cancelar")
@@ -977,6 +1012,270 @@ class CanvasWindow:
         box.append(foot)
         win.present()
         name.grab_focus()
+
+    @staticmethod
+    def _editor_section_label(text: str) -> Gtk.Widget:
+        lb = Gtk.Label(label=text, xalign=0)
+        lb.add_css_class("editor-section")
+        return lb
+
+    @staticmethod
+    def _mono_font_filter() -> Gtk.Filter:
+        """Filtro do FontDialog: só famílias MONOSPACE. Trata FontFamily E FontFace
+        (o GTK4 avalia os dois) via Pango.FontFamily.is_monospace()."""
+        def _is_mono(item):
+            fam = item.get_family() if isinstance(item, Pango.FontFace) else item
+            try:
+                return fam.is_monospace()
+            except Exception:
+                return False
+        return Gtk.CustomFilter.new(_is_mono)
+
+    def _editor_font_section(self, nid: str, applies: list) -> Gtk.Widget:
+        """Seção FONTE (Fase 1, Avançada): família+tamanho por terminal (FontDialog filtrado p/
+        monospace), zoom de fonte (set_font_scale) e "padrão global". Transacional: aplica no
+        Salvar via `applies`."""
+        st = {"desc": self.model.node_cfg(nid, "font"), "scale": self._node_font_scale(nid)}
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.append(self._editor_section_label("Fonte"))
+        info = Gtk.Label(xalign=0)
+        info.add_css_class("dim-label")
+        preview = Gtk.Label(label="abc 012 →|←   $ ls -la", xalign=0)
+        preview.add_css_class("term-font-preview")
+
+        def refresh():
+            d = st["desc"] or self.model.terminal_font()
+            info.set_text(
+                f"{d or 'monospace do sistema'}    ·    zoom {int(round(st['scale'] * 100))}%")
+            try:  # preview na própria fonte (Pango attrs); se a API faltar, fica neutro
+                attrs = Pango.AttrList()
+                if d:
+                    attrs.insert(Pango.attr_font_desc_new(Pango.FontDescription.from_string(d)))
+                preview.set_attributes(attrs)
+            except Exception:
+                pass
+
+        refresh()
+        box.append(info)
+        box.append(preview)
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        sel = Gtk.Button(label="Selecionar…")
+
+        def pick(_b):
+            dlg = Gtk.FontDialog()
+            dlg.set_filter(self._mono_font_filter())
+            cur = st["desc"] or self.model.terminal_font()
+            init = Pango.FontDescription.from_string(cur) if cur else None
+
+            def done(d, res):
+                try:
+                    desc = d.choose_font_finish(res)
+                except GLib.Error:
+                    return  # cancelado
+                if desc is not None:
+                    st["desc"] = desc.to_string()
+                    refresh()
+
+            dlg.choose_font(self.win, init, None, done)
+
+        sel.connect("clicked", pick)
+        row.append(sel)
+        reset = Gtk.Button(label="Padrão do sistema")
+        reset.connect("clicked", lambda _b: (st.update(desc=""), refresh()))
+        row.append(reset)
+
+        def bump(delta):
+            st["scale"] = max(self.FONT_SCALE_MIN, min(self.FONT_SCALE_MAX, st["scale"] + delta))
+            refresh()
+
+        minus = Gtk.Button(label="A−")
+        minus.set_tooltip_text("diminuir fonte deste terminal")
+        minus.connect("clicked", lambda _b: bump(-0.1))
+        plus = Gtk.Button(label="A+")
+        plus.set_tooltip_text("aumentar fonte deste terminal")
+        plus.connect("clicked", lambda _b: bump(0.1))
+        row.append(minus)
+        row.append(plus)
+        box.append(row)
+
+        glob = Gtk.CheckButton(label="Definir como padrão global (terminais sem fonte própria)")
+        box.append(glob)
+
+        def apply():
+            self.model.set_node_cfg(nid, "font", st["desc"])
+            self.model.set_node_cfg(nid, "fontscale", f"{st['scale']:g}")
+            if glob.get_active() and st["desc"]:
+                self.model.set_terminal_font(st["desc"])
+            self._apply_node_font(nid)
+            if glob.get_active():
+                self._apply_font_all()
+
+        applies.append(apply)
+        return box
+
+    def _editor_color_section(self, nid: str, applies: list) -> Gtk.Widget:
+        """Seção COR (Fase 1): accent por terminal (tint do cabeçalho). Reusa a paleta da nota
+        (`.csw`/`.palsw-i`) + `Gtk.ColorDialog` p/ custom. Transacional: aplica no Salvar."""
+        st = {"color": self.model.node_cfg(nid, "color")}
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.append(self._editor_section_label("Cor"))
+        grid = Gtk.Grid()  # Grid (não FlowBox): célula não estica o botão → swatch fica redondo
+        grid.set_row_spacing(6)
+        grid.set_column_spacing(6)
+        per_row = 9
+        swatches: list = []
+
+        def mark():
+            for b, hexc in swatches:
+                if hexc == st["color"] and hexc:
+                    b.add_css_class("csw-sel")
+                else:
+                    b.remove_css_class("csw-sel")
+
+        def choose(hexc):
+            st["color"] = hexc
+            mark()
+
+        none_b = Gtk.Button(label="∅")
+        none_b.add_css_class("csw")
+        none_b.set_halign(Gtk.Align.CENTER)
+        none_b.set_valign(Gtk.Align.CENTER)
+        none_b.set_tooltip_text("sem cor")
+        none_b.connect("clicked", lambda _b: choose(""))
+        swatches.append((none_b, ""))
+        cells: list = [none_b]
+        for i, hexc in enumerate(NOTE_PALETTE):
+            sw = Gtk.Button()
+            sw.set_has_frame(False)
+            sw.add_css_class("csw")
+            sw.add_css_class(f"palsw-{i}")
+            sw.set_halign(Gtk.Align.CENTER)
+            sw.set_valign(Gtk.Align.CENTER)
+            sw.set_tooltip_text(hexc)
+            sw.connect("clicked", lambda _b, c=hexc: choose(c))
+            swatches.append((sw, hexc))
+            cells.append(sw)
+        for idx, w in enumerate(cells):
+            grid.attach(w, idx % per_row, idx // per_row, 1, 1)
+        box.append(grid)
+
+        more = Gtk.Button(label="🎨 Mais cores…")
+        more.set_halign(Gtk.Align.START)
+
+        def pick_custom(_b):
+            dlg = Gtk.ColorDialog()
+            init = Gdk.RGBA()
+            init.parse(st["color"] or NOTE_HEX_DEFAULT)
+
+            def done(d, res):
+                try:
+                    rgba = d.choose_rgba_finish(res)
+                except GLib.Error:
+                    return
+                if rgba is not None:
+                    rr, gg, bb = (round(rgba.red * 255), round(rgba.green * 255),
+                                  round(rgba.blue * 255))
+                    st["color"] = f"#{rr:02x}{gg:02x}{bb:02x}"
+                    mark()
+
+            dlg.choose_rgba(self.win, init, None, done)
+
+        more.connect("clicked", pick_custom)
+        box.append(more)
+        mark()
+
+        def apply():
+            self.model.set_node_cfg(nid, "color", st["color"])
+            self._apply_node_color(nid, st["color"])
+
+        applies.append(apply)
+        return box
+
+    def _editor_icon_section(self, nid: str, applies: list) -> Gtk.Widget:
+        """Seção ÍCONE (Fase 1): grid dos 24 ícones bundlados (Lucide) + emoji custom + sem ícone.
+        Transacional: aplica no Salvar (node_cfg 'icon' = 'maestro-<n>' | 'emoji:<e>' | '')."""
+        st = {"icon": self.model.node_cfg(nid, "icon")}
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.append(self._editor_section_label("Ícone"))
+        # preview "Atual:" — dá feedback do que está selecionado (ícone do grid OU emoji OU nenhum)
+        prev_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        prev_box.append(Gtk.Label(label="Atual:"))
+        prev_holder = Gtk.Box()
+        prev_box.append(prev_holder)
+        box.append(prev_box)
+        grid = Gtk.Grid()
+        grid.set_row_spacing(4)
+        grid.set_column_spacing(4)
+        per_row = 13  # janela larga: 24 ícones em ~2 linhas (menos altura)
+        btns: list = []
+
+        def set_preview():
+            child = prev_holder.get_first_child()
+            if child is not None:
+                prev_holder.remove(child)
+            v = st["icon"]
+            if not v:
+                w: Gtk.Widget = Gtk.Label(label="nenhum")
+                w.add_css_class("dim-label")
+            elif v.startswith("emoji:"):
+                w = Gtk.Label(label=v[6:])
+            else:
+                w = Gtk.Image.new_from_icon_name(v)
+                w.set_pixel_size(20)
+            prev_holder.append(w)
+
+        def mark():
+            for b, val in btns:
+                if val == st["icon"] and val:
+                    b.add_css_class("ico-sel")
+                else:
+                    b.remove_css_class("ico-sel")
+            set_preview()
+
+        def choose(val):
+            st["icon"] = val
+            mark()
+
+        none_b = Gtk.Button(label="∅")
+        none_b.add_css_class("ico-btn")
+        none_b.set_tooltip_text("sem ícone")
+        none_b.connect("clicked", lambda _b: choose(""))
+        cells: list = [(none_b, "")]
+        for n in TERM_ICON_NAMES:
+            b = Gtk.Button()
+            b.set_has_frame(False)
+            b.add_css_class("ico-btn")
+            img = Gtk.Image.new_from_icon_name(f"maestro-{n}")
+            img.set_pixel_size(20)
+            b.set_child(img)
+            b.set_tooltip_text(n)
+            val = f"maestro-{n}"
+            b.connect("clicked", lambda _b, v=val: choose(v))
+            cells.append((b, val))
+        for i, (b, val) in enumerate(cells):
+            btns.append((b, val))
+            grid.attach(b, i % per_row, i // per_row, 1, 1)
+        box.append(grid)
+
+        # emoji custom: seletor NATIVO (Gtk.EmojiChooser) — clica e escolhe, sem digitar
+        emoji_btn = Gtk.Button(label="😀 Escolher emoji…")
+        emoji_btn.set_halign(Gtk.Align.START)
+        chooser = Gtk.EmojiChooser()
+        chooser.set_parent(emoji_btn)
+        chooser.connect("emoji-picked", lambda _c, e: choose(f"emoji:{e}"))
+        emoji_btn.connect("clicked", lambda _b: chooser.popup())
+        # libera o popover ao destruir o diálogo (evita warning de widget órfão)
+        emoji_btn.connect("destroy", lambda _b: chooser.unparent())
+        box.append(emoji_btn)
+        mark()
+
+        def apply():
+            self.model.set_node_cfg(nid, "icon", st["icon"])
+            self._apply_node_icon(nid, st["icon"])
+
+        applies.append(apply)
+        return box
 
     def _ctx_connect_btn(self) -> Gtk.Widget:
         """Botão PADRÃO de toda cápsula contextual: puxa um cabo A PARTIR do elemento
@@ -1125,6 +1424,14 @@ class CanvasWindow:
         # tamanho NATURAL (zoom é por transform); mudar isto reflui o PTY (cols/linhas)
         term.set_size_request(int(sz[0]), int(sz[1]))
         self.terms.append(term)
+        self.frames[nid] = frame  # registra antes de aplicar a fonte (lookup em _apply_node_font)
+        self._apply_node_font(nid)  # fonte por-nó/global + escala (persistido)
+        ncolor = self.model.node_cfg(nid, "color")  # cor accent persistida (Fase 1)
+        if ncolor:
+            self._apply_node_color(nid, ncolor)
+        nicon = self.model.node_cfg(nid, "icon")  # ícone persistido (Fase 1)
+        if nicon:
+            self._apply_node_icon(nid, nicon)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(head)
         box.append(term)
@@ -1781,6 +2088,80 @@ class CanvasWindow:
         if name:
             self.model.set_terminal_theme(name)
             self._apply_theme(name)
+
+    # -- fonte por terminal (override) + default global + zoom de fonte (VTE set_font/scale) --
+    FONT_SCALE_MIN, FONT_SCALE_MAX = 0.25, 4.0  # clamp do VTE (vte-private.h)
+
+    def _effective_font(self, nid: str) -> Pango.FontDescription | None:
+        """Fonte do terminal: override por-nó → default global → None (= monospace do sistema)."""
+        desc_str = self.model.node_cfg(nid, "font") or self.model.terminal_font()
+        return Pango.FontDescription.from_string(desc_str) if desc_str else None
+
+    def _node_font_scale(self, nid: str) -> float:
+        try:
+            s = float(self.model.node_cfg(nid, "fontscale") or "1.0")
+        except ValueError:
+            s = 1.0
+        return max(self.FONT_SCALE_MIN, min(self.FONT_SCALE_MAX, s))
+
+    def _apply_node_font(self, nid: str) -> None:
+        """Aplica fonte (set_font; None = monospace do sistema) + escala (set_font_scale)."""
+        frame = self.frames.get(nid)
+        term = getattr(frame, "_term", None) if frame is not None else None
+        if term is None:
+            return
+        term.set_font(self._effective_font(nid))  # None reseta p/ a monospace do sistema
+        term.set_font_scale(self._node_font_scale(nid))
+
+    def _apply_font_all(self) -> None:
+        """Reaplica a fonte a TODOS os terminais (ex.: mudou o default global)."""
+        for nid in list(self.frames):
+            self._apply_node_font(nid)
+
+    # -- cor accent por terminal (tint do cabeçalho; mesmo motor de CSS-provider da nota) --
+    def _rebuild_node_colors(self) -> None:
+        """Regenera o CSS por-terminal a partir de self._node_colors (hex) — tint do cabeçalho."""
+        rules = []
+        for nid, hexc in self._node_colors.items():
+            if not hexc:
+                continue
+            r, g, b = _hex_to_rgb(hexc)
+            rules.append(
+                f".ndh-{self._nid_key(nid)} {{ background-color: rgba({r},{g},{b},0.38); }}")
+        self._css_load(self._node_color_provider, "\n".join(rules))
+
+    def _apply_node_color(self, nid: str, hexc: str) -> None:
+        """Tinge a faixa do cabeçalho do terminal com a cor accent (''=sem cor)."""
+        self._node_colors[nid] = hexc
+        self._rebuild_node_colors()
+        head = self.heads.get(nid)
+        if head is not None:
+            cls = f"ndh-{self._nid_key(nid)}"
+            if hexc:
+                head.add_css_class(cls)
+            else:
+                head.remove_css_class(cls)
+
+    def _apply_node_icon(self, nid: str, val: str) -> None:
+        """Ícone do terminal no cabeçalho: 'maestro-<n>' (bundlado) ou 'emoji:<e>' ou '' (nenhum).
+        Inserido logo após o dot de estado (espelha o Maestri)."""
+        head = self.heads.get(nid)
+        if head is None:
+            return
+        old = getattr(head, "_icon", None)
+        if old is not None:
+            head.remove(old)
+            head._icon = None
+        if not val:
+            return
+        if val.startswith("emoji:"):
+            w: Gtk.Widget = Gtk.Label(label=val[6:])
+        else:
+            w = Gtk.Image.new_from_icon_name(val)
+            w.set_pixel_size(16)
+        w.add_css_class("node-icon")
+        head.insert_child_after(w, head._dot)  # logo após o dot de estado
+        head._icon = w
 
     def set_node_state(self, nid: str, state: str) -> None:
         """Estado do nó vira a COR DE UM DOT no cabeçalho (não inunda o head). UI-1."""
