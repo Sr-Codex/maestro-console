@@ -86,6 +86,13 @@ class CanvasModel:
     def set_terminal_theme(self, name: str) -> None:
         self._store.set_ui("terminal_theme", name)
 
+    def cable_phys(self) -> str:
+        """Modo de física do cabo (Ctrl+Shift+P): verlet (default) | catenary | spring."""
+        return self._store.get_ui("cable_phys") or "verlet"
+
+    def set_cable_phys(self, mode: str) -> None:
+        self._store.set_ui("cable_phys", mode)
+
 
 class EdgeModel:
     """Cabos criados pelo usuário (src -> dst), persistidos no Store (V7-S1).

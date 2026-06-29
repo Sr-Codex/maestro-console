@@ -3,6 +3,13 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.35.0] — Persistência de config de UI ("abre igual fechou") + modo de física do cabo
+- **Regra do projeto:** toda configuração de janela/UI feita pelo usuário **persiste após fechar**
+  (reabrir = igual fechou). Codificada em `AGENTS.md`; aplicada via `CanvasModel`/`ui_state`.
+- **Modo de física do cabo persiste:** a escolha do Ctrl+Shift+P (verlet/catenária/mola) é salva
+  (`CanvasModel.cable_phys`/`set_cable_phys`) e **recarregada na abertura** — antes voltava sempre
+  pro verlet. Guarda contra valor inválido salvo (cai pro verlet).
+
 ## [0.34.0] — Cabo: física (Verlet/3 modos) + ímã de 8 pontos + bolinha + fluxo + connect/cursor
 - **Física no cabo — corda Verlet + 3 modos comutáveis (Ctrl+Shift+P):** o cabo deixou de ser
   estático e ganhou **física orgânica** (ADR-14). Modos: **Verlet** (padrão — corda que cai,
