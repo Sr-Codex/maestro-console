@@ -1,5 +1,9 @@
 # Maestri — especificação de comportamento + auditoria do clone
 
+> ⚠️ **HISTÓRICO (2026-06-26) — anterior a v0.34-37.** A auditoria do clone aqui não reflete
+> física do cabo, editor de nota in-place nem minimapa (entregues depois). Estado real:
+> [`STATUS.md`](STATUS.md). A *especificação do Maestri* (parte de cima) segue válida como referência.
+
 > Data: 2026-06-26 · PT-BR · Fonte: docs oficiais `themaestri.app/en/docs` (terminals, connections, índice) consultadas ao vivo + `docs/01-pesquisa-maestri.md`.
 > Objetivo: lista de REGRAS DE COMPORTAMENTO do Maestri para auditar o clone (maestro console). Legenda: ✅ temos · 🟡 parcial/diverge · ❌ falta.
 

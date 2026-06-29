@@ -5,17 +5,22 @@ Raspberry Pi CM4). Um clone do [Maestri](https://www.themaestri.app) para Linux:
 **canvas de terminais reais** onde agentes (Claude Code, Codex) se conectam e
 passam trabalho entre si — com **isolamento de segurança** por padrão.
 
-> Estado: **maduro**. Engine de orquestração + **3 interfaces** (TUI, Web, canvas
-> nativo GTK) + cabos que conversam, ambientes isolados (floors), papéis & notas,
-> rotinas agendadas e observabilidade. ~315 testes.
+> Estado: **maduro** (v0.37.0). Engine de orquestração + **3 interfaces** (TUI, Web,
+> canvas nativo GTK) + cabos que conversam **com física** (Verlet/catenária), notas
+> com **editor markdown in-place**, minimapa, grupos, ambientes isolados (floors),
+> papéis, rotinas agendadas e observabilidade. **435 testes.** Estado atual detalhado
+> em [docs/STATUS.md](docs/STATUS.md); decisões em [docs/ADR.md](docs/ADR.md).
 
 ## O que dá pra fazer
 
-- 🖥️ **Canvas nativo** na tela do dispositivo: terminais reais dos agentes num
-  plano infinito — **pan** (arrastar o fundo ou **SELECT + trackball**), **zoom** e
-  **seleção por clique** (borda azul tracejada) — confinados por sandbox.
-- 🔌 **Cabos que conversam**: ligar agente A → B e disparar um **handoff**
-  (A trabalha, o resultado vai para B) — mediado, registrado e recuperável.
+- 🖥️ **Canvas nativo infinito** na tela do dispositivo: terminais reais dos agentes —
+  **pan** (arrastar o fundo ou **SELECT + trackball**), **zoom**, **seleção por clique**,
+  **redimensionar pela borda**, **minimapa** e **grupos/áreas** — confinados por sandbox.
+- 🔌 **Cabos que conversam, com física**: ligar agente A → B e disparar um **handoff**
+  (mediado, registrado, recuperável). O cabo tem **física** (corda Verlet / catenária /
+  mola, comutável com **Ctrl+Shift+P**), ímã de 8 pontos e **fluxo animado** no sentido do dado.
+- 📝 **Notas sticky com editor markdown in-place**: clicar edita no card (estilo ao vivo:
+  negrito/itálico/**H1/H2/H3**), clicar fora formata; checkbox que continua sozinho no Enter.
 - 🧱 **Floors**: ambientes isolados via **git worktree** (branches por agente, sem
   conflito), com hooks de ciclo de vida e **merge preview** antes de integrar.
 - 👥 **Papéis & 📝 notas**: papéis com cor/badge (role.json + CLAUDE.md/AGENTS.md)
@@ -92,8 +97,10 @@ maestro --version
   mesmo par remove; **Esc** cancela).
 - Menu **☰ ações**: rodar time · disparar handoff · nova nota · floors · routines.
 - **Ctrl-P**: busca rápida (ir para um agente/team/floor/nota/routine).
-- Notas têm um seletor de agente + **▶ rodar** (a nota alimenta o agente e a
-  resposta volta para a nota).
+- **Notas**: clique para editar markdown **in-place** (negrito/itálico/H1-H2-H3 ao vivo,
+  checkbox auto-continua); clicar fora formata. A nota pode ser ligada por cabo a um nó
+  (o agente lê/escreve a nota como arquivo). *(Rodar agente direto pela nota: temporariamente
+  fora — ver CHANGELOG v0.37.)*
 
 ### Floors (ambientes isolados)
 
@@ -174,7 +181,8 @@ Engine desacoplada da UI:
   `routines`/`scheduler`, `attention`, `backup`.
 - **interfaces**: `tui`, `web` (aiohttp+SSE), `native` (GTK+VTE).
 
-Detalhes de planejamento em `_bmad-output/` e pesquisa em `docs/`.
+**Estado atual e índice de docs:** [docs/STATUS.md](docs/STATUS.md) · [docs/index.md](docs/index.md).
+Decisões em [docs/ADR.md](docs/ADR.md). Planejamento original do MVP em `_bmad-output/` (histórico).
 
 ## Licença
 

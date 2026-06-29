@@ -3,6 +3,16 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.37.1] — Organização da documentação + conserto do drift de versão
+- **Fix: `maestro --version` reportava 0.18.0** (hardcoded em `maestro/__init__.py`) — agora a
+  versão é **resolvida do pacote/`pyproject.toml`** (acaba o drift; o status da Web UI também).
+- **Documentação organizada** (auditoria completa de currency): novo **`docs/STATUS.md`** (estado
+  atual / o que foi entregue) e **`docs/index.md`** (índice mestre marcando cada doc atual/histórico).
+  **PRD e architecture** ganharam **cópia versionada em `docs/`** (antes só no `_bmad-output/`
+  gitignored). **Notas de defasagem datadas** nos roadmaps/auditorias congelados no MVP
+  (`docs/03/06/07/10`) e nos artefatos BMad. README atualizado (435 testes, features v0.21→v0.37).
+- Memória do projeto enxugada (diário de ~42 KB → sumário + ponteiros).
+
 ## [0.37.0] — Nota: checkbox auto-continua + auto-scroll + tira "rodar agente" da nota
 - **Checkbox/lista continua sozinha:** numa linha `- [ ]`/`- `, **Enter** cria o próximo item
   (checkbox novo desmarcado); item **vazio** + Enter **sai** da lista; **Shift+Enter** = quebra
