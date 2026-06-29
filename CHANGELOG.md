@@ -3,6 +3,22 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.36.0] — Nota: edição in-place com estilo ao vivo (negrito/H1-H2-H3) + formata ao sair
+- **Editar direto no card:** clicar a nota entra no modo editar (texto markdown), o cursor foca;
+  **clicar fora** (fundo, outro nó/nota) **formata** (renderiza limpo, marcadores somem).
+- **Estilo markdown AO VIVO ao editar:** negrito/itálico/tachado/código e títulos já aparecem
+  estilizados enquanto digita (marcadores visíveis) — então clicar **B** mostra o negrito **na
+  hora**, sem o vai-e-volta. `md_spans` (puro) → `Gtk.TextTag` no buffer; estilo some no render.
+- **H1/H2/H3 com tamanhos distintos** (xx-large > x-large > large), **tolerante**: `#`/`##`/`###`
+  viram título **com ou sem espaço** depois do `#` (tipo Notion); `####`+ e `#` no meio da linha
+  ficam literais. `md_to_pango` reescrito; tags `h1/h2/h3` com `scale` no editor ao vivo.
+- **Botões de formatação alternam (toggle):** `md_wrap_toggle` — clicar **B** numa seleção já em
+  negrito **remove** os `**` (antes só acumulava). Vale p/ B/I/S/código.
+- **Stack:** in-place NATIVO (GTK4 puro). Avaliados e descartados GtkSourceView 5 e WebKitGTK 6.0
+  (Toast UI) — spike do WebKit ficou pesado/espremido no card; o nativo entrega mais p/ sticky
+  simples (ver ADR). Pesquisa com fontes registra a decisão.
+- Testes: `md_spans`, `md_wrap_toggle`, headings H1/H2/H3 (com/sem espaço). Suíte verde.
+
 ## [0.35.0] — Persistência de config de UI ("abre igual fechou") + modo de física do cabo
 - **Regra do projeto:** toda configuração de janela/UI feita pelo usuário **persiste após fechar**
   (reabrir = igual fechou). Codificada em `AGENTS.md`; aplicada via `CanvasModel`/`ui_state`.

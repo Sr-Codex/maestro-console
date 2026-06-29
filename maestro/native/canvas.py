@@ -42,8 +42,9 @@ from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
 from ..engine.notes import (  # noqa: E402
     file_to_note,
     md_line_prefix,
+    md_spans,
     md_to_pango,
-    md_wrap,
+    md_wrap_toggle,
     note_to_file,
 )
 from ..engine.state.store import Store  # noqa: E402
@@ -353,6 +354,7 @@ class CanvasWindow:
         self._pan: tuple[float, float] | None = None
         self._focused_nid: str | None = None  # terminal em foco (p/ fechar via teclado)
         self._selected: tuple[str, str] | None = None  # (kind, id) selecionado (borda azul)
+        self._note_editing: str | None = None  # nota em edição in-place (formata ao sair)
         self._ptr_over: tuple[str, str] | None = None  # (kind,id) sob o cursor (roteio do scroll)
         # cabos interativos (ADR-11): mailbox + router — só com controller + edges
         self._ask_bus_dir = ask_bus_dir  # p/ criar novos terminais de agente em runtime
@@ -1198,8 +1200,12 @@ class CanvasWindow:
         if self._connect_mode:
             self._connect_pick(kind, tid)
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-        else:
-            self._select((kind, tid))
+            return
+        self._select((kind, tid))
+        if kind == "note":  # clicar a nota = EDITAR in-place (texto cru); formata ao sair
+            self._note_edit_inplace(tid)
+        elif self._note_editing is not None:
+            self._note_render(self._note_editing)  # clicou num nó → formata a nota em edição
 
     def _select(self, sel) -> None:
         """Marca (kind, id) como selecionado: borda azul tracejada. None = limpa seleção."""
@@ -1236,6 +1242,9 @@ class CanvasWindow:
         # x,y vêm em coords do scrolled (que NÃO rola) = coords de TELA -> estável.
         self._item_resize = None
         picked = self.plane.pick(x, y, Gtk.PickFlags.DEFAULT)
+        _el = self._elem_at(picked)
+        if self._note_editing is not None and _el != ("note", self._note_editing):
+            self._note_render(self._note_editing)  # clicar fora da nota em edição → formata
         # connect: clicar em QUALQUER área do card é tratado pelo gesto CAPTURE do frame
         # (_on_frame_press), que claima — então aqui só sobra o clique no FUNDO do plano.
         rz = self._resize_edge_at(x, y)  # faixa da borda do card SELECIONADO → resize
@@ -2712,12 +2721,17 @@ class CanvasWindow:
         buf = body.get_buffer()
         ph.set_visible(buf.get_char_count() == 0)
         buf.connect("changed", lambda b, lbl=ph: lbl.set_visible(b.get_char_count() == 0))
+        # estilo AO VIVO no modo editar: negrito/itálico/título já aparecem (marcadores visíveis),
+        # então clicar B mostra o negrito na hora. Ao SAIR, o Label some os marcadores.
+        self._note_md_tags(buf)
+        buf.connect("changed", lambda b: self._restyle_note(b))
+        self._restyle_note(buf)
         self._apply_note_color(frame, note.color)  # frame + faixa + corpo + placeholder
         # já abre com formatação ATIVA (modo "ver") se a nota tem conteúdo; vazia abre p/ editar
         self._set_note_view(frame, bool(note.body.strip()))
-        # salvar ao perder foco (GTK4: EventControllerFocus)
+        # ao SAIR do texto (clicar fora): salva e FORMATA (volta pro modo "ver")
         fc = Gtk.EventControllerFocus()
-        fc.connect("leave", lambda _c, fr=frame: self._save_note(fr))
+        fc.connect("leave", lambda _c, fr=frame: self._note_blur(fr))
         body.add_controller(fc)
         box.append(head)
         box.append(overlay)
@@ -2879,8 +2893,30 @@ class CanvasWindow:
 
         dialog.choose_rgba(self.win, init, None, done)
 
+    @staticmethod
+    def _note_md_tags(buf) -> None:
+        """Cria (1x) as TextTags de estilo markdown ao vivo no buffer da nota."""
+        if buf.get_tag_table().lookup("bold") is not None:
+            return
+        buf.create_tag("bold", weight=Pango.Weight.BOLD)
+        buf.create_tag("italic", style=Pango.Style.ITALIC)
+        buf.create_tag("strike", strikethrough=True)
+        buf.create_tag("code", family="monospace")
+        buf.create_tag("h1", weight=Pango.Weight.BOLD, scale=1.6)
+        buf.create_tag("h2", weight=Pango.Weight.BOLD, scale=1.35)
+        buf.create_tag("h3", weight=Pango.Weight.BOLD, scale=1.15)
+
+    def _restyle_note(self, buf) -> None:
+        """Aplica o estilo markdown AO VIVO (marcadores visíveis): limpa e re-aplica `md_spans`."""
+        start, end = buf.get_bounds()
+        for name in ("bold", "italic", "strike", "code", "h1", "h2", "h3"):
+            buf.remove_tag_by_name(name, start, end)
+        text = buf.get_text(start, end, False)
+        for s, e, style in md_spans(text):
+            buf.apply_tag_by_name(style, buf.get_iter_at_offset(s), buf.get_iter_at_offset(e))
+
     def _note_wrap(self, left: str, right: str) -> None:
-        """Envolve a seleção (ou o cursor) do corpo da nota com marcadores markdown."""
+        """Alterna a seleção (ou cursor) do corpo da nota com marcadores markdown (B = toggle)."""
         frame = self._ctx_note_frame()
         if frame is None:
             return
@@ -2891,10 +2927,12 @@ class CanvasWindow:
             s, e = bounds[0].get_offset(), bounds[1].get_offset()
         else:
             s = e = buf.get_iter_at_mark(buf.get_insert()).get_offset()
-        new, cs, ce = md_wrap(text, s, e, left, right)
-        buf.set_text(new)
+        new, cs, ce = md_wrap_toggle(text, s, e, left, right)  # adiciona OU remove
+        buf.set_text(new)  # dispara "changed" → _restyle_note (negrito aparece na hora)
         buf.select_range(buf.get_iter_at_offset(cs), buf.get_iter_at_offset(ce))
+        self._set_note_view(frame, False)  # o botão renderizou; volta p/ EDITAR estilizado
         frame._body_view.grab_focus()
+        self._note_editing = frame._note_id
         self._save_note(frame)
 
     def _note_line_prefix(self, prefix: str) -> None:
@@ -2908,8 +2946,37 @@ class CanvasWindow:
         new, ncur = md_line_prefix(text, cur, prefix)
         buf.set_text(new)
         buf.place_cursor(buf.get_iter_at_offset(ncur))
+        self._set_note_view(frame, False)  # volta p/ EDITAR estilizado (o botão tinha renderizado)
         frame._body_view.grab_focus()
+        self._note_editing = frame._note_id
         self._save_note(frame)
+
+    def _note_edit_inplace(self, note_id: str) -> None:
+        """Clicar a nota: entra no modo EDITAR (texto cru) e foca o cursor — edição in-place."""
+        if self._note_editing is not None and self._note_editing != note_id:
+            self._note_render(self._note_editing)  # formata a nota anterior
+        frame = self.note_frames.get(note_id)
+        if frame is None:
+            return
+        self._set_note_view(frame, False)  # mostra o TextView (markdown cru)
+        frame._body_view.grab_focus()
+        self._note_editing = note_id
+
+    def _note_render(self, note_id: str) -> None:
+        """Formata a nota `note_id`: salva e volta pro modo ver (markdown renderizado)."""
+        frame = self.note_frames.get(note_id)
+        if frame is None:
+            self._note_editing = None
+            return
+        self._save_note(frame)
+        if frame._body_view.get_buffer().get_char_count() > 0:
+            self._set_note_view(frame, True)  # renderiza; vazia continua em editar
+        if self._note_editing == note_id:
+            self._note_editing = None
+
+    def _note_blur(self, frame) -> None:
+        """Saiu do texto (perdeu foco p/ outro widget): formata."""
+        self._note_render(frame._note_id)
 
     def _set_note_view(self, frame, view: bool) -> None:
         """Põe a nota em VER (markdown formatado) ou EDITAR (TextView)."""

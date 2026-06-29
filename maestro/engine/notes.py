@@ -67,6 +67,55 @@ def md_line_prefix(text: str, cursor: int, prefix: str) -> tuple[str, int]:
     return new, cursor + len(prefix)
 
 
+_HEADING_RE = re.compile(r"^(#{1,3})(?!#)[ \t]*(.*)$")  # # / ## / ### + espaço opcional
+_MD_INLINE_SPANS = [  # estilo -> regex; group(1) = trecho interno a estilizar AO VIVO
+    ("code", re.compile(r"`([^`]+)`")),
+    ("bold", re.compile(r"\*\*([^*]+)\*\*")),
+    ("strike", re.compile(r"~~([^~]+)~~")),
+    ("italic", re.compile(r"(?<!\*)\*([^*\n]+)\*(?!\*)")),
+]
+
+
+def md_spans(text: str) -> list[tuple[int, int, str]]:
+    """Trechos `(início, fim, estilo)` p/ estilizar markdown AO VIVO num Gtk.TextView (aplicar
+    TextTags enquanto edita, marcadores VISÍVEIS). Offsets em CARACTERES. Estilos: bold/italic/
+    strike/code (interno) e h1/h2/h3 (linha toda). Por linha (não cruza '\\n')."""
+    spans: list[tuple[int, int, str]] = []
+    off = 0
+    for line in text.split("\n"):
+        st = line.lstrip(" ")
+        ind = len(line) - len(st)
+        hm = _HEADING_RE.match(st)
+        if hm and hm.group(2):  # título com conteúdo
+            spans.append((off + ind, off + len(line), f"h{len(hm.group(1))}"))
+        for style, pat in _MD_INLINE_SPANS:
+            for m in pat.finditer(line):
+                spans.append((off + m.start(1), off + m.end(1), style))
+        off += len(line) + 1
+    return spans
+
+
+def md_wrap_toggle(
+    text: str, sel_start: int, sel_end: int, left: str, right: str
+) -> tuple[str, int, int]:
+    """Igual md_wrap, mas ALTERNA: se a seleção já está envolvida por `left`/`right` (ou os
+    marcadores estão logo fora dela), REMOVE-os em vez de adicionar. Devolve (texto, cs, ce)."""
+    inner = text[sel_start:sel_end]
+    # caso 1: marcadores DENTRO da seleção (seleção inclui ** ... **)
+    if inner.startswith(left) and inner.endswith(right) and len(inner) >= len(left) + len(right):
+        bare = inner[len(left): len(inner) - len(right)]
+        new = text[:sel_start] + bare + text[sel_end:]
+        return new, sel_start, sel_start + len(bare)
+    # caso 2: marcadores FORA da seleção (texto[..left] sel [right..])
+    before = text[sel_start - len(left): sel_start]
+    after = text[sel_end: sel_end + len(right)]
+    if sel_start >= len(left) and before == left and after == right:
+        new = text[: sel_start - len(left)] + inner + text[sel_end + len(right):]
+        cs = sel_start - len(left)
+        return new, cs, cs + len(inner)
+    return md_wrap(text, sel_start, sel_end, left, right)  # senão, embrulha
+
+
 def _md_inline(s: str) -> str:
     """Inline markdown → Pango (em texto já escapado). Ordem evita colisão (código→negrito→
     tachado→itálico; negrito antes do itálico p/ não confundir ** com *)."""
@@ -86,17 +135,19 @@ def md_to_pango(text: str) -> str:
         line = raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         stripped = line.lstrip(" ")
         indent = line[: len(line) - len(stripped)]
-        heading = False
-        if stripped.startswith("# "):
-            line, heading = indent + stripped[2:], True
+        hsize = None  # H1/H2/H3 com tamanhos distintos; espaço após o # é OPCIONAL (tipo Notion)
+        hm = _HEADING_RE.match(stripped)
+        if hm:
+            hsize = ("xx-large", "x-large", "large")[len(hm.group(1)) - 1]
+            line = indent + hm.group(2)
         elif stripped[:6] in ("- [ ] ", "- [x] ", "- [X] "):
             mark = "☐" if stripped[3] == " " else "☑"  # ☐ / ☑
             line = indent + mark + " " + stripped[6:]
         elif stripped[:2] in ("- ", "* "):
             line = indent + "• " + stripped[2:]  # •
         line = _md_inline(line)
-        if heading:
-            line = f'<span size="larger" weight="bold">{line}</span>'
+        if hsize:
+            line = f'<span size="{hsize}" weight="bold">{line}</span>'
         out.append(line)
     return "\n".join(out)
 

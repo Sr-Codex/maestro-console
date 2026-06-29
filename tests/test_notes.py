@@ -5,8 +5,10 @@ from maestro.engine.notes import (
     Notes,
     file_to_note,
     md_line_prefix,
+    md_spans,
     md_to_pango,
     md_wrap,
+    md_wrap_toggle,
     note_to_file,
     parse_markdown,
     render_markdown,
@@ -159,6 +161,31 @@ def test_md_wrap_sem_selecao_cursor_entre_marcadores():
     assert cs == ce == 2  # cursor fica ENTRE os dois `
 
 
+def test_md_wrap_toggle_adiciona_e_remove():
+    # adiciona quando não há negrito
+    new, cs, ce = md_wrap_toggle("ola mundo", 4, 9, "**", "**")
+    assert new == "ola **mundo**" and new[cs:ce] == "mundo"
+    # remove quando a seleção JÁ inclui os marcadores
+    new2, cs2, ce2 = md_wrap_toggle("ola **mundo**", 4, 13, "**", "**")
+    assert new2 == "ola mundo" and new2[cs2:ce2] == "mundo"
+    # remove quando os marcadores estão FORA da seleção (só "mundo" selecionado)
+    new3, cs3, ce3 = md_wrap_toggle("ola **mundo**", 6, 11, "**", "**")
+    assert new3 == "ola mundo" and new3[cs3:ce3] == "mundo"
+
+
+def test_md_spans_estilo_ao_vivo():
+    spans = md_spans("a **bold** e *i* e `c`")
+    estilos = {s for *_xy, s in spans}
+    assert {"bold", "italic", "code"} <= estilos
+    assert (4, 8, "bold") in spans  # interno de **bold**
+
+
+def test_md_spans_headings_niveis():
+    assert (0, 4, "h1") in md_spans("# oi")  # linha toda vira h1
+    assert any(s == "h2" for *_x, s in md_spans("##sub"))
+    assert any(s == "h3" for *_x, s in md_spans("### tres"))
+
+
 def test_md_line_prefix_no_inicio():
     new, ncur = md_line_prefix("titulo", 3, "# ")
     assert new == "# titulo" and ncur == 5
@@ -182,11 +209,24 @@ def test_md_to_pango_inline():
 
 
 def test_md_to_pango_blocos():
-    assert md_to_pango("# Título") == '<span size="larger" weight="bold">Título</span>'
     assert md_to_pango("- [ ] a") == "☐ a"
     assert md_to_pango("- [x] b") == "☑ b"
     assert md_to_pango("- item") == "• item"
     assert md_to_pango("* item") == "• item"
+
+
+def test_md_to_pango_headings_h1_h2_h3():
+    # H1/H2/H3 com tamanhos distintos (xx-large > x-large > large)
+    assert md_to_pango("# T") == '<span size="xx-large" weight="bold">T</span>'
+    assert md_to_pango("## T") == '<span size="x-large" weight="bold">T</span>'
+    assert md_to_pango("### T") == '<span size="large" weight="bold">T</span>'
+
+
+def test_md_to_pango_heading_sem_espaco_tipo_notion():
+    # tolerante: '#T' (sem espaço) também vira título (como no Notion)
+    assert md_to_pango("#T") == '<span size="xx-large" weight="bold">T</span>'
+    assert md_to_pango("##T") == '<span size="x-large" weight="bold">T</span>'
+    assert md_to_pango("####x") == "####x"  # 4+ # não é título (vira texto)
 
 
 def test_md_to_pango_escapa_entidades():
@@ -198,7 +238,7 @@ def test_md_to_pango_escapa_entidades():
 def test_md_to_pango_multilinha_e_combinado():
     assert md_to_pango("**a**\n- x") == "<b>a</b>\n• x"
     assert md_to_pango("# T\n`c` e *i*") == (
-        '<span size="larger" weight="bold">T</span>\n<tt>c</tt> e <i>i</i>'
+        '<span size="xx-large" weight="bold">T</span>\n<tt>c</tt> e <i>i</i>'
     )
 
 
