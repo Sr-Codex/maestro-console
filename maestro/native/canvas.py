@@ -13,6 +13,7 @@ independentes do zoom: display = base * zoom (helpers `to_display`/`to_base`).
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sys
 import threading
@@ -70,12 +71,20 @@ from .orchestrate import (  # noqa: E402
     run_team_in_thread,
 )
 from .palette import build_action_items, build_palette_items, fuzzy, hintbar_text  # noqa: E402
+from .rope import (  # noqa: E402
+    ROPE_REST_EPS,
+    catenary_pts,
+    make_rope,
+    quad_bezier_pts,
+    spring_target,
+    step_rope,
+)
 from .routines_ui import parse_steps, routine_rows  # noqa: E402
 from .state import (  # noqa: E402
     GRID,
     CanvasModel,
     EdgeModel,
-    cable_bezier,
+    cable_anchors,
     connected_notes,
     minimap_layout,
     nodes_for_note,
@@ -91,10 +100,24 @@ BASE_W, BASE_H = 420, 220
 MIN_NODE_W, MIN_NODE_H = 240, 120  # piso ao redimensionar um card (arrastar a alça ⤡)
 MIN_NOTE_W, MIN_NOTE_H = 160, 90  # piso ao redimensionar uma nota
 NOTE_W_DEFAULT, NOTE_H_DEFAULT = 200, 110  # tamanho padrão do corpo da nota
-RESIZE_BAND = 6  # faixa (px de tela) em volta da borda do card onde o cursor vira resize
-_RESIZE_CURSOR = {  # combinação de bordas -> nome do cursor
-    "n": "ns-resize", "s": "ns-resize", "e": "ew-resize", "w": "ew-resize",
-    "nw": "nwse-resize", "se": "nwse-resize", "ne": "nesw-resize", "sw": "nesw-resize",
+RESIZE_BAND = 5  # faixa (px de tela) em volta da borda do card onde o cursor vira resize
+CABLE_DASH_ON, CABLE_DASH_OFF = 8.0, 6.0  # tracejado do cabo "fluindo" (handoff busy)
+CABLE_DASH_PERIOD = CABLE_DASH_ON + CABLE_DASH_OFF  # módulo da fase animada
+CABLE_FLOW_SPEED = 0.03  # unidades de fase por ms (velocidade do fluxo correndo no cabo)
+CABLE_DOT_RADIUS = 5.0  # raio (px de tela) da bolinha na ponta do cabo (aparece só após conectar)
+CABLE_SETTLE_FRAMES = 30  # frames em repouso antes de dormir o tick (~0,5s a 60fps)
+CATENARY_SAG = 0.18  # barriga do modo catenária (fração do vão)
+SPRING_SAG = 0.10  # barriga do modo bezier+mola — mais esticado (menos sag) que a catenária
+ANCHOR_EASE = 0.35  # suaviza a TROCA de âncora do ímã: o endpoint escorrega em vez de teleportar
+PHYS_LABEL_FRAMES = 120  # frames que o rótulo do modo de física fica visível ao trocar (~2s)
+_RESIZE_CURSOR = {  # borda -> (nome CSS moderno, nome legado X11 p/ temas incompletos)
+    # alguns temas de cursor (ex.: Windows-10-Icons, sem Inherits=) NÃO têm os nomes CSS
+    # (ns/ew/nwse/nesw-resize) e não herdam de um tema completo → new_from_name cai no
+    # padrão (seta) e o cursor "não muda". O fallback usa os nomes legados que esses temas têm.
+    "n": ("ns-resize", "v_double_arrow"), "s": ("ns-resize", "v_double_arrow"),
+    "e": ("ew-resize", "h_double_arrow"), "w": ("ew-resize", "h_double_arrow"),
+    "nw": ("nwse-resize", "bd_double_arrow"), "se": ("nwse-resize", "bd_double_arrow"),
+    "ne": ("nesw-resize", "fd_double_arrow"), "sw": ("nesw-resize", "fd_double_arrow"),
 }
 PAN_SCROLL_STEP = 90.0  # px de pan por unidade de scroll (SELECT + trackball) — velocidade do pan
 # estado do envelope (passo done) -> estado visual do nó
@@ -176,6 +199,14 @@ def _rgba(hex_color: str) -> Gdk.RGBA:
     c = Gdk.RGBA()
     c.parse(hex_color)
     return c
+
+
+def _cable_rgb(state) -> tuple[float, float, float]:
+    """Cor (r,g,b) do cabo: cor do estado durante handoff, senão o azul ocioso padrão."""
+    if state is not None:
+        c = _rgba(STATE_COLORS.get(state, STATE_COLORS["idle"]))
+        return (c.red, c.green, c.blue)
+    return (0.23, 0.51, 0.96)
 
 
 def _plane_xform(px: float, py: float, z: float) -> Gsk.Transform:
@@ -309,6 +340,15 @@ class CanvasWindow:
         self._loading = False  # True só no startup: suspende auto-fit p/ restaurar tamanho EXATO
         self._group_resize = None  # estado do resize de grupo (alça canto inf-dir)
         self._edge_state: dict[tuple[str, str], str] = {}  # cor do cabo por handoff (V7-S4)
+        self._edge_flow: dict[tuple[str, str], tuple[str, str]] = {}  # sentido ativo (frm→to)
+        self._cable_anim_phase = 0.0  # fase do tracejado animado (cabo "fluindo")
+        self._cable_tick_id = None  # id do add_tick_callback (física da corda + fluxo)
+        self._ropes: dict[tuple[str, str], dict] = {}  # corda Verlet por cabo (pts/prev)
+        self._springs: dict[tuple[str, str], tuple[float, float]] = {}  # ctrl suavizado (modo mola)
+        self._anchor_sm: dict[tuple[str, str], tuple] = {}  # pontas suavizadas (troca de âncora)
+        self._cable_rest = 0  # frames consecutivos em repouso (p/ dormir o tick)
+        self._cable_phys = "verlet"  # "verlet" | "catenary" | "spring" (Ctrl+Shift+P cicla)
+        self._phys_label_frames = 0  # frames restantes do rótulo do modo (flash ao trocar)
         self._active_edge: tuple[str, str] | None = None
         self._pan: tuple[float, float] | None = None
         self._focused_nid: str | None = None  # terminal em foco (p/ fechar via teclado)
@@ -889,7 +929,7 @@ class CanvasWindow:
         # dispara em MUDANÇA de foco, então sozinho falhava ao re-selecionar após clicar fora).
         selclick = Gtk.GestureClick()
         selclick.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-        selclick.connect("pressed", lambda *_a, n=nid: self._select(("node", n)))
+        selclick.connect("pressed", self._on_frame_press, "node", nid)
         frame.add_controller(selclick)
         sz = self.model.node_size(nid, (BASE_W, BASE_H))  # tamanho por nó (persistido)
         self._node_size[nid] = sz
@@ -952,10 +992,16 @@ class CanvasWindow:
         return (kind, tid, edges) if edges else None
 
     def _update_resize_cursor(self, x, y) -> None:
-        """Cursor de resize quando o ponteiro entra na faixa da borda (senão limpa)."""
+        """Cursor de resize quando o ponteiro entra na faixa da borda (senão limpa).
+        Usa o nome CSS com fallback pro nome legado X11 (temas de cursor incompletos)."""
         rz = self._resize_edge_at(x, y)
-        name = _RESIZE_CURSOR.get(rz[2]) if rz is not None else None
-        self.plane.set_cursor(Gdk.Cursor.new_from_name(name, None) if name else None)
+        names = _RESIZE_CURSOR.get(rz[2]) if rz is not None else None
+        if names is None:
+            self.plane.set_cursor(None)
+            return
+        css, legacy = names
+        cur = Gdk.Cursor.new_from_name(css, Gdk.Cursor.new_from_name(legacy, None))
+        self.plane.set_cursor(cur)
 
     @staticmethod
     def _resize_rect(origin, dx, dy, edges, min_w, min_h):
@@ -1144,6 +1190,17 @@ class CanvasWindow:
         store = {"node": self.frames, "note": self.note_frames, "ft": self._ft_frames}.get(kind, {})
         return store.get(tid)
 
+    def _on_frame_press(self, gesture, _n_press, _x, _y, kind, tid) -> None:
+        """Clique em QUALQUER área do card (gesto CAPTURE no frame, antes do VTE/TextView
+        consumir). No modo conectar LIGA o cabo (e claima o gesto p/ o corpo não selecionar
+        texto); senão só SELECIONA (sem claimar, p/ terminal/arraste seguirem). Isto faz o
+        connect funcionar clicando em qualquer parte do card, não só na barra superior."""
+        if self._connect_mode:
+            self._connect_pick(kind, tid)
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        else:
+            self._select((kind, tid))
+
     def _select(self, sel) -> None:
         """Marca (kind, id) como selecionado: borda azul tracejada. None = limpa seleção."""
         if sel == self._selected:
@@ -1178,6 +1235,9 @@ class CanvasWindow:
     def _pan_begin(self, gesture, x, y):
         # x,y vêm em coords do scrolled (que NÃO rola) = coords de TELA -> estável.
         self._item_resize = None
+        picked = self.plane.pick(x, y, Gtk.PickFlags.DEFAULT)
+        # connect: clicar em QUALQUER área do card é tratado pelo gesto CAPTURE do frame
+        # (_on_frame_press), que claima — então aqui só sobra o clique no FUNDO do plano.
         rz = self._resize_edge_at(x, y)  # faixa da borda do card SELECIONADO → resize
         if rz is not None:
             kind, tid, edges = rz
@@ -1187,13 +1247,6 @@ class CanvasWindow:
             }
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
             return
-        picked = self.plane.pick(x, y, Gtk.PickFlags.DEFAULT)
-        if self._connect_mode:  # modo conectar: clicar em QUALQUER área do nó/nota liga o cabo
-            el = self._elem_at(picked)
-            if el is not None and el[0] in ("node", "note"):
-                self._connect_pick(el[0], el[1])
-                gesture.set_state(Gtk.EventSequenceState.DENIED)
-                return
         self._select(self._elem_at(picked))  # pressionar seleciona o nó/nota/árvore (ou limpa no fundo)
         camx, camy = self._cam
         px, py = x - camx, y - camy  # coords base*zoom (p/ hit-test de grupo)
@@ -1238,6 +1291,7 @@ class CanvasWindow:
 
     def _pan_update(self, _g, off_x, off_y):
         z = self.model.zoom()
+        self._wake_cables()  # mover/redimensionar/panar pode mexer as âncoras → física da corda
         if getattr(self, "_item_resize", None) is not None:  # resize de nó/nota pela borda
             r = self._item_resize
             mw, mh = self._resize_min(r["kind"])
@@ -1399,6 +1453,7 @@ class CanvasWindow:
         else:
             self._cam = (0.0, 0.0)
         self._reposition_all()
+        self._wake_cables()  # cabos restaurados caem no sag inicial ao abrir
         return False  # one-shot (GLib)
 
     def _zoom(self, dz):
@@ -1570,6 +1625,7 @@ class CanvasWindow:
                 self._ask_hint(src, dst)  # cabo IA↔IA: maestro-ask (ADR-11)
             else:
                 self._on_note_cable_added(src, dst, skind, dkind)  # hook (4b); no-op no 4a
+        self._wake_cables()  # cabo criado/removido: a corda precisa nascer/sumir
         self.plane.queue_draw()
 
     def _on_cable_removed(self, a: str, b: str) -> None:
@@ -1877,6 +1933,105 @@ class CanvasWindow:
         for e in self.edges.list():
             if set(e) == {frm, to}:
                 self._edge_state[e] = state
+                if state == "busy":
+                    self._edge_flow[e] = (frm, to)  # sentido real do dado (quem envia → recebe)
+                else:
+                    self._edge_flow.pop(e, None)
+        self._wake_cables()
+
+    # -- animação de fluxo do cabo (só enquanto há handoff "busy": poupa bateria) --
+    def _has_flowing_edge(self) -> bool:
+        return any(st == "busy" for st in self._edge_state.values())
+
+    def _wake_cables(self) -> None:
+        """Acorda o tick da corda (física + fluxo). Chamar quando algo pode mexer os cabos:
+        cards movendo/redimensionando, cabo criado/removido, edge virando busy, abertura."""
+        self._cable_rest = 0
+        if self._cable_tick_id is None:
+            self._cable_tick_id = self.plane.add_tick_callback(self._cable_tick)
+
+    def _get_rope(self, edge, p0, p3):
+        """Corda Verlet do cabo (cria reta entre as âncoras na 1ª vez)."""
+        r = self._ropes.get(edge)
+        if r is None:
+            r = make_rope(p0, p3)
+            self._ropes[edge] = r
+        return r
+
+    def _cable_points(self, edge, p0, p3):
+        """Pontos da curva do cabo segundo o modo de física atual (`_cable_phys`). Usa as
+        PONTAS SUAVIZADAS (`_anchor_sm`, atualizadas no tick) p/ a troca de âncora do ímã não
+        teleportar; cai pro magnet cru se ainda não há suavização (1º frame)."""
+        e0, e3 = self._anchor_sm.get(edge, (p0, p3))
+        if self._cable_phys == "catenary":
+            return catenary_pts(e0, e3, sag_ratio=CATENARY_SAG)
+        if self._cable_phys == "spring":
+            ctrl = self._springs.get(edge) or spring_target(e0, e3, SPRING_SAG)
+            return quad_bezier_pts(e0, ctrl, e3)
+        return self._get_rope(edge, e0, e3)["pts"]
+
+    def _ease_anchors(self, edge, p0, p3):
+        """Escorrega as pontas guardadas até o alvo do ímã (suaviza a troca de âncora).
+        Devolve (e0, e3, deslocamento). 1ª vez fixa direto (sem slide na criação)."""
+        cur = self._anchor_sm.get(edge)
+        if cur is None:
+            self._anchor_sm[edge] = (p0, p3)
+            return p0, p3, 0.0
+        c0, c3 = cur
+        e = ANCHOR_EASE
+        n0 = (c0[0] + (p0[0] - c0[0]) * e, c0[1] + (p0[1] - c0[1]) * e)
+        n3 = (c3[0] + (p3[0] - c3[0]) * e, c3[1] + (p3[1] - c3[1]) * e)
+        self._anchor_sm[edge] = (n0, n3)
+        return n0, n3, max(math.dist(n0, c0), math.dist(n3, c3))
+
+    def _step_ropes(self) -> bool:
+        """Avança a física do modo atual p/ todos os cabos vivos; poda os que sumiram.
+        Devolve True se ALGO ainda se mexe (acima do limiar de repouso). Catenária é
+        estática, mas a suavização das pontas ainda 'anda' por alguns frames."""
+        if self.edges is None:
+            return False
+        z = self.model.zoom()
+        live, max_moved = set(), 0.0
+        for src, dst in self.edges.list():
+            sbox, dbox = self._cable_box(src, z), self._cable_box(dst, z)
+            if sbox is None or dbox is None:
+                continue
+            p0, p3 = cable_anchors(sbox, dbox)
+            edge = (src, dst)
+            live.add(edge)
+            e0, e3, amoved = self._ease_anchors(edge, p0, p3)  # pontas suavizadas
+            max_moved = max(max_moved, amoved)
+            if self._cable_phys == "verlet":
+                max_moved = max(max_moved, step_rope(self._get_rope(edge, e0, e3), e0, e3))
+            elif self._cable_phys == "spring":  # mola: ctrl escorrega até o alvo (sem oscilar)
+                tx, ty = spring_target(e0, e3, SPRING_SAG)
+                cx, cy = self._springs.get(edge, (tx, ty))
+                nx, ny = cx + (tx - cx) * 0.18, cy + (ty - cy) * 0.18
+                self._springs[edge] = (nx, ny)
+                max_moved = max(max_moved, math.hypot(nx - cx, ny - cy))
+        for store in (self._ropes, self._springs, self._anchor_sm):
+            for dead in set(store) - live:
+                store.pop(dead, None)
+        return max_moved > ROPE_REST_EPS
+
+    def _cable_tick(self, _widget, frame_clock) -> bool:  # pragma: no cover - precisa de GTK
+        moving = self._step_ropes()  # física da corda (sag/balanço)
+        busy = self._has_flowing_edge()
+        if busy:  # avança a fase do tracejado de fluxo
+            t = frame_clock.get_frame_time()  # microssegundos (monotônico)
+            self._cable_anim_phase = (t / 1000.0 * CABLE_FLOW_SPEED) % CABLE_DASH_PERIOD
+        label = self._phys_label_frames > 0  # flash do rótulo de modo (mantém o tick vivo)
+        if label:
+            self._phys_label_frames -= 1
+        self.plane.queue_draw()
+        if moving or busy or label:  # ainda há trabalho: segue
+            self._cable_rest = 0
+            return GLib.SOURCE_CONTINUE
+        self._cable_rest += 1  # assentou e nada fluindo: dorme após alguns frames
+        if self._cable_rest > CABLE_SETTLE_FRAMES:
+            self._cable_tick_id = None
+            return GLib.SOURCE_REMOVE
+        return GLib.SOURCE_CONTINUE
 
     def _ask_hint(self, src: str, dst: str) -> None:
         """Avisa ambos os terminais que podem conversar pelo cabo (maestro-ask)."""
@@ -1922,6 +2077,14 @@ class CanvasWindow:
         if keyval == Gdk.KEY_Escape and self._connect_mode and has_connect:
             self._connect_btn.set_active(False)  # untoggle -> cancela
             return True
+        if keyval in (Gdk.KEY_p, Gdk.KEY_P) and ctrl and shift:
+            order = ["verlet", "catenary", "spring"]  # cicla a física do cabo (gosto do usuário)
+            self._cable_phys = order[(order.index(self._cable_phys) + 1) % len(order)]
+            self._springs.clear()  # recomeça a mola limpa ao entrar no modo
+            self._phys_label_frames = PHYS_LABEL_FRAMES  # flash do nome do modo
+            self._wake_cables()
+            self.plane.queue_draw()
+            return True
         if keyval == Gdk.KEY_p and ctrl:
             self._open_palette()  # Ctrl-P (V11-S2)
             return True
@@ -1955,19 +2118,25 @@ class CanvasWindow:
         return (x0 - pad, y0 - pad, (x1 - x0) + 2 * pad, (y1 - y0) + 2 * pad)
 
     def _cable_box(self, eid, z):
-        """(x,y,w,h) em coords-tela do endpoint de cabo (NÓ ou NOTA), ou None se ausente."""
-        if eid in self.frames:  # nó
+        """(x,y,w,h) em coords-tela (base*zoom; o translate da câmera vem no draw) do endpoint
+        de cabo (NÓ ou NOTA), ou None se ausente. Usa os limites REAIS do frame (compute_bounds
+        = cabeçalho + corpo) p/ as 8 âncoras caírem nas bordas de verdade — o tamanho armazenado
+        (`_node_size` = só o terminal, sem o cabeçalho) deixava as âncoras de BAIXO acima da borda.
+        Fallback p/ o cálculo por tamanho armazenado quando o frame ainda não tem alocação."""
+        frame = self.frames.get(eid) or self.note_frames.get(eid)
+        if frame is None:
+            return None
+        ok, r = frame.compute_bounds(self.plane)
+        if ok and r.size.width > 0 and r.size.height > 0:
+            camx, camy = self._cam
+            return (r.origin.x - camx, r.origin.y - camy, r.size.width, r.size.height)
+        # fallback: sem alocação ainda → estima pelo tamanho armazenado
+        if eid in self.frames:
             bx, by = to_display(self._base_pos.get(eid, (0.0, 0.0)), z)
             nw, nh = self._node_size.get(eid, (BASE_W, BASE_H))
             return (bx, by, nw * z, nh * z)
-        if eid in self.note_frames:  # nota: posição base + tamanho do corpo (scroller)
-            bx, by = to_display(self._note_base.get(eid, (0.0, 0.0)), z)
-            fr = self.note_frames.get(eid)
-            w, h = fr._body_scroll.get_size_request() if fr is not None else (0, 0)
-            if w <= 0 or h <= 0:
-                w, h = NOTE_W_DEFAULT, NOTE_H_DEFAULT
-            return (bx, by, w * z, h * z)
-        return None
+        bx, by = to_display(self._note_base.get(eid, (0.0, 0.0)), z)
+        return (bx, by, NOTE_W_DEFAULT * z, NOTE_H_DEFAULT * z)
 
     # -- cabos (handoffs): desenhados no snapshot do _Plane --
     def _draw_cables_cr(self, cr):
@@ -1975,25 +2144,76 @@ class CanvasWindow:
         # grid agora é background CSS (GPU), não cairo — ver _apply_grid()
         self._draw_groups_cr(cr)  # C2: grupos/áreas, atrás dos cabos e dos nós
 
-        # SÓ cabos EXPLÍCITOS do usuário (sem auto-conexão por ordem): o usuário
-        # decide se/quem conectar (modo conectar). Cor azul; estado durante handoff.
-        # C5: curva tipo corda (bezier) em vez de reta — leitura de direção/fluxo.
+        # SÓ cabos EXPLÍCITOS do usuário (modo conectar). Cada cabo é uma CORDA Verlet
+        # (física): pontas no ímã de 8 pontos, miolo cai/balança. Cor azul; estado no handoff.
         if self.edges is not None:
-            cr.set_line_width(2.5)
             for src, dst in self.edges.list():
                 sbox, dbox = self._cable_box(src, z), self._cable_box(dst, z)
                 if sbox is None or dbox is None:  # endpoint ausente (nó/nota inexistente)
                     continue
+                p0, p3 = cable_anchors(sbox, dbox)
+                pts = self._cable_points((src, dst), p0, p3)
                 st = self._edge_state.get((src, dst))
-                if st is not None:
-                    c = _rgba(STATE_COLORS.get(st, STATE_COLORS["idle"]))
-                    cr.set_source_rgb(c.red, c.green, c.blue)
+                cr.set_source_rgb(*_cable_rgb(st))
+                # handoff ativo: tracejado correndo no SENTIDO REAL do dado (quem envia → recebe),
+                # não na ordem de criação do cabo (bidirecional). O path vai p0→p3; offset negativo
+                # corre nesse sentido, positivo inverte. Escala c/ zoom.
+                if st == "busy":
+                    flow = self._edge_flow.get((src, dst))
+                    forward = flow is None or flow == (src, dst)  # flow==(dst,src) → inverte
+                    off = (-self._cable_anim_phase if forward else self._cable_anim_phase) * z
+                    cr.set_dash([CABLE_DASH_ON * z, CABLE_DASH_OFF * z], off)
                 else:
-                    cr.set_source_rgb(0.23, 0.51, 0.96)
-                x0, y0, c1x, c1y, c2x, c2y, x3, y3 = cable_bezier(sbox, dbox)
-                cr.move_to(x0, y0)
-                cr.curve_to(c1x, c1y, c2x, c2y, x3, y3)
+                    cr.set_dash([])
+                cr.set_line_width(2.5)  # largura da corda (re-setada: o anel da bolinha usa 1.5)
+                self._stroke_rope(cr, pts)
                 cr.stroke()
+                # bolinha em cada ponta (aparece SÓ porque o cabo existe = após conectar):
+                # miolo branco p/ contraste + anel na cor do cabo. Tamanho fixo de tela.
+                cr.set_dash([])
+                cr.set_line_width(1.5)
+                for px, py in (pts[0], pts[-1]):
+                    cr.arc(px, py, CABLE_DOT_RADIUS, 0.0, 2.0 * math.pi)
+                    cr.set_source_rgb(1.0, 1.0, 1.0)
+                    cr.fill()
+                    cr.arc(px, py, CABLE_DOT_RADIUS, 0.0, 2.0 * math.pi)
+                    cr.set_source_rgb(*_cable_rgb(st))
+                    cr.stroke()
+            cr.set_dash([])  # reset p/ não vazar tracejado em outros desenhos do cr
+        if self._phys_label_frames > 0:  # flash do modo ao trocar (Ctrl+Shift+P); some sozinho
+            self._draw_phys_label(cr)
+
+    def _draw_phys_label(self, cr) -> None:
+        """Mostra o nome do modo de física do cabo num canto por ~2s ao trocar (flash)."""
+        camx, camy = self._cam
+        names = {"verlet": "VERLET (balança)", "catenary": "CATENÁRIA (estática)",
+                 "spring": "BEZIER+MOLA (esticado)"}
+        cr.save()
+        cr.set_dash([])
+        cr.set_source_rgb(0.96, 0.86, 0.36)
+        cr.select_font_face("monospace", 0, 1)
+        cr.set_font_size(16)
+        cr.move_to(16 - camx, 26 - camy)  # canto sup-esq da viewport (desfaz o translate da câmera)
+        cr.show_text(f"cabo: {names.get(self._cable_phys, self._cable_phys)}   (Ctrl+Shift+P)")
+        cr.restore()
+
+    @staticmethod
+    def _stroke_rope(cr, pts) -> None:
+        """Traça a corda como spline suave (Catmull-Rom → cubic bezier por segmento),
+        passando por todos os pontos. Path único → o tracejado de fluxo corre por cima."""
+        n = len(pts)
+        if n < 2:
+            return
+        cr.move_to(pts[0][0], pts[0][1])
+        for i in range(n - 1):
+            p_prev = pts[i - 1] if i > 0 else pts[0]
+            p1, p2 = pts[i], pts[i + 1]
+            p_next = pts[i + 2] if i + 2 < n else pts[-1]
+            c1x = p1[0] + (p2[0] - p_prev[0]) / 6.0
+            c1y = p1[1] + (p2[1] - p_prev[1]) / 6.0
+            c2x = p2[0] - (p_next[0] - p1[0]) / 6.0
+            c2y = p2[1] - (p_next[1] - p1[1]) / 6.0
+            cr.curve_to(c1x, c1y, c2x, c2y, p2[0], p2[1])
 
     # -- rodar time da engine (headless) refletindo nas cores --
     def _run_team(self):
@@ -2048,6 +2268,8 @@ class CanvasWindow:
     def _run_handoff(self, src: str, dst: str, intent: str) -> None:
         self._active_edge = (src, dst)
         self._edge_state[(src, dst)] = "busy"
+        self._edge_flow[(src, dst)] = (src, dst)  # handoff: dado vai src→dst
+        self._wake_cables()
         self.plane.queue_draw()
         run_edge_handoff_in_thread(self.controller, src, dst, intent, self._on_handoff_step_ts)
 
@@ -2063,8 +2285,11 @@ class CanvasWindow:
                 if sp.state == "DONE":
                     if sp.agent == dst:  # B concluiu -> cabo "done"
                         self._edge_state[(src, dst)] = "done"
+                        self._edge_flow.pop((src, dst), None)
                 else:  # A ou B escalou -> cabo reflete o estado
                     self._edge_state[(src, dst)] = _ST_MAP.get(sp.state, "blocked")
+                    self._edge_flow.pop((src, dst), None)
+        self._wake_cables()
         self.plane.queue_draw()
         return False
 
@@ -2425,7 +2650,7 @@ class CanvasWindow:
         # não claima, então editar/arrastar seguem) — espelha o card de nó (v0.26.1)
         selclick = Gtk.GestureClick()
         selclick.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-        selclick.connect("pressed", lambda *_a, n=note.id: self._select(("note", n)))
+        selclick.connect("pressed", self._on_frame_press, "note", note.id)
         frame.add_controller(selclick)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         # cabeçalho = só uma FAIXA FINA (tom levemente + claro) p/ MOVER a nota (sem título,

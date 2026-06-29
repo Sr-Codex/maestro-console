@@ -3,6 +3,43 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.34.0] — Cabo: física (Verlet/3 modos) + ímã de 8 pontos + bolinha + fluxo + connect/cursor
+- **Física no cabo — corda Verlet + 3 modos comutáveis (Ctrl+Shift+P):** o cabo deixou de ser
+  estático e ganhou **física orgânica** (ADR-14). Modos: **Verlet** (padrão — corda que cai,
+  balança e assenta com inércia), **catenária** (sag estático elegante, sem balanço) e
+  **bezier+mola** (caída leve + atraso suave ao mover, mais esticado). O usuário cicla a gosto;
+  um rótulo **pisca ~2 s** ao trocar e some. Núcleo **puro/testável** em `maestro/native/rope.py`
+  (Jakobsen/GDC 2001; `tests/test_native_rope.py`); desenho via **spline Catmull-Rom**.
+- **Bateria (uConsole):** a simulação roda num `add_tick_callback` (frame clock GTK4) que **dorme
+  ~0,5 s depois de assentar** — canvas parado = sem tick. Passo de tempo **fixo** (estável p/ Verlet).
+- **Troca de âncora suavizada:** ao mover o card e o ímã trocar de borda/canto, a ponta do cabo
+  **escorrega** até a nova âncora em vez de teleportar (acaba o "tranco"). Pesquisa: `docs/12`.
+- **Auto-roteamento tipo ÍMÃ por 8 pontos:** o cabo gruda no **par de âncoras mais
+  próximas entre si** — 4 meios de borda + 4 cantos de cada card. Lado a lado usa os meios (↔/↕),
+  na diagonal usa os **cantos** que se encaram; segue os cards ao mover. Antes era fixo
+  direita→esquerda (volta feia quando o destino estava atrás/acima). `cable_anchors`/`_magnet_pair`
+  (funções puras em `state.py`); controles saem na direção da âncora.
+- **Bolinha na ponta do cabo:** cada extremidade ganha uma bolinha (miolo branco + anel na cor do
+  cabo), visível **só após conectar**. Tamanho fixo de tela.
+- **Âncoras alinhadas na borda real:** `_cable_box` passa a usar os limites REAIS do frame
+  (`compute_bounds` = cabeçalho + corpo) em vez do tamanho do terminal — antes as âncoras de baixo
+  flutuavam acima da borda. Vale p/ nós e notas.
+- **Conectar clicando em QUALQUER área do card:** o connect agora é tratado pelo gesto CAPTURE do
+  frame (`_on_frame_press`), que pega o clique **antes do VTE/TextView consumir** — não precisa
+  mais mirar na barra superior. Fora do modo conectar, terminal/seleção/arraste seguem normais.
+- **Fluxo animado no SENTIDO REAL do dado:** durante um handoff/`maestro-ask` ativo (`busy`) o cabo
+  vira **tracejado correndo de quem ENVIA → quem RECEBE** (`_edge_flow`), independente de como o
+  cabo foi criado (é bidirecional). Só anima enquanto há `busy` e **se desliga sozinho** via
+  `add_tick_callback` (frame clock GTK4) — sem tick em canvas parado (poupa bateria no uConsole).
+  *Nota:* hoje dispara em agente↔agente; cabo nota↔nó ainda não marca `busy`.
+- **Fix: cursor de resize voltou a aparecer nas bordas.** Temas de cursor incompletos (ex.:
+  **Windows-10-Icons**, sem `Inherits=`) não têm os nomes CSS `ns/ew/nwse/nesw-resize` →
+  `new_from_name` caía na seta padrão. Agora cada cursor tem **fallback pro nome legado X11**
+  (`v_double_arrow`/`h_double_arrow`/`bd_double_arrow`/`fd_double_arrow`). A detecção da borda
+  nunca esteve quebrada (confirmado por medição ao vivo); era só o render do cursor. Faixa de
+  resize ajustada p/ **5px**.
+- Testes do `cable_bezier` cobrindo horizontal, vertical, destino-à-esquerda e **diagonal→cantos**.
+
 ## [0.33.0] — Nota conectada: agente lê/escreve + sabe que tem nota — Fase 4b
 - **O agente lê e escreve a nota conectada:** cada nota ligada a um nó vira o arquivo
   `<workspace>/notes/<id>.md` (markdown) no workspace do agente — ele lê/edita como arquivo normal.
