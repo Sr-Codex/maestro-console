@@ -3,6 +3,16 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.37.0] — Nota: checkbox auto-continua + auto-scroll + tira "rodar agente" da nota
+- **Checkbox/lista continua sozinha:** numa linha `- [ ]`/`- `, **Enter** cria o próximo item
+  (checkbox novo desmarcado); item **vazio** + Enter **sai** da lista; **Shift+Enter** = quebra
+  normal. Função pura `md_enter_continuation` (`engine/notes.py`, testada).
+- **Auto-scroll ao digitar:** o corpo da nota **acompanha o cursor** (não some no fim do bloco),
+  com **~10px de respiro** abaixo. Como o TextView fica dentro de um Stack, o scroll é feito no
+  `vadjustment` do ScrolledWindow pela posição do cursor (`get_iter_location`).
+- **Removido (por enquanto) o "rodar agente com a nota"** — o seletor de agente + botão **▶ rodar**
+  saíram do card da nota (o método `_run_note` fica p/ re-religar depois).
+
 ## [0.36.0] — Nota: edição in-place com estilo ao vivo (negrito/H1-H2-H3) + formata ao sair
 - **Editar direto no card:** clicar a nota entra no modo editar (texto markdown), o cursor foca;
   **clicar fora** (fundo, outro nó/nota) **formata** (renderiza limpo, marcadores somem).
