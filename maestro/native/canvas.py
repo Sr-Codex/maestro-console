@@ -882,6 +882,11 @@ class CanvasWindow:
         bar.append(foc)
         if self.edges is not None:  # 🔌 conectar — padrão de toda cápsula contextual
             bar.append(self._ctx_connect_btn())
+        edt = self._fab_button(
+            "emblem-system-symbolic", "⚙", "Editar terminal (Detalhes/Aparência/Agente)",
+            self._ctx_edit_node)
+        edt.add_css_class("note-ctx-btn")
+        bar.append(edt)
         dele = self._fab_button(
             "user-trash-symbolic", "🗑", "Fechar terminal (remove do canvas)",
             self._ctx_close_node)
@@ -889,6 +894,89 @@ class CanvasWindow:
         bar.append(dele)
         self._node_ctx_bar = bar
         return bar
+
+    def _ctx_edit_node(self) -> None:
+        nid = self._sel_nid()
+        if nid is not None:
+            self._open_terminal_editor(nid)
+
+    def _open_terminal_editor(self, nid: str) -> None:
+        """Diálogo "Editar Terminal" (abas Detalhes/Aparência/Agente) — FUNDAÇÃO (Fase 0).
+        Só o NOME está ligado; os demais campos são placeholders das próximas fases (ver
+        docs/11-maestri-editar-terminal.md). Persistência por-nó via model.node_cfg."""
+        win, box = self._dialog("Editar Terminal")
+        win.set_default_size(460, -1)
+        stack = Gtk.Stack()
+        stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        sw = Gtk.StackSwitcher()
+        sw.set_stack(stack)
+        sw.set_halign(Gtk.Align.CENTER)
+        box.append(sw)
+        box.append(stack)
+
+        def soon(text: str) -> Gtk.Widget:
+            lb = Gtk.Label(label=f"• {text} (em breve)", xalign=0)
+            lb.add_css_class("dim-label")
+            lb.set_wrap(True)
+            return lb
+
+        def page(*rows: Gtk.Widget) -> Gtk.Widget:
+            p = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            p.set_margin_top(10)
+            for r in rows:
+                p.append(r)
+            return p
+
+        # — Detalhes — (Nome ligado; resto = roadmap)
+        name = Gtk.Entry()
+        name.set_placeholder_text("Nome do Terminal")
+        name.set_text(self.model.node_name(nid, ""))
+        det = page(
+            name,
+            soon("Comando — Fase 3"),
+            soon("Monitorar atividade — Fase 4"),
+            soon("Maestro (sub-orquestração) — Fase 6"),
+            soon("Atalho — Fase 3"),
+            soon("Diretório de Trabalho — Fase 3"),
+            soon("SSH Remoto — Fase 7"),
+        )
+        stack.add_titled(det, "detalhes", "Detalhes")
+        # — Aparência — (Fases 1–2)
+        stack.add_titled(
+            page(soon("Ícone — Fase 1"), soon("Cor — Fase 1"), soon("Fonte — Fase 1"),
+                 soon("Tema (Sistema/Escuro/Claro/Custom) — Fase 2")),
+            "aparencia", "Aparência")
+        # — Agente — (Fase 5)
+        stack.add_titled(
+            page(soon("Responsabilidade (role): atribuir/buscar, editar instruções, "
+                      "Descobrir, Remover — Fase 5")),
+            "agente", "Agente")
+
+        # — rodapé: Cancelar / Salvar —
+        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        foot.set_halign(Gtk.Align.END)
+        foot.set_margin_top(10)
+
+        def do_save(_b=None):
+            nm = name.get_text().strip()
+            self.model.set_node_name(nid, nm or nid)  # persiste (abre igual fechou)
+            fr = self.frames.get(nid)
+            lbl = getattr(fr, "_title_lbl", None) if fr is not None else None
+            if lbl is not None:
+                lbl.set_text(f"  {nm or nid}  ")
+            win.destroy()
+
+        cancel = Gtk.Button(label="Cancelar")
+        cancel.connect("clicked", lambda _b: win.destroy())
+        save = Gtk.Button(label="Salvar")
+        save.add_css_class("suggested-action")
+        save.connect("clicked", do_save)
+        name.connect("activate", do_save)
+        foot.append(cancel)
+        foot.append(save)
+        box.append(foot)
+        win.present()
+        name.grab_focus()
 
     def _ctx_connect_btn(self) -> Gtk.Widget:
         """Botão PADRÃO de toda cápsula contextual: puxa um cabo A PARTIR do elemento
