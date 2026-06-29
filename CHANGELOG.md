@@ -3,6 +3,20 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.39.0] — Editar Terminal (Fase 0): diálogo de abas + fundação
+Início do clone do diálogo **"Editar Terminal"** do Maestri (Detalhes/Aparência/Agente).
+- **Botão ⚙ Editar** na cápsula contextual do terminal → abre o **diálogo de abas**
+  (`Gtk.StackSwitcher`: Detalhes / Aparência / Agente). Decisão de arquitetura: cápsula = ações
+  rápidas, diálogo = config completa (mantém a regra de cápsulas do `AGENTS.md`).
+- **Nome** ligado (edita → Salvar → atualiza o cabeçalho + persiste). Demais campos são
+  **placeholders datados por fase** (ex.: "Comando — Fase 3"), comunicando o roadmap na própria UI.
+- **Persistência por-nó:** `CanvasModel.node_cfg`/`set_node_cfg` (`nodecfg_{nid}_{key}`) — base
+  genérica das próximas fases.
+- **Doc-spec:** novo `docs/11-maestri-editar-terminal.md` — pesquisa completa (docs oficiais do
+  Maestri + auditoria do código), as 13 capacidades × 3 abas, divergências do nosso modelo
+  (Maestro mode mediado pela ask-bus; tema por-nó como override; roles via `role.json`) e o plano
+  de 8 fases. Fecha a lacuna: o diálogo não estava documentado em lugar nenhum.
+
 ## [0.38.0] — Cápsulas de UI do canvas + conexão por cápsula + zoom ancorado
 Rework da toolbar do canvas pro padrão de **cápsulas flutuantes** (arquitetura, ver `AGENTS.md`):
 - **Barra superior removida.** Tudo migrou pra **cápsula principal (FAB, topo-centro)** — toda
