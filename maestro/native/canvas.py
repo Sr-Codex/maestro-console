@@ -327,6 +327,8 @@ class CanvasWindow:
         self.order: list[str] = []
         self._connect_mode = False
         self._connect_src: tuple[str, str] | None = None  # (kind, id) da origem do cabo
+        self._connect_cursor: tuple[float, float] | None = None  # cursor p/ o cabo-fantasma
+        self._connect_oneshot = False  # conexão iniciada por cápsula = 1 cabo, depois sai do modo
         self._note_file_mtime: dict[tuple[str, str], float] = {}  # (nid,note_id)->mtime gravada
         self._pan = None  # estado do pan da vista (fundo)
         self._drag = None  # estado do arrasto de nó (via gesto do plano, estável)
@@ -348,6 +350,7 @@ class CanvasWindow:
         self._ropes: dict[tuple[str, str], dict] = {}  # corda Verlet por cabo (pts/prev)
         self._springs: dict[tuple[str, str], tuple[float, float]] = {}  # ctrl suavizado (modo mola)
         self._anchor_sm: dict[tuple[str, str], tuple] = {}  # pontas suavizadas (troca de âncora)
+        self._preview_rope: dict | None = None  # corda Verlet do cabo-fantasma (modo conectar)
         self._cable_rest = 0  # frames consecutivos em repouso (p/ dormir o tick)
         self._cable_phys = model.cable_phys()  # persistido: verlet|catenary|spring (Ctrl+Shift+P)
         self._phys_label_frames = 0  # frames restantes do rótulo do modo (flash ao trocar)
@@ -375,6 +378,7 @@ class CanvasWindow:
 
         self._install_css()
         self.win = Gtk.ApplicationWindow(application=app)
+        self._register_bundled_icons()  # ícones symbolic PRÓPRIOS (independem do tema do usuário)
         self.win.set_title("maestro console 🎼 — canvas (GTK4)")
         self.win.set_default_size(1000, 600)
         key = Gtk.EventControllerKey()
@@ -382,7 +386,8 @@ class CanvasWindow:
         self.win.add_controller(key)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        root.append(self._toolbar())
+        # Barra superior REMOVIDA (arquitetura): tudo migrou p/ a cápsula principal (FAB) e a
+        # cápsula de zoom (rodapé). Ver _build_fab / _build_zoom_capsule e AGENTS.md.
         # CANVAS INFINITO: ScrolledWindow só dá a viewport (NEVER = sem rolagem/parede);
         # o pan é por CÂMERA (self._cam), sem limite — ver _pan_*/_place.
         self.scrolled = Gtk.ScrolledWindow()
@@ -449,7 +454,9 @@ class CanvasWindow:
         self._minimap.add_controller(mmclick)
         overlay.add_overlay(self._minimap)
         overlay.add_overlay(self._build_fab())  # barra flutuante de ferramentas (topo-centro)
+        overlay.add_overlay(self._build_zoom_capsule())  # zoom — cápsula inferior-esquerda
         overlay.add_overlay(self._build_note_ctx())  # 2ª pílula: contexto da NOTA selecionada
+        overlay.add_overlay(self._build_node_ctx())  # 2ª pílula: contexto do TERMINAL selecionado
         root.append(overlay)
         self._hint_lbl = Gtk.Label(label=hintbar_text(), xalign=0)  # B2: ensina atalhos
         self._hint_lbl.add_css_class("hintbar")
@@ -505,6 +512,15 @@ class CanvasWindow:
             ".fab-btn:hover { background-color: rgba(255,255,255,0.08); border-radius: 10px; }",
             ".fab-btn:disabled { opacity: 0.35; }",
             ".fab-run { color: #89b4fa; }",  # o play (azul)
+            ".fab-attn { color: #f9e2af; font-size: 12px; padding: 0 4px; }",  # ⚠ N
+            ".fab-bar combobox { min-height: 30px; }",  # combo de tema dentro da pílula
+            ".zoom-cap { background-color: rgba(30,30,46,0.92); border: 1px solid #45475a;"
+            " border-radius: 15px; padding: 1px 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.5); }",
+            ".zoom-cap button { background: transparent; border: none; min-width: 24px;"
+            " min-height: 24px; padding: 0 3px; color: #cdd6f4; font-size: 16px; }",
+            ".zoom-cap button:hover { background-color: rgba(255,255,255,0.08);"
+            " border-radius: 8px; }",
+            ".zoom-cap label { color: #bac2de; font-size: 12px; padding: 0 5px; }",
             # 2ª pílula (contexto da nota): menor que a principal, com mais respiro
             ".note-ctx-bar { border-radius: 16px; padding: 3px 9px; }",
             ".note-ctx-btn { min-width: 26px; min-height: 26px; padding: 2px; font-size: 12px; }",
@@ -632,62 +648,18 @@ class CanvasWindow:
         }
         return spec, cbmap
 
-    def _toolbar(self) -> Gtk.Widget:
-        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        bar.set_margin_top(2)
-        bar.set_margin_bottom(2)
-        bar.set_margin_start(4)
-        bar.set_margin_end(4)
-        # -- controles de vista (esquerda) --
-        for label, dz, tip in (("−", -0.1, "diminuir zoom"), ("+", 0.1, "aumentar zoom")):
-            b = Gtk.Button(label=label)
-            b.set_tooltip_text(tip)
-            b.connect("clicked", lambda _b, d=dz: self._zoom(d))
-            bar.append(b)
-        self.zlabel = Gtk.Label(label="zoom 100%")
-        bar.append(self.zlabel)
-        self._attn_label = Gtk.Label(label="")  # "⚠ N" quando algo precisa de você (V11-S1)
-        self._attn_label.set_tooltip_text("itens que precisam de você")
-        bar.append(self._attn_label)
-        self._theme_combo = Gtk.ComboBoxText()  # tema dos terminais (V11-S4)
-        self._theme_combo.set_tooltip_text("tema dos terminais")
-        for tn in theme_names():
-            self._theme_combo.append_text(tn)
-        cur = self.model.terminal_theme()
-        names = theme_names()
-        self._theme_combo.set_active(names.index(cur) if cur in names else 0)
-        self._theme_combo.connect("changed", self._on_theme_changed)
-        bar.append(self._theme_combo)
-        if self.edges is not None:  # modo conexão (persistente) direto na barra
-            self._connect_btn = Gtk.ToggleButton(label="🔌 conectar")
-            self._connect_btn.set_tooltip_text(
-                "ligar agentes por cabo (clique A, depois B) · atalho: Ctrl+Shift+L"
-            )
-            self._connect_btn.connect("toggled", self._toggle_connect)
-            bar.append(self._connect_btn)
-        # espaçador empurra o resto p/ a direita
-        spacer = Gtk.Box()
-        spacer.set_hexpand(True)
-        bar.append(spacer)
-        # dica: Ctrl-P abre a busca rápida (palette)
-        hint = Gtk.Label(label="Ctrl-P: ir para…")
-        hint.set_tooltip_text("busca rápida de agentes/teams/floors/notas/routines")
-        bar.append(hint)
-        # -- comandos agrupados num menu (popover): descongestiona a barra (P3) --
-        spec, cbmap = self._action_spec()
-        if spec:
-            mb = Gtk.MenuButton(label="☰ ações")
-            pop = Gtk.Popover()
-            vb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            for label, key in spec:
-                b = Gtk.Button(label=label)
-                b.set_has_frame(False)
-                b.connect("clicked", lambda _b, k=key, p=pop: (p.popdown(), cbmap[k]()))
-                vb.append(b)
-            pop.set_child(vb)
-            mb.set_popover(pop)
-            bar.append(mb)
-        return bar
+    def _register_bundled_icons(self) -> None:
+        """Adiciona os ícones PRÓPRIOS do app (maestro/native/icons) ao tema. São symbolic
+        (recoloram pra cor da pílula) e não dependem do tema do usuário — isola o volátil
+        (AGENTS.md): trocar o tema do sistema não derruba os ícones do app pra emoji."""
+        try:
+            disp = self.win.get_display() or Gdk.Display.get_default()
+            if disp is None:
+                return
+            icons_dir = str(Path(__file__).resolve().parent / "icons")
+            Gtk.IconTheme.get_for_display(disp).add_search_path(icons_dir)
+        except Exception:
+            pass  # sem ícone próprio cai no fallback de emoji (degradação suave)
 
     def _fab_icon(self, icon_name: str, emoji: str) -> Gtk.Widget:
         """Ícone symbolic (visual line-art do print) com fallback p/ emoji se o tema não tiver."""
@@ -713,45 +685,81 @@ class CanvasWindow:
             b.connect("clicked", lambda _b: cb())
         return b
 
+    def _build_zoom_capsule(self) -> Gtk.Widget:
+        """Cápsula de zoom (pílula) no rodapé-esquerdo — saiu da barra superior (arquitetura)."""
+        cap = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        cap.add_css_class("zoom-cap")  # pílula COMPACTA própria (menor que a FAB)
+        cap.set_halign(Gtk.Align.START)
+        cap.set_valign(Gtk.Align.END)
+        cap.set_margin_start(10)
+        cap.set_margin_bottom(10)
+        for label, dz, tip in (("−", -0.1, "diminuir zoom"), ("+", 0.1, "aumentar zoom")):
+            b = Gtk.Button(label=label)
+            b.set_has_frame(False)
+            b.set_tooltip_text(tip)
+            b.connect("clicked", lambda _b, d=dz: self._zoom(d))
+            cap.append(b)
+        self.zlabel = Gtk.Label(label="zoom 100%")
+        cap.append(self.zlabel)
+        return cap
+
     def _build_fab(self) -> Gtk.Widget:
-        """Barra FLUTUANTE de ferramentas (pílula no topo-centro, estilo Maestri). Passo 1:
-        liga aos callbacks que já existem; clipe/globo/autonomia ficam desabilitados (em breve)."""
-        _spec, cb = self._action_spec()
+        """Cápsula PRINCIPAL (pílula topo-centro): TODA config de software + criação de elementos
+        (arquitetura — ver AGENTS.md). Absorveu o antigo menu '☰ ações' e a barra superior."""
+        spec, cb = self._action_spec()
+        avail = {k for _l, k in spec}  # quais ações estão disponíveis (controller/notes/…)
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
         bar.add_css_class("fab-bar")
         bar.set_halign(Gtk.Align.CENTER)
         bar.set_valign(Gtk.Align.START)
         bar.set_margin_top(12)
-        # 1) ▶ executar orquestrador (azul) — só se houver controller/time
+
+        def add(icon, emoji, tip, key):
+            bar.append(self._fab_button(icon, emoji, tip, cb.get(key), enabled=key in avail))
+
+        # — orquestração + criação de elementos —
         bar.append(self._fab_button(
             "media-playback-start-symbolic", "▶", "Executar orquestrador (rodar time)",
-            cb.get("run_team"), css="fab-run", enabled="run_team" in cb))
-        # 2) terminal — novo terminal
-        bar.append(self._fab_button(
-            "utilities-terminal-symbolic", "🖥", "Novo terminal", cb.get("newterm")))
-        # 3) documento — nova nota
-        bar.append(self._fab_button(
-            "text-x-generic-symbolic", "📝", "Nova nota", cb.get("note"),
-            enabled="note" in cb))
-        # 4) clipe — contexto/anexos (em breve)
-        bar.append(self._fab_button(
-            "mail-attachment-symbolic", "📎", "Contexto/anexos (em breve)", None))
-        # 5) pasta — árvore de arquivos
-        bar.append(self._fab_button(
-            "folder-symbolic", "📁", "Árvore de arquivos", cb.get("filetree")))
-        # 6) globo — web/pesquisa (em breve)
-        bar.append(self._fab_button(
-            "globe-symbolic", "🌐", "Web/pesquisa (em breve)", None))
-        # 7) Aa — paleta de comandos
+            cb.get("run_team"), css="fab-run", enabled="run_team" in avail))
+        add("utilities-terminal-symbolic", "🖥", "Novo terminal", "newterm")
+        add("text-x-generic-symbolic", "📝", "Nova nota", "note")
+        add("list-add-symbolic", "⬚", "Novo grupo", "group")
+        add("mail-forward-symbolic", "⇄", "Disparar handoff", "handoff")
+        # — conectar (toggle) —
+        if self.edges is not None:
+            self._connect_btn = Gtk.ToggleButton()
+            self._connect_btn.set_child(self._fab_icon("maestro-connect-symbolic", "🔗"))
+            self._connect_btn.set_has_frame(False)
+            self._connect_btn.add_css_class("fab-btn")
+            self._connect_btn.set_tooltip_text("ligar agentes por cabo (Ctrl+Shift+L)")
+            self._connect_btn.connect("toggled", self._toggle_connect)
+            bar.append(self._connect_btn)
+        # — config de software / features globais —
+        add("folder-symbolic", "📁", "Árvore de arquivos", "filetree")
+        add("view-grid-symbolic", "🗂", "Workspaces", "workspaces")
+        add("drive-harddisk-symbolic", "🧱", "Floors", "floors")
+        add("alarm-symbolic", "⏰", "Routines", "routines")
+        # tema dos terminais
+        self._theme_combo = Gtk.ComboBoxText()
+        self._theme_combo.set_tooltip_text("tema dos terminais")
+        for tn in theme_names():
+            self._theme_combo.append_text(tn)
+        cur, names = self.model.terminal_theme(), theme_names()
+        self._theme_combo.set_active(names.index(cur) if cur in names else 0)
+        self._theme_combo.connect("changed", self._on_theme_changed)
+        bar.append(self._theme_combo)
+        # paleta de comandos (Ctrl-P)
         aa = Gtk.Button(label="Aa")
         aa.set_has_frame(False)
         aa.add_css_class("fab-btn")
         aa.set_tooltip_text("Paleta de comandos (Ctrl-P)")
         aa.connect("clicked", lambda _b: self._open_palette())
         bar.append(aa)
-        # 8) ⦸ — controle de autonomia (em breve)
-        bar.append(self._fab_button(
-            "action-unavailable-symbolic", "⦸", "Autonomia: manual/auto (em breve)", None))
+        # atenção (status): "⚠ N" quando algo precisa de você
+        self._attn_label = Gtk.Label(label="")
+        self._attn_label.set_tooltip_text("itens que precisam de você")
+        self._attn_label.add_css_class("fab-attn")
+        bar.append(self._attn_label)
         return bar
 
     def _ctx_btn(self, label, tip, cb) -> Gtk.Button:
@@ -833,6 +841,8 @@ class CanvasWindow:
         self._ctx_md_btn = self._ctx_btn("M", "Ver/editar (markdown)", self._note_toggle_render)
         bar.append(self._ctx_md_btn)
         # ações
+        if self.edges is not None:  # 🔌 conectar — padrão de toda cápsula contextual
+            bar.append(self._ctx_connect_btn())
         dup = self._fab_button("edit-copy-symbolic", "⧉", "Duplicar nota", self._note_duplicate)
         dup.add_css_class("note-ctx-btn")
         bar.append(dup)
@@ -849,6 +859,92 @@ class CanvasWindow:
             bar.set_visible(bool(self._selected) and self._selected[0] == "note")
         self._update_ctx_color_swatch()  # bolinha da cor atual
         self._update_md_btn()  # estado (borda) do botão M conforme o modo da nota
+
+    def _build_node_ctx(self) -> Gtk.Widget:
+        """Cápsula contextual do TERMINAL (nó) selecionado — mesmo padrão da nota
+        (arquitetura: todo elemento com config tem a sua pílula). Aparece ao selecionar 1 nó."""
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        bar.add_css_class("fab-bar")
+        bar.add_css_class("note-ctx-bar")  # mesma pílula menor da nota
+        bar.set_halign(Gtk.Align.CENTER)
+        bar.set_valign(Gtk.Align.START)
+        bar.set_margin_top(66)  # mesmo nível da pílula da nota (só uma aparece por vez)
+        bar.set_visible(False)
+        # ações DAQUELE terminal — operam sobre self._selected no clique (a pílula é única)
+        ren = self._fab_button(
+            "document-edit-symbolic", "✏", "Renomear terminal", self._ctx_rename_node)
+        ren.add_css_class("note-ctx-btn")
+        bar.append(ren)
+        foc = self._fab_button(
+            "find-location-symbolic", "🎯", "Centralizar a vista neste terminal",
+            self._ctx_focus_node)
+        foc.add_css_class("note-ctx-btn")
+        bar.append(foc)
+        if self.edges is not None:  # 🔌 conectar — padrão de toda cápsula contextual
+            bar.append(self._ctx_connect_btn())
+        dele = self._fab_button(
+            "user-trash-symbolic", "🗑", "Fechar terminal (remove do canvas)",
+            self._ctx_close_node)
+        dele.add_css_class("note-ctx-btn")
+        bar.append(dele)
+        self._node_ctx_bar = bar
+        return bar
+
+    def _ctx_connect_btn(self) -> Gtk.Widget:
+        """Botão PADRÃO de toda cápsula contextual: puxa um cabo A PARTIR do elemento
+        selecionado. Ao clicar, o cabo segue o cursor; o próximo clique em qualquer área de
+        outro nó/nota fecha a conexão (arquitetura: conexão é ação comum a todo elemento)."""
+        b = self._fab_button(
+            "maestro-connect-symbolic", "🔗",
+            "Conectar: puxa um cabo deste elemento até outro", self._ctx_start_connect)
+        b.add_css_class("note-ctx-btn")
+        return b
+
+    def _ctx_start_connect(self) -> None:
+        """Inicia a conexão já com o elemento selecionado como ORIGEM (pula o '1º clique')."""
+        sel = self._selected
+        if sel is None or self.edges is None:
+            return
+        self._connect_mode = True
+        self._connect_oneshot = True  # cápsula = uma conexão; depois volta ao normal
+        btn = getattr(self, "_connect_btn", None)
+        if btn is not None and not btn.get_active():
+            btn.set_active(True)  # espelha no FAB (dispara _toggle_connect; mantém o src)
+        self._connect_src = (sel[0], sel[1])  # ORIGEM já escolhida = o elemento da cápsula
+        if sel[0] == "node":
+            self.set_node_state(sel[1], "busy")  # realça a origem pendente
+        self._connect_cursor = None
+        self._preview_rope = None
+        self._wake_cables()  # liga o tick p/ a física do cabo-fantasma rodar
+        self._update_hintbar()
+
+    def _sel_nid(self) -> str | None:
+        """id do nó-terminal selecionado, ou None (helper das ações da pílula do nó)."""
+        sel = self._selected
+        return sel[1] if sel and sel[0] == "node" else None
+
+    def _ctx_rename_node(self) -> None:
+        nid = self._sel_nid()
+        if nid is not None:
+            self._rename_node(nid)
+
+    def _ctx_focus_node(self) -> None:
+        nid = self._sel_nid()
+        if nid is not None:
+            self._focus_node(nid)
+
+    def _ctx_close_node(self) -> None:
+        nid = self._sel_nid()
+        if nid is not None:
+            self._select(None)  # limpa a seleção (esconde a pílula) antes de remover o frame
+            self._close_node(nid)
+
+    def _update_ctx(self) -> None:
+        """Atualiza TODAS as pílulas contextuais conforme o elemento selecionado."""
+        self._update_note_ctx()
+        bar = getattr(self, "_node_ctx_bar", None)
+        if bar is not None:
+            bar.set_visible(bool(self._selected) and self._selected[0] == "node")
 
     def _draw_cur_color(self, _area, cr, w, h) -> None:
         """Desenha a bolinha da cor ATUAL no botão de cor da pílula."""
@@ -1219,7 +1315,7 @@ class CanvasWindow:
         new = self._frame_of(sel)
         if new is not None:
             new.add_css_class("selected")
-        self._update_note_ctx()  # mostra/esconde a pílula de contexto da nota
+        self._update_ctx()  # mostra/esconde as pílulas de contexto (nota / terminal)
         if sel is None or sel[0] not in ("node", "note"):
             self.plane.set_cursor(None)  # limpa o cursor de resize ao desmarcar
 
@@ -1227,6 +1323,9 @@ class CanvasWindow:
         """Rastreia qual elemento está sob o cursor (p/ rotear o scroll do SELECT+trackball)."""
         self._ptr_over = self._elem_at(self.plane.pick(x, y, Gtk.PickFlags.DEFAULT))
         self._update_resize_cursor(x, y)  # cursor de resize na faixa da borda do selecionado
+        if self._connect_mode and self._connect_src is not None:  # cabo-fantasma segue o cursor
+            self._connect_cursor = (x, y)
+            self.plane.queue_draw()
 
     def _on_canvas_click(self, _g, n_press, x, y):
         if n_press < 2:  # só duplo-clique
@@ -1466,8 +1565,33 @@ class CanvasWindow:
         self._wake_cables()  # cabos restaurados caem no sag inicial ao abrir
         return False  # one-shot (GLib)
 
+    def _sel_base_center(self):
+        """Centro (em coords-base) do elemento selecionado, ou None — p/ o zoom focar nele."""
+        fr = self._frame_of(self._selected)
+        if fr is None:
+            return None
+        ok, r = fr.compute_bounds(self.plane)
+        if not ok or r.size.width <= 0:
+            return None
+        camx, camy = self._cam
+        z = self.model.zoom() or 1.0
+        sx = r.origin.x + r.size.width / 2.0
+        sy = r.origin.y + r.size.height / 2.0
+        return ((sx - camx) / z, (sy - camy) / z)
+
     def _zoom(self, dz):
-        self.model.set_zoom(self.model.zoom() + dz)
+        """Zoom ANCORADO: sem seleção mantém o CENTRO da tela fixo (não escorrega pro canto);
+        com um nó/nota selecionado, leva ele pro centro da viewport (o zoom 'vai até o nó')."""
+        z_old = self.model.zoom() or 1.0
+        vw = self.scrolled.get_width() or 1
+        vh = self.scrolled.get_height() or 1
+        camx, camy = self._cam
+        focus = self._sel_base_center()  # nó/nota selecionado tem prioridade
+        if focus is None:  # senão: o ponto-base que está no centro da tela agora → fica fixo
+            focus = ((vw / 2.0 - camx) / z_old, (vh / 2.0 - camy) / z_old)
+        self.model.set_zoom(z_old + dz)  # clampa [0.3, 3.0] + persiste
+        z_new = self.model.zoom()
+        self._cam = (vw / 2.0 - focus[0] * z_new, vh / 2.0 - focus[1] * z_new)
         self._apply_zoom()
 
     def _resize_plane(self) -> None:
@@ -1612,6 +1736,8 @@ class CanvasWindow:
                 self.set_node_state(nid, "busy")  # realça a origem pendente (nota usa seleção)
             else:
                 self._select(("note", nid))
+            self._preview_rope = None
+            self._wake_cables()  # cabo-fantasma segue o cursor até o 2º clique
             self._update_hintbar()  # B2: agora "clique no DESTINO"
             return
         (skind, src), (dkind, dst) = self._connect_src, (kind, nid)
@@ -1620,6 +1746,7 @@ class CanvasWindow:
             self.set_node_state(src, "idle")
         self._update_hintbar()
         if src == dst:
+            self._maybe_end_oneshot()  # clicou na própria origem: aborta o cabo de cápsula
             return
         pairs = set(self.edges.list())
         if (src, dst) in pairs or (dst, src) in pairs:
@@ -1636,7 +1763,23 @@ class CanvasWindow:
             else:
                 self._on_note_cable_added(src, dst, skind, dkind)  # hook (4b); no-op no 4a
         self._wake_cables()  # cabo criado/removido: a corda precisa nascer/sumir
+        self._maybe_end_oneshot()  # conexão de cápsula: 1 cabo feito → sai do modo conectar
         self.plane.queue_draw()
+
+    def _maybe_end_oneshot(self) -> None:
+        """Sai do modo conectar após a 1ª conexão, quando ela foi iniciada por uma cápsula
+        (botão 🔌 contextual). O modo global (🔌 da FAB) NÃO é one-shot e permanece ligado."""
+        if not self._connect_oneshot:
+            return
+        self._connect_oneshot = False
+        self._connect_cursor = None
+        self._preview_rope = None
+        btn = getattr(self, "_connect_btn", None)
+        if btn is not None and btn.get_active():
+            btn.set_active(False)  # untoggle → _toggle_connect desliga o modo (src já é None)
+        else:
+            self._connect_mode = False
+        self._update_hintbar()
 
     def _on_cable_removed(self, a: str, b: str) -> None:
         """Ao remover um cabo: rematerializa o(s) nó(s) p/ podar a nota desligada."""
@@ -1757,6 +1900,11 @@ class CanvasWindow:
             if self._connect_src[0] == "node":
                 self.set_node_state(self._connect_src[1], "idle")
             self._connect_src = None
+        self._connect_oneshot = False
+        self._preview_rope = None
+        if self._connect_cursor is not None:  # apaga o cabo-fantasma
+            self._connect_cursor = None
+            self.plane.queue_draw()
         self._update_hintbar()
 
     # -- cabos interativos: maestro-ask (ADR-11, Fase 3) --
@@ -2022,6 +2170,18 @@ class CanvasWindow:
         for store in (self._ropes, self._springs, self._anchor_sm):
             for dead in set(store) - live:
                 store.pop(dead, None)
+        # cabo-fantasma (modo conectar): mesma física, ponta = cursor. No verlet a corda precisa
+        # avançar por frame p/ cair/balançar igual ao cabo real; mantém o tick vivo enquanto liga.
+        anc = self._preview_anchors(z)
+        if anc is not None:
+            p0, cur = anc
+            if self._cable_phys == "verlet":
+                if self._preview_rope is None:
+                    self._preview_rope = make_rope(p0, cur)
+                max_moved = max(max_moved, step_rope(self._preview_rope, p0, cur))
+            max_moved = max(max_moved, ROPE_REST_EPS * 2.0)  # segue vivo até soltar/cancelar
+        else:
+            self._preview_rope = None
         return max_moved > ROPE_REST_EPS
 
     def _cable_tick(self, _widget, frame_clock) -> bool:  # pragma: no cover - precisa de GTK
@@ -2192,8 +2352,61 @@ class CanvasWindow:
                     cr.set_source_rgb(*_cable_rgb(st))
                     cr.stroke()
             cr.set_dash([])  # reset p/ não vazar tracejado em outros desenhos do cr
+        self._draw_connect_preview_cr(cr, z)  # cabo-fantasma seguindo o cursor (modo conectar)
         if self._phys_label_frames > 0:  # flash do modo ao trocar (Ctrl+Shift+P); some sozinho
             self._draw_phys_label(cr)
+
+    def _preview_anchors(self, z):
+        """(p0, cursor) do cabo-fantasma no espaço de desenho (tela − câmera), ou None.
+        p0 = âncora da origem (ímã de 8 pontos) apontada pro cursor."""
+        if not (self._connect_mode and self._connect_src is not None
+                and self._connect_cursor is not None):
+            return None
+        sbox = self._cable_box(self._connect_src[1], z)
+        if sbox is None:
+            return None
+        # o cursor vem em coords de TELA; o espaço do desenho é "tela − câmera" (igual ao
+        # _cable_box; o snapshot reaplica o translate da câmera). Sem isto o cabo fica deslocado.
+        camx, camy = self._cam
+        cur = (self._connect_cursor[0] - camx, self._connect_cursor[1] - camy)
+        (p0, _p3) = cable_anchors(sbox, (cur[0], cur[1], 0.0, 0.0))
+        return p0, cur
+
+    def _preview_points(self, p0, cur):
+        """Pontos do cabo-fantasma segundo o MESMO modo de física dos cabos reais (`_cable_phys`):
+        idêntico ao cabo já conectado, só que a outra ponta é o cursor (a corda Verlet é a
+        `_preview_rope`, avançada no tick — ver _step_ropes)."""
+        if self._cable_phys == "catenary":
+            return catenary_pts(p0, cur, sag_ratio=CATENARY_SAG)
+        if self._cable_phys == "spring":
+            return quad_bezier_pts(p0, spring_target(p0, cur, SPRING_SAG), cur)
+        r = self._preview_rope
+        return r["pts"] if r is not None else [p0, cur]
+
+    def _draw_connect_preview_cr(self, cr, z) -> None:
+        """Cabo-fantasma do modo conectar: desenhado IGUAL ao cabo real (mesma corda/cor/bolinhas),
+        com a outra ponta seguindo o cursor, até o 2º clique fechar a conexão."""
+        anc = self._preview_anchors(z)
+        if anc is None:
+            return
+        p0, cur = anc
+        pts = self._preview_points(p0, cur)
+        r, g, b = _cable_rgb(None)  # mesma cor azul do cabo idle
+        cr.save()
+        cr.set_dash([])
+        cr.set_source_rgb(r, g, b)
+        cr.set_line_width(2.5)  # mesma largura da corda real
+        self._stroke_rope(cr, pts)
+        cr.stroke()
+        cr.set_line_width(1.5)  # bolinhas nas duas pontas, igual ao cabo conectado
+        for px, py in (pts[0], pts[-1]):
+            cr.arc(px, py, CABLE_DOT_RADIUS, 0.0, 2.0 * math.pi)
+            cr.set_source_rgb(1.0, 1.0, 1.0)
+            cr.fill()
+            cr.arc(px, py, CABLE_DOT_RADIUS, 0.0, 2.0 * math.pi)
+            cr.set_source_rgb(r, g, b)
+            cr.stroke()
+        cr.restore()
 
     def _draw_phys_label(self, cr) -> None:
         """Mostra o nome do modo de física do cabo num canto por ~2s ao trocar (flash)."""

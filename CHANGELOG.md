@@ -3,6 +3,28 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.38.0] — Cápsulas de UI do canvas + conexão por cápsula + zoom ancorado
+Rework da toolbar do canvas pro padrão de **cápsulas flutuantes** (arquitetura, ver `AGENTS.md`):
+- **Barra superior removida.** Tudo migrou pra **cápsula principal (FAB, topo-centro)** — toda
+  config de software + criação de elementos: rodar time, novo terminal/nota/grupo, handoff,
+  conectar, árvore, workspaces, floors, routines, tema dos terminais, paleta, indicador de atenção.
+  O antigo menu **`☰ ações` saiu**.
+- **Zoom virou cápsula inferior-esquerda** (pílula compacta) — saiu da barra de cima.
+- **Cápsula contextual por elemento:** ao **selecionar um terminal** (1 clique) aparece a 2ª pílula
+  com as ações DAQUELE nó (**renomear**, **centralizar**, **fechar**), espelhando a pílula da nota.
+  Generaliza o padrão (`_build_node_ctx` + `_update_ctx`), não cria UI ad-hoc por nó.
+- **Conexão por cápsula:** botão **Conectar** padrão em toda cápsula contextual — a origem já é
+  o elemento selecionado; um **cabo-fantasma** (mesma corda/física/cor do cabo real) **segue o
+  cursor** até o 2º clique fechar a conexão em qualquer área do outro nó/nota. One-shot (faz 1 cabo
+  e sai); o conectar global da FAB segue persistente.
+- **Zoom ancorado (fix):** o zoom não escorrega mais pro canto — **sem seleção** escala em torno do
+  **centro da tela**; **com um nó/nota selecionado**, leva ele pro **centro da viewport** (zoom
+  "vai até o nó"). Antes mudava só a escala sem ajustar a câmera (escalava na origem do mundo).
+- **Ícone próprio de conexão:** `maestro-connect-symbolic` (symbolic, "2 nós + linha") **empacotado
+  no app** (`maestro/native/icons/`) + registro do search path — recolore pra cor da pílula e
+  **independe do tema** do usuário (isola o volátil). Renomear passou a usar `document-edit-symbolic`
+  (era um emoji ✏ de texto, destoava).
+
 ## [0.37.2] — Nota: margem da barra de scroll + scroll acompanha as setas
 - **Margem da barra de scroll:** o texto da nota ganha **~14px à direita** (TextView e Label) p/
   não passar mais **por baixo** da barra de rolagem.
