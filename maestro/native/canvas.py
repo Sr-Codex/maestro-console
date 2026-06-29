@@ -91,13 +91,18 @@ BASE_W, BASE_H = 420, 220
 MIN_NODE_W, MIN_NODE_H = 240, 120  # piso ao redimensionar um card (arrastar a alça ⤡)
 MIN_NOTE_W, MIN_NOTE_H = 160, 90  # piso ao redimensionar uma nota
 NOTE_W_DEFAULT, NOTE_H_DEFAULT = 200, 110  # tamanho padrão do corpo da nota
-RESIZE_BAND = 6  # faixa (px de tela) em volta da borda do card onde o cursor vira resize
+RESIZE_BAND = 10  # faixa (px de tela) em volta da borda do card onde o cursor vira resize
 CABLE_DASH_ON, CABLE_DASH_OFF = 8.0, 6.0  # tracejado do cabo "fluindo" (handoff busy)
 CABLE_DASH_PERIOD = CABLE_DASH_ON + CABLE_DASH_OFF  # módulo da fase animada
 CABLE_FLOW_SPEED = 0.03  # unidades de fase por ms (velocidade do fluxo correndo no cabo)
-_RESIZE_CURSOR = {  # combinação de bordas -> nome do cursor
-    "n": "ns-resize", "s": "ns-resize", "e": "ew-resize", "w": "ew-resize",
-    "nw": "nwse-resize", "se": "nwse-resize", "ne": "nesw-resize", "sw": "nesw-resize",
+_RESIZE_CURSOR = {  # borda -> (nome CSS moderno, nome legado X11 p/ temas incompletos)
+    # alguns temas de cursor (ex.: Windows-10-Icons, sem Inherits=) NÃO têm os nomes CSS
+    # (ns/ew/nwse/nesw-resize) e não herdam de um tema completo → new_from_name cai no
+    # padrão (seta) e o cursor "não muda". O fallback usa os nomes legados que esses temas têm.
+    "n": ("ns-resize", "v_double_arrow"), "s": ("ns-resize", "v_double_arrow"),
+    "e": ("ew-resize", "h_double_arrow"), "w": ("ew-resize", "h_double_arrow"),
+    "nw": ("nwse-resize", "bd_double_arrow"), "se": ("nwse-resize", "bd_double_arrow"),
+    "ne": ("nesw-resize", "fd_double_arrow"), "sw": ("nesw-resize", "fd_double_arrow"),
 }
 PAN_SCROLL_STEP = 90.0  # px de pan por unidade de scroll (SELECT + trackball) — velocidade do pan
 # estado do envelope (passo done) -> estado visual do nó
@@ -957,10 +962,16 @@ class CanvasWindow:
         return (kind, tid, edges) if edges else None
 
     def _update_resize_cursor(self, x, y) -> None:
-        """Cursor de resize quando o ponteiro entra na faixa da borda (senão limpa)."""
+        """Cursor de resize quando o ponteiro entra na faixa da borda (senão limpa).
+        Usa o nome CSS com fallback pro nome legado X11 (temas de cursor incompletos)."""
         rz = self._resize_edge_at(x, y)
-        name = _RESIZE_CURSOR.get(rz[2]) if rz is not None else None
-        self.plane.set_cursor(Gdk.Cursor.new_from_name(name, None) if name else None)
+        names = _RESIZE_CURSOR.get(rz[2]) if rz is not None else None
+        if names is None:
+            self.plane.set_cursor(None)
+            return
+        css, legacy = names
+        cur = Gdk.Cursor.new_from_name(css, Gdk.Cursor.new_from_name(legacy, None))
+        self.plane.set_cursor(cur)
 
     @staticmethod
     def _resize_rect(origin, dx, dy, edges, min_w, min_h):

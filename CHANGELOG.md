@@ -3,7 +3,14 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
-## [0.34.0] — Cabo melhor: sai pela borda mais próxima + fluxo animado no handoff
+## [0.34.0] — Cabo melhor (borda + fluxo) + conserto do cursor de resize
+- **Fix: cursor de resize voltou a aparecer nas bordas.** O cursor mudava certo no código, mas
+  temas de cursor incompletos (ex.: **Windows-10-Icons**, sem `Inherits=`) **não têm** os nomes
+  CSS `ns/ew/nwse/nesw-resize` — `new_from_name` caía na seta padrão e "nada acontecia". Agora
+  cada cursor é criado com **fallback pro nome legado X11** (`v_double_arrow`/`h_double_arrow`/
+  `bd_double_arrow`/`fd_double_arrow`) que esses temas têm. A detecção da borda nunca esteve
+  quebrada (confirmado por medição ao vivo); era só o render do cursor.
+- **Faixa de resize 6→10px:** alvo maior em volta da borda do card selecionado, mais fácil de pegar.
 - **Saída pela borda mais próxima:** o cabo (bezier) agora **escolhe o eixo dominante** pela
   distância entre os centros — se |Δx| ≥ |Δy| sai/entra pela **esquerda/direita** (controles
   horizontais), senão por **cima/baixo** (controles verticais). Antes era fixo direita→esquerda,
