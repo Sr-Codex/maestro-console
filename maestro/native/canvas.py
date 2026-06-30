@@ -97,7 +97,13 @@ from .state import (  # noqa: E402
     state_activity,
     to_display,
 )
-from .themes import get_theme, theme_names  # noqa: E402
+from .themes import (  # noqa: E402
+    DEFAULT_DARK,
+    DEFAULT_LIGHT,
+    get_theme,
+    theme_is_dark,
+    theme_names,
+)
 from .toolbar import action_menu_items  # noqa: E402
 
 BASE_W, BASE_H = 420, 220
@@ -256,6 +262,24 @@ def _rgba(hex_color: str) -> Gdk.RGBA:
     c = Gdk.RGBA()
     c.parse(hex_color)
     return c
+
+
+def _system_color_scheme() -> int | None:
+    """Preferência clara/escura do SISTEMA via portal XDG (org.freedesktop.appearance):
+    0 sem pref, 1 escuro, 2 claro; None se o portal não estiver disponível (ex.: uConsole
+    sem xdg-desktop-portal → o chamador cai no escuro)."""
+    try:
+        proxy = Gio.DBusProxy.new_for_bus_sync(
+            Gio.BusType.SESSION, Gio.DBusProxyFlags.NONE, None,
+            "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+            "org.freedesktop.portal.Settings", None)
+        val = proxy.call_sync(
+            "ReadOne",
+            GLib.Variant("(ss)", ("org.freedesktop.appearance", "color-scheme")),
+            Gio.DBusCallFlags.NONE, -1, None)
+        return val.unpack()[0]
+    except GLib.Error:
+        return None
 
 
 def _cable_rgb(state) -> tuple[float, float, float]:
@@ -809,15 +833,17 @@ class CanvasWindow:
         add("view-grid-symbolic", "🗂", "Workspaces", "workspaces")
         add("drive-harddisk-symbolic", "🧱", "Floors", "floors")
         add("alarm-symbolic", "⏰", "Routines", "routines")
-        # tema dos terminais
-        self._theme_combo = Gtk.ComboBoxText()
-        self._theme_combo.set_tooltip_text("tema dos terminais")
-        for tn in theme_names():
-            self._theme_combo.append_text(tn)
-        cur, names = self.model.terminal_theme(), theme_names()
-        self._theme_combo.set_active(names.index(cur) if cur in names else 0)
-        self._theme_combo.connect("changed", self._on_theme_changed)
-        bar.append(self._theme_combo)
+        # tema GLOBAL dos terminais — picker com BUSCA (substitui o combo de 70 itens)
+        def _pick_global_theme(name):
+            self.model.set_terminal_theme(name)
+            self._apply_theme()  # todos os terminais sem override seguem o novo global
+            self._theme_btn.set_tooltip_text(f"tema global: {name}")
+
+        self._theme_btn = self._search_picker(
+            "🎨", self._theme_entries(), self._theme_swatch, _pick_global_theme)
+        self._theme_btn.add_css_class("fab-btn")
+        self._theme_btn.set_tooltip_text(f"tema global: {self.model.terminal_theme()}")
+        bar.append(self._theme_btn)
         # paleta de comandos (Ctrl-P)
         aa = Gtk.Button(label="Aa")
         aa.set_has_frame(False)
@@ -1024,7 +1050,7 @@ class CanvasWindow:
         ap.append(self._editor_font_section(nid, applies))
         ap.append(self._editor_color_section(nid, applies))
         ap.append(self._editor_icon_section(nid, applies))
-        ap.append(soon("Tema (Sistema/Escuro/Claro/Custom) — Fase 2"))
+        ap.append(self._editor_theme_section(nid, applies))
         stack.add_titled(ap, "aparencia", "Aparência")
         # — Agente — (Fase 5)
         stack.add_titled(
@@ -1395,6 +1421,122 @@ class CanvasWindow:
         applies.append(apply)
         return box
 
+    @staticmethod
+    def _paint_theme_swatch(cr, w, h, th) -> None:
+        """Desenha um swatch do tema: fundo bg + 'Ab' no fg + 6 cores ANSI."""
+        bg = _rgba(th["bg"])
+        cr.set_source_rgb(bg.red, bg.green, bg.blue)
+        cr.rectangle(0, 0, w, h)
+        cr.fill()
+        for i, c in enumerate(th["palette"][1:7]):
+            rc = _rgba(c)
+            cr.set_source_rgb(rc.red, rc.green, rc.blue)
+            cr.rectangle(3 + i * 5, h - 6, 4, 4)
+            cr.fill()
+        fg = _rgba(th["fg"])
+        cr.set_source_rgb(fg.red, fg.green, fg.blue)
+        cr.move_to(4, 14)
+        cr.set_font_size(12)
+        cr.show_text("Ab")
+
+    def _theme_swatch(self, name: str) -> Gtk.Widget:
+        """DrawingArea com o swatch de um tema (usado no picker do editor e da FAB)."""
+        da = Gtk.DrawingArea()
+        da.set_size_request(44, 24)
+        da.set_draw_func(
+            lambda _a, cr, w, h, n=name: self._paint_theme_swatch(cr, w, h, get_theme(n)))
+        return da
+
+    def _theme_entries(self) -> list:
+        """(nome, texto_busca) de todos os temas — busca por nome + 'dark'/'light'."""
+        return [(n, n.lower() + (" dark" if theme_is_dark(n) else " light"))
+                for n in theme_names()]
+
+    def _editor_theme_section(self, nid: str, applies: list) -> Gtk.Widget:
+        """Seção TEMA (Fase 2): seleciona um tema; o toggle GLOBAL decide o alcance — ligado =
+        aplica a TODOS (vira o tema global); desligado = só ESTE terminal. "Seguir o global" tira
+        o tema próprio (volta ao padrão). Busca nos ~70 esquemas. Transacional: aplica no Salvar."""
+        cur = self.model.node_cfg(nid, "theme")  # "" = já segue o global
+        st = {"theme": cur or self.model.terminal_theme(), "follow": cur == "", "glob": False}
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.append(self._editor_section_label("Tema"))
+
+        def resolved():
+            base = self.model.terminal_theme() if st["follow"] else st["theme"]
+            return self._resolve_theme(base)
+
+        prow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        prow.append(Gtk.Label(label="Atual:"))
+        pswatch = Gtk.DrawingArea()
+        pswatch.set_size_request(42, 22)
+        pswatch.set_draw_func(
+            lambda _a, cr, w, h: self._paint_theme_swatch(cr, w, h, get_theme(resolved())))
+        plabel = Gtk.Label(xalign=0)
+        plabel.add_css_class("dim-label")
+        prow.append(pswatch)
+        prow.append(plabel)
+        box.append(prow)
+
+        opts = [("__follow__", "Seguir o global"), ("system", "Sistema"),
+                ("dark", "Escuro"), ("light", "Claro")]
+        btns: list = []
+        gcheck = Gtk.CheckButton(label="Aplicar a TODOS os terminais (global)")
+
+        def mark():
+            selnow = "__follow__" if st["follow"] else (
+                st["theme"] if st["theme"] in ("system", "dark", "light") else None)
+            for b, val in btns:
+                if val == selnow:
+                    b.add_css_class("ico-sel")
+                else:
+                    b.remove_css_class("ico-sel")
+            gcheck.set_sensitive(not st["follow"])
+            if st["follow"]:
+                scope = "seguindo o global"
+            else:
+                scope = "→ global (todos)" if st["glob"] else "só este terminal"
+            disp = "Global" if st["follow"] else dict(opts).get(st["theme"], st["theme"])
+            plabel.set_text(f"{disp} · {scope}  ({resolved()})")
+            pswatch.queue_draw()
+
+        def choose(v):
+            if v == "__follow__":
+                st["follow"] = True
+            else:
+                st["follow"] = False
+                st["theme"] = v
+            mark()
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        for val, label in opts:
+            b = Gtk.Button(label=label)
+            b.add_css_class("ico-btn")
+            b.connect("clicked", lambda _b, v=val: choose(v))
+            btns.append((b, val))
+            row.append(b)
+        box.append(row)
+
+        box.append(self._search_picker(
+            "🔎 Mais temas…", self._theme_entries(), self._theme_swatch, choose))
+        gcheck.connect("toggled", lambda b: (st.update(glob=b.get_active()), mark()))
+        box.append(gcheck)
+        mark()
+
+        def apply():
+            if st["follow"]:
+                self.model.set_node_cfg(nid, "theme", "")  # tira o tema próprio → segue o global
+                self._apply_node_theme(nid)
+            elif st["glob"]:  # vira o tema GLOBAL (todos os terminais sem override)
+                self.model.set_terminal_theme(self._resolve_theme(st["theme"]))
+                self.model.set_node_cfg(nid, "theme", "")  # este também segue o novo global
+                self._apply_theme()
+            else:  # só ESTE terminal
+                self.model.set_node_cfg(nid, "theme", st["theme"])
+                self._apply_node_theme(nid)
+
+        applies.append(apply)
+        return box
+
     def _ctx_connect_btn(self) -> Gtk.Widget:
         """Botão PADRÃO de toda cápsula contextual: puxa um cabo A PARTIR do elemento
         selecionado. Ao clicar, o cabo segue o cursor; o próximo clique em qualquer área de
@@ -1550,6 +1692,7 @@ class CanvasWindow:
         nicon = self.model.node_cfg(nid, "icon")  # ícone persistido (Fase 1)
         if nicon:
             self._apply_node_icon(nid, nicon)
+        self._apply_node_theme(nid)  # tema por-nó (override) ou global — Fase 2
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(head)
         box.append(term)
@@ -2194,18 +2337,33 @@ class CanvasWindow:
         self._reposition_all()
 
     # -- tema dos terminais (V11-S4) --
-    def _apply_theme(self, name: str) -> None:
-        th = get_theme(name)
-        fg, bg = _rgba(th["fg"]), _rgba(th["bg"])
-        palette = [_rgba(c) for c in th["palette"]]
-        for t in self.terms:
-            t.set_colors(fg, bg, palette)
+    def _resolve_theme(self, name: str) -> str:
+        """Resolve nomes especiais: 'system' (portal XDG; fallback escuro), 'dark', 'light'.
+        Qualquer outro nome volta como está (tema nomeado do bundle/base/usuário)."""
+        if name == "system":
+            return DEFAULT_LIGHT if _system_color_scheme() == 2 else DEFAULT_DARK
+        if name == "dark":
+            return DEFAULT_DARK
+        if name == "light":
+            return DEFAULT_LIGHT
+        return name
 
-    def _on_theme_changed(self, combo):
-        name = combo.get_active_text()
-        if name:
-            self.model.set_terminal_theme(name)
-            self._apply_theme(name)
+    def _node_theme_name(self, nid: str) -> str:
+        """Tema do terminal: override por-nó → tema global (terminal_theme)."""
+        return self.model.node_cfg(nid, "theme") or self.model.terminal_theme()
+
+    def _apply_node_theme(self, nid: str) -> None:
+        frame = self.frames.get(nid)
+        term = getattr(frame, "_term", None) if frame is not None else None
+        if term is None:
+            return
+        th = get_theme(self._resolve_theme(self._node_theme_name(nid)))
+        term.set_colors(_rgba(th["fg"]), _rgba(th["bg"]), [_rgba(c) for c in th["palette"]])
+
+    def _apply_theme(self, name: str | None = None) -> None:
+        """Reaplica o tema a TODOS os terminais por-nó (override prevalece sobre o global)."""
+        for nid in list(self.frames):
+            self._apply_node_theme(nid)
 
     # -- fonte por terminal (override) + default global + zoom de fonte (VTE set_font/scale) --
     FONT_SCALE_MIN, FONT_SCALE_MAX = 0.25, 4.0  # clamp do VTE (vte-private.h)

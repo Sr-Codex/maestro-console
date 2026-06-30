@@ -3,6 +3,22 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.41.0] — Editar Terminal (Fase 2): Tema por terminal (+ global, Sistema/Escuro/Claro)
+- **70 temas:** os 4 base + **66 esquemas populares** (iTerm2-Color-Schemes, formato **ghostty**,
+  MIT) parseados em `term_themes/schemes.json` (50 escuros + 16 claros: TokyoNight, Nord, One Dark,
+  Solarized Dark/Light, Catppuccin Mocha/Latte, Dracula, Gruvbox, Monokai, GitHub Dark/Light,
+  Everforest, Rose Pine, Ayu, Kanagawa, Flexoki…). **Parser ghostty** reusável.
+- **Import do usuário:** arquivos no formato ghostty soltos em `~/.config/maestro-console/
+  terminal-themes/` aparecem na lista (igual ao `~/.maestri/terminal/themes`).
+- **Tema por terminal (override) ou global:** na aba **Tema** do editor, seleciona um tema e o
+  **toggle "Aplicar a TODOS (global)"** decide o alcance (ligado = vira o tema global; desligado =
+  só este terminal). **"Seguir o global"** tira o tema próprio. **Sistema/Escuro/Claro** via portal
+  XDG (`org.freedesktop.appearance/color-scheme`; fallback escuro no uConsole). Preview "Atual:" com
+  nome + alcance + swatch; busca **🔎 Mais temas** (swatch por tema).
+- **FAB:** o combo de 70 itens virou um **picker 🎨 com busca + swatches** (tema global).
+- `_apply_theme` agora aplica **por nó** (override prevalece). `theme_is_dark`/`DEFAULT_DARK`/
+  `DEFAULT_LIGHT` em `themes.py`. `LICENSE-iterm2-color-schemes` incluído.
+
 ## [0.40.0] — Editar Terminal (Fase 1): Aparência — Fonte + Cor + Ícone (por terminal)
 Aba **Aparência** do diálogo "Editar Terminal", tudo **por terminal** e persistido (`node_cfg`).
 - **Fonte (avançada):** família+tamanho por terminal via `Gtk.FontDialog` **filtrado p/ monospace**
