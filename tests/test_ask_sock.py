@@ -122,6 +122,49 @@ def test_concorrencia_varias_conexoes(tmp_path):
         srv.stop()
 
 
+def test_add_node_substitui_sem_crashar(tmp_path):
+    """F4: re-add do mesmo nó (respawn) desregistra+fecha o antigo sem KeyError; novo atende."""
+    box = tmp_path / "n"
+    box.mkdir()
+    srv = SockServer()
+    srv.add_node("n", str(box))
+    _serve(srv, lambda node, req: {"ok": True})
+    try:
+        assert send_request(sock_path(box), {"cmd": "x"})["ok"]
+        srv.add_node("n", str(box))  # re-registro do MESMO nó (fd pode reciclar)
+        time.sleep(0.15)  # deixa a thread do serve drenar close+open
+        assert send_request(sock_path(box), {"cmd": "x"})["ok"]  # novo listener funciona
+        assert srv.nodes() == ["n"]
+    finally:
+        srv.stop()
+
+
+def test_add_remove_concorrente_nao_derruba_o_serve(tmp_path):
+    """F3: add/remove de outra thread enquanto o serve roda — sem race no selector; servidor
+    continua aceitando depois."""
+    srv = SockServer()
+    _serve(srv, lambda node, req: {"ok": True})
+    try:
+        for i in range(20):
+            b = tmp_path / f"n{i}"
+            b.mkdir()
+            srv.add_node(f"n{i}", str(b))
+        time.sleep(0.25)
+        assert len(srv.nodes()) == 20
+        for i in range(20):
+            srv.remove_node(f"n{i}")
+        time.sleep(0.25)
+        assert srv.nodes() == []
+        # o serve sobreviveu: um nó novo ainda atende
+        final = tmp_path / "final"
+        final.mkdir()
+        srv.add_node("final", str(final))
+        time.sleep(0.15)
+        assert send_request(sock_path(final), {"cmd": "x"})["ok"]
+    finally:
+        srv.stop()
+
+
 def test_frame_grande_demais_rejeitado(tmp_path):
     box = tmp_path / "n"
     box.mkdir()

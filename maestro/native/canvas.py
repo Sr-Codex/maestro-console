@@ -3694,8 +3694,14 @@ class CanvasWindow:
             return AskResponse(req.id, True, result.get("answer", "ok"))
         return AskResponse(req.id, False, error=result.get("error", "erro"))
 
+    def _own_recruit(self, frm: str, nid: str) -> bool:
+        """`nid` é recruta DIRETO de `frm`? Decisão de AUTORIDADE (ADR-17): vem da linhagem
+        host-only `_recruited_by` (infalsificável) — NUNCA dos cabos, que o agente cria com
+        `wire` (senão = confused deputy: wire numa vítima → dismiss/reassign nela)."""
+        return bool(nid) and self._recruited_by.get(nid) == frm
+
     def _maestro_connected(self, nid: str) -> list:
-        """Nós LIGADOS a `nid` por cabo (= recrutas/peers do manager)."""
+        """Nós LIGADOS a `nid` por cabo. SÓ p/ exibição (list)/UI — NÃO p/ autoridade."""
         out = []
         for a, b in self.edges.list():
             if a == nid and b in self.frames:
@@ -3834,8 +3840,8 @@ class CanvasWindow:
                      f"{(self._node_role(n).name if self._node_role(n) else '—')})" for n in conn]
             result.update(ok=True, answer="Recrutas conectados:\n" + "\n".join(lines))
         elif cmd == "dismiss":
-            if not args or args[0] not in self._maestro_connected(frm):
-                result.update(ok=False, error="uso: dismiss <nó> (só um recruta seu)")
+            if not args or not self._own_recruit(frm, args[0]):  # autoridade = linhagem (5a)
+                result.update(ok=False, error="uso: dismiss <nó> (só um recruta DIRETO seu)")
                 return
             self._close_node(args[0])
             self._audit("dismiss", manager=frm, node=args[0])
@@ -3846,6 +3852,13 @@ class CanvasWindow:
                 return
             a = args[0]
             b = args[1] if len(args) > 1 else frm
+            # autoridade host-only: só liga VOCÊ ou seus recrutas DIRETOS (não nós alheios)
+            if not all(n == frm or self._own_recruit(frm, n) for n in (a, b)):
+                result.update(ok=False, error="só liga você ou um recruta DIRETO seu")
+                return
+            if has_cycle(self.edges.list() + [(a, b)]):  # recusa cabo que fecha ciclo (5a/F7)
+                result.update(ok=False, error="recusado: esse cabo fecharia um ciclo")
+                return
             self.edges.add(a, b)
             a_node, b_node = a in self.frames, b in self.frames
             if a_node and b_node:
@@ -3855,16 +3868,16 @@ class CanvasWindow:
                                           "node" if b_node else "note")
             self._wake_cables()
             self.plane.queue_draw()
-            if has_cycle(self.edges.list()):  # Etapa 4: avisa que o cabo fechou um ciclo
-                self._audit("cycle_detected", a=a, b=b)
+            self._audit("wire", manager=frm, a=a, b=b)
             result.update(ok=True, answer=f"cabo {a} ↔ {b} ligado.")
         elif cmd == "reassign":
-            if len(args) < 2 or (args[0] not in self._maestro_connected(frm) and args[0] != frm):
-                result.update(ok=False, error="uso: reassign <nó> <papel> (recruta seu)")
+            if len(args) < 2 or not (args[0] == frm or self._own_recruit(frm, args[0])):
+                result.update(ok=False, error="uso: reassign <nó> <papel> (você ou recruta seu)")
                 return
             self.model.set_node_cfg(args[0], "role", args[1])
             self._apply_node_role(args[0])
             self._respawn_node(args[0])
+            self._audit("reassign", manager=frm, node=args[0], role=args[1])  # auditoria (5a)
             result.update(ok=True, answer=f"'{args[0]}' reatribuído ao papel '{args[1]}'.")
         else:
             result.update(ok=False, error=f"comando desconhecido: {cmd}")

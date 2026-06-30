@@ -101,14 +101,19 @@ class SockServer:
     def __init__(self) -> None:
         self._sel = selectors.DefaultSelector()
         self._listeners: dict[str, tuple[socket.socket, str]] = {}
-        self._lock = threading.Lock()
+        self._pending: list[tuple] = []  # ops p/ a thread do serve aplicar no selector
+        self._lock = threading.Lock()  # protege _listeners e _pending (NÃO o selector)
         self._stop = False
         # socketpair p/ acordar o select() ao adicionar/remover nó de outra thread
         self._wake_r, self._wake_w = socket.socketpair()
+        # único register fora da thread do serve: aqui no init, antes do serve existir
         self._sel.register(self._wake_r, selectors.EVENT_READ, ("_wake", ""))
 
     def add_node(self, node: str, box_dir: str | os.PathLike) -> str:
-        """Cria/escuta ``<box_dir>/sock`` e associa ao ``node``. Retorna o caminho."""
+        """Cria/escuta ``<box_dir>/sock`` e associa ao ``node``. Retorna o caminho.
+
+        O socket é criado aqui (independe do selector), mas o ``register`` é ENFILEIRADO
+        p/ a thread do serve — o selector da stdlib NÃO é thread-safe (F3/F4)."""
         path = sock_path(box_dir)
         try:
             os.unlink(path)  # remove um socket órfão de um spawn anterior
@@ -122,9 +127,9 @@ class SockServer:
         with self._lock:
             old = self._listeners.pop(node, None)
             self._listeners[node] = (srv, path)
-        if old is not None:
-            self._close_listener(*old)
-        self._sel.register(srv, selectors.EVENT_READ, ("listen", node))
+            if old is not None:  # F4: desregistra+fecha o antigo, mas SEM unlink — o path já
+                self._pending.append(("close", old[0], old[1], False))  # pertence ao novo socket
+            self._pending.append(("open", srv, node))
         self._wake()
         return path
 
@@ -137,17 +142,34 @@ class SockServer:
         """Fecha e remove o listener do ``node`` (ao dispensar/fechar o agente)."""
         with self._lock:
             entry = self._listeners.pop(node, None)
-        if entry is not None:
-            try:
-                self._sel.unregister(entry[0])
-            except (KeyError, ValueError):
-                pass
-            self._close_listener(*entry)
+            if entry is not None:
+                self._pending.append(("close", entry[0], entry[1], True))  # unlink: o nó saiu
         self._wake()
 
+    def _drain_pending(self) -> None:
+        """Aplica os register/unregister ENFILEIRADOS. Roda SÓ na thread do serve."""
+        with self._lock:
+            ops, self._pending = self._pending, []
+        for op in ops:
+            kind = op[0]
+            if kind == "open":
+                _, srv, node = op
+                try:
+                    self._sel.register(srv, selectors.EVENT_READ, ("listen", node))
+                except (KeyError, ValueError):
+                    pass
+            elif kind == "close":
+                _, srv, path, do_unlink = op
+                try:
+                    self._sel.unregister(srv)
+                except (KeyError, ValueError):
+                    pass
+                self._close_listener(srv, path if do_unlink else None)
+
     def serve(self, handle: Handler) -> None:
-        """Loop bloqueante (rode numa thread daemon). Aceita conexões e despacha."""
+        """Loop bloqueante (rode numa thread daemon). SÓ esta thread toca o selector."""
         while not self._stop:
+            self._drain_pending()  # aplica add/remove pendentes ANTES do select
             for key, _ in self._sel.select(timeout=1.0):
                 kind, node = key.data
                 if kind == "_wake":
@@ -157,24 +179,19 @@ class SockServer:
                         pass
                 elif kind == "listen":
                     self._accept(key.fileobj, node, handle)
+        self._drain_pending()  # processa os closes pendentes do stop()
 
     def stop(self) -> None:
+        """Desliga (shutdown). Fecha os sockets diretamente — fechar um fd NÃO muta o dict
+        do selector (o kernel o tira do epoll), então não reintroduz a corrida do F3."""
         self._stop = True
         self._wake()
         with self._lock:
             entries = list(self._listeners.values())
             self._listeners.clear()
+            self._pending.clear()
         for srv, path in entries:
-            try:
-                self._sel.unregister(srv)
-            except (KeyError, ValueError):
-                pass
             self._close_listener(srv, path)
-        try:
-            self._wake_w.close()
-            self._wake_r.close()
-        except OSError:
-            pass
 
     # -- internos --
     def _accept(self, srv: socket.socket, node: str, handle: Handler) -> None:
@@ -212,14 +229,16 @@ class SockServer:
             pass
 
     @staticmethod
-    def _close_listener(srv: socket.socket, path: str) -> None:
+    def _close_listener(srv: socket.socket, path: str | None) -> None:
+        """Fecha o fd; só faz unlink se ``path`` for dado (None = o path pertence a outro
+        socket, ex.: substituição de listener no respawn — fechar o fd, não apagar o arquivo)."""
         try:
             srv.close()
         except OSError:
             pass
+        if path is None:
+            return
         try:
             os.unlink(path)
-        except FileNotFoundError:
-            pass
-        except OSError:
+        except (FileNotFoundError, OSError):
             pass
