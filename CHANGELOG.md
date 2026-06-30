@@ -3,6 +3,13 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.42.1] — Atalho automático Ctrl+<n> + fix do foco global
+- **Atalho automático:** ao abrir um terminal ele recebe **Ctrl+<n>** (menor dígito 1–9 livre),
+  salvo em `node_cfg 'shortcut'` → aparece na config (Detalhes → Atalho) e pode ser alterado/limpo.
+- **Fix:** o controller de teclado global virou **CAPTURE** — os atalhos (Ctrl+1.., Ctrl+Shift+W/A/L/P)
+  são vistos **antes** do VTE focado; antes, com um terminal em foco, o terminal "comia" a tecla e o
+  atalho não trocava o foco. Teclas não-tratadas seguem indo pro terminal (digitação normal intacta).
+
 ## [0.42.0] — Editar Terminal (Fase 3): Comando + Diretório + Variáveis + Atalho
 Aba **Detalhes** do diálogo "Editar Terminal", tudo por terminal e persistido (`node_cfg`).
 - **Comando custom** (qualquer nó): `bash -lc "<cmd>; exec bash -i"`; vazio = shell/agente padrão.
