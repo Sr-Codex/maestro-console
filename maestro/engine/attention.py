@@ -8,9 +8,33 @@ ausente). gi-free e testável.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+
+# som de alerta: 1º arquivo existente; tocado por paplay/pw-play (PipeWire/Pulse), fire-and-forget
+_ALERT_SOUNDS = (
+    "/usr/share/sounds/freedesktop/stereo/complete.oga",
+    "/usr/share/sounds/freedesktop/stereo/message.oga",
+    "/usr/share/sounds/freedesktop/stereo/bell.oga",
+)
+
+
+def play_alert_sound() -> bool:
+    """Toca um som de alerta curto (não-bloqueante). False se não há player/arquivo."""
+    path = next((p for p in _ALERT_SOUNDS if os.path.exists(p)), None)
+    if path is None:
+        return False
+    for player in ("paplay", "pw-play"):
+        if shutil.which(player) is not None:
+            try:
+                subprocess.Popen(  # fire-and-forget: não bloqueia a UI
+                    [player, path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True
+            except OSError:
+                continue
+    return False
 
 ATTENTION_STATES = {"BLOCKED", "FAILED", "NEEDS_INPUT"}
 
@@ -50,8 +74,11 @@ def attention_items(store, *, scan: int = 200) -> list[AttentionItem]:
     return items
 
 
-def notify(summary: str, body: str = "") -> bool:
-    """Notificação de desktop via notify-send. Retorna False (no-op) se ausente/falhar."""
+def notify(summary: str, body: str = "", *, sound: bool = True) -> bool:
+    """Notificação de desktop (notify-send) + SOM de alerta (sound=True). Retorna False se o
+    notify-send está ausente/falha; o som é best-effort independente (não afeta o retorno)."""
+    if sound:
+        play_alert_sound()
     if shutil.which("notify-send") is None:
         return False
     try:

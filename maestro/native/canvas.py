@@ -436,6 +436,8 @@ class CanvasWindow:
         self._active_edge: tuple[str, str] | None = None
         self._pan: tuple[float, float] | None = None
         self._focused_nid: str | None = None  # terminal em foco (p/ fechar via teclado)
+        self._mon: dict[str, dict] = {}  # monitorar atividade por-nó (Fase 4): handler/quiet/active
+        self._mon_alerted: set[str] = set()  # nós com alerta de atenção ativo (limpa ao focar)
         self._selected: tuple[str, str] | None = None  # (kind, id) selecionado (borda azul)
         self._note_editing: str | None = None  # nota em edição in-place (formata ao sair)
         self._ptr_over: tuple[str, str] | None = None  # (kind,id) sob o cursor (roteio do scroll)
@@ -837,17 +839,7 @@ class CanvasWindow:
         add("view-grid-symbolic", "🗂", "Workspaces", "workspaces")
         add("drive-harddisk-symbolic", "🧱", "Floors", "floors")
         add("alarm-symbolic", "⏰", "Routines", "routines")
-        # tema GLOBAL dos terminais — picker com BUSCA (substitui o combo de 70 itens)
-        def _pick_global_theme(name):
-            self.model.set_terminal_theme(name)
-            self._apply_theme()  # todos os terminais sem override seguem o novo global
-            self._theme_btn.set_tooltip_text(f"tema global: {name}")
-
-        self._theme_btn = self._search_picker(
-            "🎨", self._theme_entries(), self._theme_swatch, _pick_global_theme)
-        self._theme_btn.add_css_class("fab-btn")
-        self._theme_btn.set_tooltip_text(f"tema global: {self.model.terminal_theme()}")
-        bar.append(self._theme_btn)
+        # (tema saiu da FAB — o tema GLOBAL é definido pelo editor: aba Tema → "Aplicar a TODOS")
         # paleta de comandos (Ctrl-P)
         aa = Gtk.Button(label="Aa")
         aa.set_has_frame(False)
@@ -1041,7 +1033,7 @@ class CanvasWindow:
         name.set_text(self.model.node_name(nid, ""))
         det = page(name)
         det.append(self._editor_detalhes_section(nid, applies))
-        det.append(soon("Monitorar atividade — Fase 4"))
+        det.append(self._editor_monitor_section(nid, applies))
         det.append(soon("Maestro (sub-orquestração) — Fase 6"))
         det.append(soon("SSH Remoto — Fase 7"))
         stack.add_titled(det, "detalhes", "Detalhes")
@@ -1549,6 +1541,36 @@ class CanvasWindow:
         applies.append(apply)
         return box
 
+    def _editor_monitor_section(self, nid: str, applies: list) -> Gtk.Widget:
+        """Monitorar atividade (Fase 4): toggle + tempo de quietude. Avisa (dot + notificação +
+        som) quando o terminal para de produzir output, estando fora de foco."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        chk = Gtk.CheckButton(label="Monitorar atividade")
+        chk.set_active(bool(self.model.node_cfg(nid, "monitor")))
+        box.append(chk)
+        hint = Gtk.Label(
+            label="Avisa (dot de atenção + notificação + som) quando o terminal PARA de produzir "
+                  "output, estando fora de foco. Ignora 'pensando' (TUI ocupada).", xalign=0)
+        hint.add_css_class("dim-label")
+        hint.set_wrap(True)
+        box.append(hint)
+        trow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        trow.append(Gtk.Label(label="Tempo de quietude (s):"))
+        secs = Gtk.Entry()
+        secs.set_max_width_chars(5)
+        secs.set_text(self.model.node_cfg(nid, "monitor_ms") or "1.5")
+        trow.append(secs)
+        box.append(trow)
+
+        def apply():
+            on = chk.get_active()
+            self.model.set_node_cfg(nid, "monitor", "1" if on else "")
+            self.model.set_node_cfg(nid, "monitor_ms", secs.get_text().strip() or "1.5")
+            self._set_node_monitor(nid, on)
+
+        applies.append(apply)
+        return box
+
     def _editor_theme_section(self, nid: str, applies: list) -> Gtk.Widget:
         """Seção TEMA (Fase 2): seleciona um tema; o toggle GLOBAL decide o alcance — ligado =
         aplica a TODOS (vira o tema global); desligado = só ESTE terminal. "Seguir o global" tira
@@ -1809,6 +1831,8 @@ class CanvasWindow:
             auto = self._auto_shortcut(nid)
             if auto:
                 self.model.set_node_cfg(nid, "shortcut", auto)
+        if self.model.node_cfg(nid, "monitor"):  # monitorar atividade persistido (Fase 4)
+            self._set_node_monitor(nid, True)
         self._renumber_nodes()  # atualiza os números de posição (Ctrl+Shift+N) [A.2]
         self._mm_refresh()  # C1: novo nó aparece no minimapa
         self._autofit_all_groups()  # C2: se o nó nasceu dentro de um grupo, ele abraça
@@ -1953,6 +1977,8 @@ class CanvasWindow:
         são ignorados no desenho (já filtra por self.frames). Remove o terminal de
         self.terms p/ não vazar nem quebrar _apply_theme.
         """
+        self._set_node_monitor(nid, False)  # para o monitor de atividade (Fase 4)
+        self._mon_alerted.discard(nid)
         frame = self.frames.pop(nid, None)
         if frame is None:
             return
@@ -2901,10 +2927,75 @@ class CanvasWindow:
         # então o foco é o sinal confiável p/ selecionar clicando fora do cabeçalho.
         self._focused_nid = nid
         self._select(("node", nid))
+        if nid in self._mon_alerted:  # você focou → limpa o alerta de atenção (Fase 4)
+            self._mon_alerted.discard(nid)
+            self.set_node_state(nid, "idle")
 
     def _on_term_unfocus(self, nid: str) -> None:
         if self._focused_nid == nid:
             self._focused_nid = None
+
+    # -- Monitorar atividade por terminal (Fase 4): quiescência de output → dot + notificação --
+    def _node_monitor_ms(self, nid: str) -> int:
+        try:
+            s = float(self.model.node_cfg(nid, "monitor_ms") or "1.5")
+        except ValueError:
+            s = 1.5
+        return int(max(0.3, min(30.0, s)) * 1000)
+
+    def _set_node_monitor(self, nid: str, on: bool) -> None:
+        """Liga/desliga o monitor de atividade do terminal (conecta `contents-changed`)."""
+        cur = self._mon.pop(nid, None)
+        frame = self.frames.get(nid)
+        term = getattr(frame, "_term", None) if frame is not None else None
+        if cur is not None:  # desliga o antigo (idempotente)
+            if cur.get("quiet_id"):
+                GLib.source_remove(cur["quiet_id"])
+            if term is not None and cur.get("handler"):
+                try:
+                    term.disconnect(cur["handler"])
+                except (TypeError, ValueError):
+                    pass
+        if on and term is not None:
+            st = {"handler": None, "quiet_id": None, "active": False}
+            st["handler"] = term.connect("contents-changed", self._mon_on_change, nid)
+            self._mon[nid] = st
+
+    def _mon_on_change(self, _term, nid) -> None:
+        st = self._mon.get(nid)
+        if st is None or self._focused_nid == nid:
+            return  # não monitora o terminal em FOCO (você já está olhando)
+        st["active"] = True
+        if st["quiet_id"]:
+            GLib.source_remove(st["quiet_id"])  # novo output → rearma a quiescência
+        st["quiet_id"] = GLib.timeout_add(self._node_monitor_ms(nid), self._mon_quiet, nid)
+
+    def _mon_quiet(self, nid) -> bool:
+        st = self._mon.get(nid)
+        if st is None:
+            return False
+        st["quiet_id"] = None
+        if not st["active"] or self._focused_nid == nid:
+            st["active"] = False
+            return False
+        frame = self.frames.get(nid)
+        term = getattr(frame, "_term", None) if frame is not None else None
+        text = self._term_text(term) if term is not None else ""
+        if tui_busy(text):  # ainda "pensando" (TUI ocupada) → espera mais
+            st["quiet_id"] = GLib.timeout_add(self._node_monitor_ms(nid), self._mon_quiet, nid)
+            return False
+        st["active"] = False
+        self.set_node_state(nid, "blocked")  # dot de atenção no cabeçalho
+        self._mon_alerted.add(nid)
+        name = self.model.node_name(nid, nid)
+        notify(f"maestro: {name} parou", self._mon_summary(text))  # notificação + som
+        return False
+
+    @staticmethod
+    def _mon_summary(text: str) -> str:
+        """Resumo (estilo Ombro): as últimas linhas não-vazias do output."""
+        lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+        return "\n".join(lines[-4:])
 
     def _term_text(self, term) -> str:
         """Texto renderizado da tela do VTE (sem ANSI). Main thread."""
