@@ -340,6 +340,33 @@ def test_anomaly_tick_quieto_sem_burst(tmp_path):
     assert sigs == []  # nada morto
 
 
+def test_papel_livre_materializa_e_aparece_no_list(tmp_path):
+    """Bug do teste ao vivo: papel LIVRE (fora da biblioteca) virava None → não injetava e
+    o list mostrava '—'. Agora _node_role devolve um Role ad-hoc e o list exibe o nome."""
+    w, created = _make_win()
+    w._ask_bus_dir = str(tmp_path)
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    w._roles = lambda: []  # biblioteca vazia → todo papel é "livre"
+    w._node_role = lambda nid: CanvasWindow._node_role(w, nid)  # usa o método REAL (não o mock)
+    assert _disp(w, "mgr", "recruit", ["codex", "coder especialista em Designer"])["ok"]
+    nid = created[0][0]
+    role = w._node_role(nid)
+    assert role is not None and role.name == "coder especialista em Designer"  # não é None
+    r = _disp(w, "mgr", "list", [])
+    assert "coder especialista em Designer" in r["answer"] and "papel: —" not in r["answer"]
+
+
+def test_recruit_falha_da_motivo(tmp_path):
+    """Recruit com falha de spawn devolve o MOTIVO (não o genérico 'falha ao criar o agente')."""
+    w, _ = _make_win()
+    w._ask_bus_dir = str(tmp_path)
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    w._new_agent_terminal = lambda base, default=None: (
+        setattr(w, "_last_recruit_error", "limite de uso do CLI") or None)
+    r = _disp(w, "mgr", "recruit", ["codex"])
+    assert not r["ok"] and "limite de uso do CLI" in r["error"]
+
+
 def test_recruit_audita_sucesso(tmp_path):
     w, created = _make_win()
     w.model.set_node_cfg("mgr", "maestro", "1")

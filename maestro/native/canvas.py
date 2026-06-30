@@ -3094,11 +3094,15 @@ class CanvasWindow:
         save_role_library(self._role_lib_path(), roles)
 
     def _node_role(self, nid: str):
-        """Role atribuído ao terminal (por nome, da biblioteca), ou None."""
-        name = self.model.node_cfg(nid, "role")
+        """Role atribuído ao terminal, ou None. Se o nome casar com a biblioteca, usa o
+        Role rico de lá; senão, monta um Role AD-HOC com o texto livre como instrução —
+        assim papéis livres (ex.: vindos do `maestri recruit <ag> "papel livre"`) também
+        são materializados no workspace e aparecem no `list` (antes virava None → "—")."""
+        name = (self.model.node_cfg(nid, "role") or "").strip()
         if not name:
             return None
-        return next((r for r in self._roles() if r.name == name), None)
+        lib = next((r for r in self._roles() if r.name == name), None)
+        return lib if lib is not None else Role(name=name, agent="", instruction=name, color="")
 
     def _role_targets(self, nid: str) -> list[str]:
         """Onde ESCREVEMOS o bloco de role: SÓ o workspace ISOLADO do agente (nosso). NUNCA o
@@ -3801,7 +3805,9 @@ class CanvasWindow:
                 return
             nid = self._new_agent_terminal(base, default=self._place_below(frm))
             if nid is None:
-                result.update(ok=False, error="falha ao criar o agente")
+                why = getattr(self, "_last_recruit_error", "") or "verifique auth/limite do CLI"
+                self._audit("recruit_blocked", manager=frm, reason="spawn_fail", detail=why)
+                result.update(ok=False, error=f"falha ao criar '{base}': {why}")
                 return
             self.model.set_node_cfg(nid, "maestro", "")  # recruta NASCE sem poder recrutar
             self._recruited_by[nid] = frm  # linhagem (profundidade)
@@ -4489,16 +4495,20 @@ class CanvasWindow:
         return nid
 
     def _new_agent_terminal(self, base: str | None, default=None) -> str | None:
+        self._last_recruit_error = ""  # motivo da última falha (p/ a mensagem do recruit)
         if not base or self.controller is None or not self._ask_bus_dir:
+            self._last_recruit_error = "orquestrador/cabos indisponíveis"
             return None
         profiles = installed_agents()
         if base not in profiles:
+            self._last_recruit_error = f"CLI '{base}' não instalado"
             return None
         nid = self._unique_nid(base)
         try:
             self.controller.add_agent_instance(nid, base)  # delegate/maestro-ask resolve nid
         except Exception as exc:
             _log.error("add_agent_instance falhou: %s", exc)
+            self._last_recruit_error = str(exc)
             return None
         base_home = Path(self._ask_bus_dir).parent
         wsp = Workspace(str(base_home / "workspaces")).create(nid)
