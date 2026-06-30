@@ -17,6 +17,7 @@ import logging
 import math
 import os
 import signal
+import time
 import sys
 import threading
 import unicodedata
@@ -469,6 +470,9 @@ class CanvasWindow:
         self._ask_bus_dir = ask_bus_dir  # p/ criar novos terminais de agente em runtime
         self._sock_server = None  # SockServer: um listener por agente (<box>/sock)
         self._agent_nids: set[str] = set()  # nós de agente vivos (fonte do fleet-cap/kill-switch)
+        self._recruited_by: dict[str, str] = {}  # linhagem: recruta -> manager (profundidade)
+        self._spawn_log: list[float] = []  # timestamps de recrutamentos (rate-limit token-bucket)
+        self._maestro_clock = time.monotonic  # injetável nos testes
         self._ask_router = None
         # modo do cabo: "live" (Maestri: digita no terminal vivo do B) ou "headless" (mediado).
         # default live; cai no headless automaticamente se a captura falhar.
@@ -2209,6 +2213,7 @@ class CanvasWindow:
         if self._sock_server is not None:  # ADR-17: fecha o listener do socket do agente
             self._sock_server.remove_node(nid)
         self._agent_nids.discard(nid)  # sai do fleet
+        self._recruited_by.pop(nid, None)  # sai da linhagem
         _t = getattr(self.frames.get(nid), "_term", None)
         if _t is not None:  # H1: invalida respawn em voo (não roda _go() em widget destruído)
             _t._destroyed = True
@@ -3526,10 +3531,38 @@ class CanvasWindow:
     # -- Maestro mode (Fase 6): comandos do agente-manager roteados pelo host (main thread) --
     MAESTRO_MAX_RECRUITS = 6  # limite anti-loop de recrutas POR MANAGER
     MAESTRO_FLEET_CAP = 12  # teto GLOBAL de agentes vivos no fleet (ADR-17, Etapa 2)
+    MAESTRO_MAX_DEPTH = 2  # profundidade máx. da ÁRVORE de recrutamento (mgr→a→b), Etapa 3
+    MAESTRO_SOFT_CAP = 8  # acima disso, recrutar exige confirmação humana (HITL)
+    MAESTRO_SPAWN_RATE = 5  # máx. de recrutamentos por janela (rate-limit token-bucket)
+    MAESTRO_SPAWN_WINDOW = 60.0  # janela do rate-limit, em segundos
 
     def _fleet_count(self) -> int:
         """Total de agentes vivos no fleet (fonte do hard-cap global e do kill-switch)."""
         return len(self._agent_nids)
+
+    def _node_depth(self, nid: str) -> int:
+        """Profundidade do nó na ÁRVORE de recrutamento (host-derivada, NÃO o depth do payload).
+
+        0 = raiz (nó posto pelo humano). Sobe pela linhagem ``_recruited_by`` com guarda
+        anti-ciclo (a árvore é 1-parent, mas protege contra estado corrompido)."""
+        depth, cur, seen = 0, nid, set()
+        while cur in self._recruited_by and cur not in seen:
+            seen.add(cur)
+            cur = self._recruited_by[cur]
+            depth += 1
+            if depth > 64:  # cinto de segurança
+                break
+        return depth
+
+    def _spawn_rate_ok(self) -> bool:
+        """True se ainda cabe um recrutamento na janela (poda os antigos do token-bucket)."""
+        now = self._maestro_clock()
+        self._spawn_log = [t for t in self._spawn_log if now - t < self.MAESTRO_SPAWN_WINDOW]
+        return len(self._spawn_log) < self.MAESTRO_SPAWN_RATE
+
+    def _recruit_needs_hitl(self, frm: str) -> bool:
+        """Recrutar acima do soft-cap (mas abaixo do hard-cap) pede confirmação humana."""
+        return self.MAESTRO_SOFT_CAP <= self._fleet_count() < self.MAESTRO_FLEET_CAP
 
     def _audit(self, event: str, **fields) -> None:
         """Registra um evento na trilha append-only (ADR-17). Best-effort, nunca levanta."""
@@ -3596,7 +3629,7 @@ class CanvasWindow:
         result: dict = {}
         done = threading.Event()
         GLib.idle_add(self._maestro_exec, req, result, done)
-        if not done.wait(timeout=25):
+        if not done.wait(timeout=50):  # folga p/ o HITL (humano confirmar); shim espera 60s
             return AskResponse(req.id, False, error="timeout no host")
         if result.get("ok"):
             return AskResponse(req.id, True, result.get("answer", "ok"))
@@ -3621,12 +3654,61 @@ class CanvasWindow:
 
     def _maestro_exec(self, req, result: dict, done) -> bool:
         try:
+            # HITL (Etapa 3): recrutar acima do soft-cap pausa e PERGUNTA ao humano. O
+            # diálogo é assíncrono → `done` é setado no callback da decisão, não aqui.
+            if req.cmd == "recruit" and self._recruit_needs_hitl(req.frm):
+                self._hitl_recruit(req, result, done)
+                return False
             self._maestro_dispatch(req, result)
         except Exception as exc:
             result.update(ok=False, error=str(exc))
-        finally:
-            done.set()
+        done.set()
         return False  # idle one-shot
+
+    def _apply_recruit_decision(self, approve: bool, req, result: dict, done) -> None:
+        """Aplica a decisão humana do HITL (separado do GTK p/ ser testável)."""
+        if approve:
+            self._maestro_dispatch(req, result)
+        else:
+            self._audit("recruit_denied", manager=req.frm, fleet=self._fleet_count())
+            result.update(ok=False, error="recrutamento negado pelo humano")
+        done.set()
+
+    def _hitl_recruit(self, req, result: dict, done) -> None:
+        """Pausa-e-pergunta: o humano aprova/nega um recrutamento acima do soft-cap.
+
+        Aprovar → roda o dispatch; negar/timeout → recusa. `done` é setado na decisão.
+        Factorado p/ testes poderem sobrescrever (auto-aprovar/negar) sem GTK.
+        """
+        decided = {"v": False}
+
+        def decide(approve: bool, _src=None):
+            if decided["v"]:
+                return False
+            decided["v"] = True
+            self._apply_recruit_decision(approve, req, result, done)
+            return False
+
+        dlg, box = self._dialog("Confirmar recrutamento (fleet grande)")
+        msg = Gtk.Label(
+            label=f"O agente '{req.frm}' quer recrutar mais um (fleet em "
+                  f"{self._fleet_count()}/{self.MAESTRO_FLEET_CAP}). Aprovar?")
+        msg.set_wrap(True)
+        msg.set_xalign(0.0)
+        box.append(msg)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.set_halign(Gtk.Align.END)
+        deny = Gtk.Button(label="Negar")
+        deny.connect("clicked", lambda _b: (dlg.destroy(), decide(False)))
+        appr = Gtk.Button(label="Aprovar")
+        appr.add_css_class("suggested-action")
+        appr.connect("clicked", lambda _b: (dlg.destroy(), decide(True)))
+        row.append(deny)
+        row.append(appr)
+        box.append(row)
+        # se o humano não decidir a tempo, nega (o agente não fica preso)
+        GLib.timeout_add_seconds(40, lambda: decide(False) if not decided["v"] else False)
+        dlg.present()
 
     def _maestro_dispatch(self, req, result: dict) -> None:
         frm, cmd, args = req.frm, req.cmd, req.args
@@ -3650,6 +3732,15 @@ class CanvasWindow:
                 result.update(ok=False,
                               error=f"limite GLOBAL de {self.MAESTRO_FLEET_CAP} agentes atingido")
                 return
+            depth = self._node_depth(frm)
+            if depth >= self.MAESTRO_MAX_DEPTH:  # profundidade da árvore (Etapa 3)
+                self._audit("recruit_blocked", manager=frm, reason="max_depth", depth=depth)
+                result.update(ok=False, error=f"profundidade máxima ({depth} níveis) atingida")
+                return
+            if not self._spawn_rate_ok():  # rate-limit token-bucket (Etapa 3)
+                self._audit("recruit_blocked", manager=frm, reason="rate_limit")
+                result.update(ok=False, error="muitos recrutamentos em pouco tempo; aguarde")
+                return
             if len(self._maestro_connected(frm)) >= self.MAESTRO_MAX_RECRUITS:
                 result.update(ok=False, error=f"limite de {self.MAESTRO_MAX_RECRUITS} recrutas")
                 return
@@ -3657,6 +3748,9 @@ class CanvasWindow:
             if nid is None:
                 result.update(ok=False, error="falha ao criar o agente")
                 return
+            self.model.set_node_cfg(nid, "maestro", "")  # recruta NASCE sem poder recrutar
+            self._recruited_by[nid] = frm  # linhagem (profundidade)
+            self._spawn_log.append(self._maestro_clock())  # alimenta o rate-limit
             self.edges.add(frm, nid)
             if role:
                 self.model.set_node_cfg(nid, "role", role)
@@ -3666,7 +3760,7 @@ class CanvasWindow:
             self._wake_cables()
             self.plane.queue_draw()
             self._audit("recruit", manager=frm, node=nid, agent=base, role=role,
-                        fleet=self._fleet_count())
+                        depth=self._node_depth(nid), fleet=self._fleet_count())
             extra = f", papel '{role}'" if role else ""
             result.update(ok=True, answer=f"recrutado '{nid}' (agente {base}{extra}), por cabo.")
         elif cmd == "list":

@@ -54,6 +54,15 @@ def _make_win():
     w._node_size = {"mgr": (420, 220)}
     w.plane = SimpleNamespace(queue_draw=lambda: None)
     w._agent_nids = set()  # fleet (cap global + kill-switch)
+    w._recruited_by = {}  # linhagem (profundidade)
+    w._spawn_log = []  # rate-limit
+    _tick = [0.0]
+
+    def _clock():  # avança muito por chamada → rate-limit não trip por acidente nos testes
+        _tick[0] += 1000.0
+        return _tick[0]
+
+    w._maestro_clock = _clock
     w.closed = []
     created = []
 
@@ -170,6 +179,107 @@ def test_kill_all_ceifa_e_desarma(tmp_path):
     assert sigs == [signal.SIGKILL, signal.SIGKILL]  # SIGKILL colapsa cada bwrap
     assert not w.model.node_cfg("mgr", "maestro")  # manager desarmado (re-armar é manual)
     assert any(e["event"] == "kill_all" and e["killed"] == 2 for e in read_events(tmp_path))
+
+
+def test_profundidade_da_arvore(tmp_path):
+    """Linhagem host-derivada: mgr→a1→a2 ok; a2 (profundidade 2) NÃO pode recrutar mais."""
+    w, created = _make_win()
+    w._ask_bus_dir = str(tmp_path)
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    a1 = created and None
+    # mgr recruta a1 (profundidade 1)
+    assert _disp(w, "mgr", "recruit", ["codex"])["ok"]
+    a1 = created[0][0]
+    assert w._node_depth(a1) == 1
+    # humano promove a1 a manager; a1 recruta a2 (profundidade 2)
+    w.model.set_node_cfg(a1, "maestro", "1")
+    assert _disp(w, a1, "recruit", ["codex"])["ok"]
+    a2 = created[1][0]
+    assert w._node_depth(a2) == 2
+    # a2 promovido tenta recrutar → barra na profundidade máxima
+    w.model.set_node_cfg(a2, "maestro", "1")
+    r = _disp(w, a2, "recruit", ["codex"])
+    assert not r["ok"] and "profundidade" in r["error"]
+
+
+def test_rate_limit_token_bucket(tmp_path):
+    """Com relógio FIXO, estoura o rate-limit antes do limite por-manager."""
+    w, created = _make_win()
+    w._ask_bus_dir = str(tmp_path)
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    w._maestro_clock = lambda: 100.0  # tempo congelado → token-bucket não repõe
+    for _ in range(w.MAESTRO_SPAWN_RATE):
+        assert _disp(w, "mgr", "recruit", ["codex"])["ok"]
+    r = _disp(w, "mgr", "recruit", ["codex"])  # próximo na mesma janela → barra
+    assert not r["ok"] and "muitos recrutamentos" in r["error"]
+
+
+def test_recruta_nasce_sem_recrutar(tmp_path):
+    """O recruta NÃO herda Maestro mode (promover exige o toggle humano)."""
+    w, created = _make_win()
+    w._ask_bus_dir = str(tmp_path)
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    assert _disp(w, "mgr", "recruit", ["codex"])["ok"]
+    nid = created[0][0]
+    assert not w.model.node_cfg(nid, "maestro")  # nasce desarmado
+
+
+def test_hitl_predicado_soft_cap(tmp_path):
+    """HITL liga só na faixa soft-cap ≤ fleet < hard-cap."""
+    w, _ = _make_win()
+    w._agent_nids = set()
+    assert not w._recruit_needs_hitl("mgr")  # fleet 0 < soft-cap
+    w._agent_nids = {f"a{i}" for i in range(w.MAESTRO_SOFT_CAP)}
+    assert w._recruit_needs_hitl("mgr")  # na faixa de confirmação
+    w._agent_nids = {f"a{i}" for i in range(w.MAESTRO_FLEET_CAP)}
+    assert not w._recruit_needs_hitl("mgr")  # no hard-cap já é o dispatch que recusa
+
+
+def test_hitl_aprovar_e_negar(tmp_path):
+    """Acima do soft-cap, a decisão humana decide: aprovar cria; negar recusa + audita."""
+    import threading
+
+    from maestro.engine.ask_bus import AskRequest
+    from maestro.engine.maestro_audit import read_events
+
+    # APROVAR
+    w, created = _make_win()
+    w._ask_bus_dir = str(tmp_path / "ap")
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    w._agent_nids = {f"a{i}" for i in range(w.MAESTRO_SOFT_CAP)}  # na faixa de HITL
+    req = AskRequest("a" * 8, "mgr", "", "", cmd="recruit", args=["codex"])
+    res, done = {}, threading.Event()
+    CanvasWindow._apply_recruit_decision(w, True, req, res, done)
+    assert res.get("ok") and done.is_set() and len(created) == 1  # criou ao aprovar
+
+    # NEGAR
+    w2, created2 = _make_win()
+    w2._ask_bus_dir = str(tmp_path / "ng")
+    w2.model.set_node_cfg("mgr", "maestro", "1")
+    w2._agent_nids = {f"a{i}" for i in range(w2.MAESTRO_SOFT_CAP)}
+    res2, done2 = {}, threading.Event()
+    CanvasWindow._apply_recruit_decision(w2, False, req, res2, done2)
+    assert not res2.get("ok") and "negado" in res2["error"] and created2 == []
+    assert any(e["event"] == "recruit_denied" for e in read_events(tmp_path / "ng"))
+
+
+def test_maestro_exec_roteia_hitl(tmp_path):
+    """_maestro_exec NÃO despacha direto quando precisa de HITL — delega a _hitl_recruit."""
+    import threading
+
+    from maestro.engine.ask_bus import AskRequest
+
+    w, created = _make_win()
+    w._ask_bus_dir = str(tmp_path)
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    w._agent_nids = {f"a{i}" for i in range(w.MAESTRO_SOFT_CAP)}  # precisa de HITL
+    calls = []
+    w._hitl_recruit = lambda req, result, done: calls.append(req.frm)  # não seta done
+    req = AskRequest("b" * 8, "mgr", "", "", cmd="recruit", args=["codex"])
+    res, done = {}, threading.Event()
+    CanvasWindow._maestro_exec(w, req, res, done)
+    assert calls == ["mgr"] and not done.is_set()  # roteou p/ HITL, não despachou direto
+    assert created == []  # nada criado sem a decisão humana
 
 
 def test_recruit_audita_sucesso(tmp_path):
