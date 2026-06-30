@@ -2,8 +2,9 @@
 """maestri — CLI de Maestro mode (sub-orquestração), roda DENTRO do sandbox bwrap.
 
 Stdlib-only DE PROPÓSITO (dentro do bwrap o pacote ``maestro`` pode não importar).
-Mesmo mailbox/protocolo do ``engine.ask_bus`` (req/resp JSON), mas com ``cmd``/``args``.
-O host instala uma cópia deste arquivo como ``<bus>/maestri`` (executável).
+Fala com o host por um **socket Unix pathname** em ``$MAESTRO_ASK_BUS/sock`` (ADR-17):
+a identidade do remetente é o CANAL (qual socket), não um campo — o host ignora o
+``frm`` do payload. O host instala uma cópia deste arquivo como ``<bus>/bin/maestri``.
 
 Uso (o agente-manager chama via Bash):
     maestri recruit <agente> [papel]
@@ -12,19 +13,43 @@ Uso (o agente-manager chama via Bash):
     maestri wire <a> [b]
     maestri dismiss <nó>
 
-Lê do ambiente: MAESTRO_NODE (o manager) e MAESTRO_ASK_BUS (mailbox).
+Lê do ambiente: MAESTRO_NODE (rótulo de debug) e MAESTRO_ASK_BUS (a box do agente).
 """
 
 from __future__ import annotations
 
 import json
 import os
+import socket
+import struct
 import sys
-import time
 import uuid
 
-POLL = 0.25
 DEFAULT_TIMEOUT = 60.0
+SOCK_NAME = "sock"
+_MAX = 1 << 16
+
+
+def _send_msg(conn: socket.socket, obj: dict) -> None:
+    data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+    conn.sendall(struct.pack(">I", len(data)) + data)
+
+
+def _recv_exact(conn: socket.socket, n: int) -> bytes:
+    buf = bytearray()
+    while len(buf) < n:
+        chunk = conn.recv(n - len(buf))
+        if not chunk:
+            raise OSError("conexão fechada no meio do frame")
+        buf += chunk
+    return bytes(buf)
+
+
+def _recv_msg(conn: socket.socket) -> dict:
+    (n,) = struct.unpack(">I", _recv_exact(conn, 4))
+    if n > _MAX:
+        raise OSError("frame grande demais")
+    return json.loads(_recv_exact(conn, n).decode("utf-8"))
 
 
 def run_cmd(
@@ -34,31 +59,19 @@ def run_cmd(
     args: list[str],
     *,
     timeout: float = DEFAULT_TIMEOUT,
-    poll: float = POLL,
-    sleep=time.sleep,
-    clock=time.monotonic,
 ) -> dict:
-    """Escreve req-<id>.json (com cmd/args) e aguarda resp-<id>.json. Devolve o dict."""
+    """Conecta em ``<bus_dir>/sock``, envia o comando e devolve a resposta do host."""
     rid = uuid.uuid4().hex
-    os.makedirs(bus_dir, exist_ok=True)
     req = {"id": rid, "frm": frm, "to": "", "prompt": "", "depth": 0, "cmd": cmd, "args": args}
-    req_path = os.path.join(bus_dir, f"req-{rid}.json")
-    tmp = req_path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(req, f, ensure_ascii=False)
-    os.replace(tmp, req_path)  # escrita atômica
-
-    resp_path = os.path.join(bus_dir, f"resp-{rid}.json")
-    deadline = clock() + timeout
-    while clock() < deadline:
-        if os.path.exists(resp_path):
-            try:
-                with open(resp_path, encoding="utf-8") as f:
-                    return json.load(f)
-            except (OSError, json.JSONDecodeError):
-                pass
-        sleep(poll)
-    return {"id": rid, "ok": False, "error": "timeout esperando resposta"}
+    path = os.path.join(bus_dir, SOCK_NAME)
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
+            s.connect(path)
+            _send_msg(s, req)
+            return _recv_msg(s)
+    except (OSError, json.JSONDecodeError) as e:
+        return {"id": rid, "ok": False, "error": f"sem resposta do host: {e}"}
 
 
 _USAGE = "uso: maestri <recruit|list|reassign|wire|dismiss> [args...]"

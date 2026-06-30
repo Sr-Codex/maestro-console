@@ -1,28 +1,53 @@
 #!/usr/bin/env python3
 """maestro-ask — cliente do modo interativo de cabos, roda DENTRO do sandbox bwrap.
 
-Stdlib-only DE PROPÓSITO: dentro do bwrap o pacote ``maestro`` pode não estar
-importável. Mantém o MESMO protocolo de arquivos do ``engine.ask_bus`` (req/resp
-JSON). O host instala uma cópia deste arquivo como ``<bus>/maestro-ask`` (executável).
+Stdlib-only DE PROPÓSITO: dentro do bwrap o pacote ``maestro`` pode não importar.
+Fala com o host por um **socket Unix pathname** em ``$MAESTRO_ASK_BUS/sock`` (ADR-17):
+a identidade do remetente é o CANAL (qual socket), não um campo. O host instala uma
+cópia deste arquivo como ``<bus>/bin/maestro-ask`` (executável).
 
 Uso (o agente chama via Bash):
     maestro-ask <nó-destino> "<prompt>"
 
 Lê do ambiente:
-    MAESTRO_NODE     — o nó remetente (quem está perguntando)
-    MAESTRO_ASK_BUS  — diretório do mailbox (montado rw no sandbox)
+    MAESTRO_NODE     — rótulo de debug do remetente (a identidade real vem do canal)
+    MAESTRO_ASK_BUS  — a box do agente (contém o socket ``sock``)
 """
 
 from __future__ import annotations
 
 import json
 import os
+import socket
+import struct
 import sys
-import time
 import uuid
 
-POLL = 0.25
 DEFAULT_TIMEOUT = 180.0
+SOCK_NAME = "sock"
+_MAX = 1 << 16
+
+
+def _send_msg(conn: socket.socket, obj: dict) -> None:
+    data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+    conn.sendall(struct.pack(">I", len(data)) + data)
+
+
+def _recv_exact(conn: socket.socket, n: int) -> bytes:
+    buf = bytearray()
+    while len(buf) < n:
+        chunk = conn.recv(n - len(buf))
+        if not chunk:
+            raise OSError("conexão fechada no meio do frame")
+        buf += chunk
+    return bytes(buf)
+
+
+def _recv_msg(conn: socket.socket) -> dict:
+    (n,) = struct.unpack(">I", _recv_exact(conn, 4))
+    if n > _MAX:
+        raise OSError("frame grande demais")
+    return json.loads(_recv_exact(conn, n).decode("utf-8"))
 
 
 def ask(
@@ -32,31 +57,19 @@ def ask(
     prompt: str,
     *,
     timeout: float = DEFAULT_TIMEOUT,
-    poll: float = POLL,
-    sleep=time.sleep,
-    clock=time.monotonic,
 ) -> dict:
-    """Escreve req-<id>.json e aguarda resp-<id>.json. Retorna o dict da resposta."""
+    """Conecta em ``<bus_dir>/sock``, envia o pedido ao nó ``to`` e devolve a resposta."""
     rid = uuid.uuid4().hex
-    os.makedirs(bus_dir, exist_ok=True)
     req = {"id": rid, "frm": frm, "to": to, "prompt": prompt, "depth": 0}
-    req_path = os.path.join(bus_dir, f"req-{rid}.json")
-    tmp = req_path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(req, f, ensure_ascii=False)
-    os.replace(tmp, req_path)  # escrita atômica (host nunca lê pedido parcial)
-
-    resp_path = os.path.join(bus_dir, f"resp-{rid}.json")
-    deadline = clock() + timeout
-    while clock() < deadline:
-        if os.path.exists(resp_path):
-            try:
-                with open(resp_path, encoding="utf-8") as f:
-                    return json.load(f)
-            except (OSError, json.JSONDecodeError):
-                pass  # ainda sendo escrito; tenta de novo
-        sleep(poll)
-    return {"id": rid, "ok": False, "error": "timeout esperando resposta"}
+    path = os.path.join(bus_dir, SOCK_NAME)
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
+            s.connect(path)
+            _send_msg(s, req)
+            return _recv_msg(s)
+    except (OSError, json.JSONDecodeError) as e:
+        return {"id": rid, "ok": False, "error": f"sem resposta do host: {e}"}
 
 
 def main(argv: list[str] | None = None, env: dict | None = None) -> int:

@@ -41,19 +41,26 @@ def agent_argv(
     terminal normal (shell) no mesmo sandbox — comportamento do Maestri. Reabrir a
     IA é só digitar o comando dela de novo.
 
-    Se ``node`` e ``ask_bus_dir`` forem dados, monta o mailbox (shared_paths) e
-    injeta MAESTRO_NODE/MAESTRO_ASK_BUS — habilita o ``maestro-ask`` (cabos
-    interativos, ADR-11) de dentro do sandbox.
+    Se ``node`` e ``ask_bus_dir`` forem dados, monta **só a box do agente** (ADR-17:
+    ``<bus>/box/<nó>``, bind RW isolado — identidade por canal) e injeta
+    MAESTRO_NODE/MAESTRO_ASK_BUS/MAESTRO_BIN — habilita ``maestro-ask``/``maestri``
+    de dentro do sandbox. **NUNCA** montar o ``<bus>`` inteiro (conteria as boxes
+    irmãs → spoofing); a segurança vem da AUSÊNCIA do mount das outras boxes.
     """
-    shared = [ask_bus_dir] if ask_bus_dir else []
+    shared = []
     setenv = {}
     if node and ask_bus_dir:
+        bus = str(ask_bus_dir)
+        box = os.path.join(bus, "box", node)  # caixa privada deste agente (RW)
+        os.makedirs(box, mode=0o700, exist_ok=True)  # existe antes do bind do bwrap
+        bin_dir = os.path.join(bus, "bin")  # shims (RO via --ro-bind / /), na PATH
+        shared = [box]  # bind RW SÓ da própria box — não o <bus> pai
         base_path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
         setenv = {
             "MAESTRO_NODE": node,
-            "MAESTRO_ASK_BUS": str(ask_bus_dir),
-            # mailbox no PATH -> o agente roda `maestro-ask <nó> "..."` direto
-            "PATH": f"{ask_bus_dir}:{base_path}",
+            "MAESTRO_ASK_BUS": box,  # a box (contém o socket 'sock')
+            "MAESTRO_BIN": bin_dir,  # caminho absoluto dos shims (imune ao reset de PATH)
+            "PATH": f"{bin_dir}:{base_path}",
         }
     # roda a IA dentro de um shell e, ao sair dela, mantém um shell interativo
     agent_bin = profile.cmd[0]

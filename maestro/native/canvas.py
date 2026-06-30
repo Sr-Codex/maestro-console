@@ -33,14 +33,17 @@ gi.require_version("Pango", "1.0")
 from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Pango, Vte  # noqa: E402
 
 from ..engine.ask_bus import (  # noqa: E402
-    AskBus,
+    AskBusError,
+    AskRequest,
     AskResponse,
     install_ask_skill,
     install_client,
     install_connected_notes_skill,
     install_maestri_client,
     install_maestro_skill,
+    validate_req,
 )
+from ..engine.ask_sock import SockServer  # noqa: E402
 from ..engine.ask_router import AskRouter, policy_from_env  # noqa: E402
 from ..engine.attention import attention_items, notify  # noqa: E402
 from ..engine.envelope import EnvelopeState  # noqa: E402
@@ -460,16 +463,16 @@ class CanvasWindow:
         self._selected: tuple[str, str] | None = None  # (kind, id) selecionado (borda azul)
         self._note_editing: str | None = None  # nota em edição in-place (formata ao sair)
         self._ptr_over: tuple[str, str] | None = None  # (kind,id) sob o cursor (roteio do scroll)
-        # cabos interativos (ADR-11): mailbox + router — só com controller + edges
+        # cabos interativos (ADR-11) + Maestro mode (ADR-17): transporte por SOCKET por
+        # agente (identidade por canal) + router — só com controller + edges
         self._ask_bus_dir = ask_bus_dir  # p/ criar novos terminais de agente em runtime
-        self._ask_bus = None
+        self._sock_server = None  # SockServer: um listener por agente (<box>/sock)
         self._ask_router = None
-        self._ask_inflight: set[str] = set()
         # modo do cabo: "live" (Maestri: digita no terminal vivo do B) ou "headless" (mediado).
         # default live; cai no headless automaticamente se a captura falhar.
         self._ask_mode = os.environ.get("MAESTRO_ASK_MODE", "live").strip().lower()
         if ask_bus_dir and controller is not None and edges is not None:
-            self._ask_bus = AskBus(ask_bus_dir)
+            self._sock_server = SockServer()
             self._ask_router = AskRouter(
                 edge_allowed=self._ask_edge_allowed,
                 delegate=self._ask_delegate,
@@ -2031,6 +2034,7 @@ class CanvasWindow:
         self._apply_node_theme(nid)  # tema por-nó (override) ou global — Fase 2
         self._apply_node_role(nid)  # role (Fase 5): accent + sidecar (injeção é no spawn do agente)
         self._apply_node_maestro(nid)  # Maestro mode (Fase 6): injeta a manager-skill se ligado
+        self._sock_register(nid, argv)  # ADR-17: listener do socket só p/ nó de agente (bwrap)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(head)
         box.append(term)
@@ -2194,6 +2198,8 @@ class CanvasWindow:
         """
         self._set_node_monitor(nid, False)  # para o monitor de atividade (Fase 4)
         self._mon_alerted.discard(nid)
+        if self._sock_server is not None:  # ADR-17: fecha o listener do socket do agente
+            self._sock_server.remove_node(nid)
         _t = getattr(self.frames.get(nid), "_term", None)
         if _t is not None:  # H1: invalida respawn em voo (não roda _go() em widget destruído)
             _t._destroyed = True
@@ -3240,10 +3246,12 @@ class CanvasWindow:
         # 4b: materializa notas dos cabos restaurados e liga o poll de sync agente→nota
         self._materialize_all_connected_notes()
         GLib.timeout_add(interval_ms, self._note_files_tick)
-        if self._ask_bus is None:
+        if self._sock_server is None:
             return
-        self._ask_bus.cleanup(max_age_seconds=3600)  # limpa órfãos (broker sobrevive)
-        GLib.timeout_add(interval_ms, self._ask_tick)
+        # os listeners por agente já foram criados em _add_node; sobe a thread de accept
+        threading.Thread(
+            target=self._sock_server.serve, args=(self._on_sock_request,), daemon=True
+        ).start()
 
     def _ask_edge_allowed(self, frm: str, to: str) -> bool:
         if self.edges is None:
@@ -3441,37 +3449,43 @@ class CanvasWindow:
         st["done"].set()
         return False
 
-    def _ask_tick(self) -> bool:
-        if self._ask_bus is None:
-            return False
-        started = False
-        try:
-            for req in self._ask_bus.pending_requests():
-                if req.id in self._ask_inflight:
-                    continue
-                self._ask_inflight.add(req.id)
-                if not req.cmd:  # comando Maestro mode não tem cabo p/ pintar de "busy"
-                    self._ask_set_edge_state(req.frm, req.to, "busy")
-                threading.Thread(target=self._ask_process, args=(req,), daemon=True).start()
-                started = True
-        except Exception as exc:  # nunca derruba o tick
-            _log.error("ask_tick falhou: %s", exc)
-        if started:
-            self.plane.queue_draw()
-        return True  # continua o poll
+    def _on_sock_request(self, node: str, data: dict) -> dict:
+        """Trata 1 pedido vindo do socket do agente ``node`` (roda em thread do SockServer).
 
-    def _ask_process(self, req) -> None:
-        """Roda em thread daemon: ask normal → AskRouter.handle; comando Maestro → host (main)."""
-        resp = None
+        IDENTIDADE POR CANAL (ADR-17): o remetente é ``node`` (qual socket aceitou a
+        conexão) — qualquer ``frm`` no payload é IGNORADO. Devolve o dict de resposta.
+        """
         try:
-            resp = self._maestro_handle(req) if req.cmd else self._ask_router.handle(req)
-            self._ask_bus.write_response(resp)
-        except Exception as exc:
-            _log.error("ask_process falhou: %s", exc)
-        finally:
-            self._ask_inflight.discard(req.id)
-        if not req.cmd:  # comandos não têm cabo p/ refletir cor
+            depth = int(data.get("depth", 0))
+        except (TypeError, ValueError):
+            depth = 0
+        raw_args = data.get("args", [])
+        req = AskRequest(
+            id=(str(data.get("id", "")) or "x")[:64],
+            frm=node,  # <- canal, não o payload (anti-spoofing)
+            to=str(data.get("to", "")),
+            prompt=str(data.get("prompt", "")),
+            depth=depth,
+            cmd=str(data.get("cmd", "")),
+            args=[str(a) for a in raw_args] if isinstance(raw_args, list) else [],
+        )
+        try:
+            validate_req(req)
+        except AskBusError as e:
+            return {"id": req.id, "ok": False, "error": f"pedido inválido: {e}"}
+        if req.cmd:  # comando Maestro mode → host (main thread, com gates)
+            resp = self._maestro_handle(req)
+        else:  # cabo (maestro-ask) → router; pinta o cabo de busy/done na main
+            GLib.idle_add(self._ask_set_edge_state, req.frm, req.to, "busy")
+            GLib.idle_add(self.plane.queue_draw)
+            try:
+                resp = self._ask_router.handle(req)
+            except Exception as exc:  # noqa: BLE001 — nunca derruba o servidor de socket
+                _log.error("ask handle falhou: %s", exc)
+                resp = AskResponse(req.id, False, error="erro no host")
             GLib.idle_add(self._ask_reflect, req, resp)
+        return {"id": resp.id, "ok": bool(resp.ok),
+                "answer": resp.answer, "error": resp.error}
 
     def _ask_reflect(self, req, resp) -> bool:
         ok = bool(resp and resp.ok)
@@ -3481,6 +3495,23 @@ class CanvasWindow:
         self._ask_set_edge_state(req.frm, req.to, "done" if ok else "failed")
         self.plane.queue_draw()
         return False
+
+    def _box_dir(self, nid: str) -> str:
+        """Caixa privada do agente ``nid`` (ADR-17): ``<bus>/box/<nid>`` (bind RW isolado)."""
+        return os.path.join(str(self._ask_bus_dir), "box", nid)
+
+    def _sock_register(self, nid: str, argv) -> None:
+        """Cria o listener do socket da box do agente (só nós de agente: argv via bwrap)."""
+        if self._sock_server is None or not self._ask_bus_dir:
+            return
+        if not argv or argv[0] != "bwrap":  # shells não têm socket (não são agentes)
+            return
+        box = self._box_dir(nid)
+        try:
+            os.makedirs(box, mode=0o700, exist_ok=True)
+            self._sock_server.add_node(nid, box)
+        except OSError as exc:
+            _log.error("sock_register(%s) falhou: %s", nid, exc)
 
     # -- Maestro mode (Fase 6): comandos do agente-manager roteados pelo host (main thread) --
     MAESTRO_MAX_RECRUITS = 6  # limite anti-loop de recrutas por manager
@@ -3716,7 +3747,7 @@ class CanvasWindow:
 
     def _ask_hint(self, src: str, dst: str) -> None:
         """Avisa ambos os terminais que podem conversar pelo cabo (maestro-ask)."""
-        if self._ask_bus is None:
+        if self._sock_server is None:
             return
         for a, b in ((src, dst), (dst, src)):
             fr = self.frames.get(a)
@@ -3724,7 +3755,7 @@ class CanvasWindow:
             if term is not None:
                 term.feed(
                     f"\r\n\x1b[2m[maestro] cabo ligado a '{b}'. Para perguntar: "
-                    f'maestro-ask {b} "<sua pergunta>"\x1b[0m\r\n'.encode()
+                    f'"$MAESTRO_BIN/maestro-ask" {b} "<sua pergunta>"\x1b[0m\r\n'.encode()
                 )
 
     def _on_key(self, _c, keyval, _keycode, state):

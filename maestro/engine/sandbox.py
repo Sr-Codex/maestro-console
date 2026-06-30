@@ -64,6 +64,10 @@ def wrap(
         # interna (codex/bash). Sem isso, --die-with-parent sozinho VAZA netos (bubblewrap#529).
         "--unshare-pid",
         "--die-with-parent",  # rede de segurança: filhos morrem se o app morre
+        # ADR-17: dropar TODAS as capabilities fecha o remount-rw (bubblewrap#287) — o
+        # agente não consegue remontar o `--ro-bind /` nem o `bin/` para escrever.
+        "--cap-drop",
+        "ALL",
     ]
     if not allow_network:
         args += ["--unshare-net"]

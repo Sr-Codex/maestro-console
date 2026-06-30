@@ -4,6 +4,7 @@ Mocka só a criação de widget (`_new_agent_terminal`) e as primitivas de UI; e
 recruit/list/dismiss/wire/reassign + os gates de segurança (toggle, agente válido, limite).
 """
 
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -131,42 +132,67 @@ def test_comando_desconhecido():
     assert not _disp(w, "mgr", "explode", [])["ok"]
 
 
-def test_recruit_ponta_a_ponta_pela_mailbox(tmp_path):
-    """E2E REAL: o shim escreve o comando na mailbox; o host (_ask_tick → thread → _maestro_handle
-    → idle_add → dispatch) executa na main-thread e responde. Mocka SÓ a criação do widget."""
+def _run_via_socket(w, box_dir, frm, cmd, args, timeout=10):
+    """Sobe o SockServer ligado a `w._on_sock_request` + roda o shim numa thread, com loop GLib."""
     import threading
 
     from gi.repository import GLib
 
-    from maestro.engine.ask_bus import AskBus
+    from maestro.engine.ask_sock import SockServer
     from maestro.engine.maestri_client import run_cmd
 
-    bus_dir = tmp_path / "bus"
-    bus = AskBus(bus_dir)
-    w, created = _make_win()
-    w.model.set_node_cfg("mgr", "maestro", "1")
-    w._ask_bus = bus
-    w._ask_bus_dir = str(bus_dir)
-    w._ask_inflight = set()
-
-    # simula o AGENTE: roda o shim numa thread (ele bloqueia esperando a resposta na mailbox)
-    out = {}
+    srv = SockServer()
+    srv.add_node(frm if box_dir is None else os.path.basename(str(box_dir)), str(box_dir))
+    w._sock_server = srv
+    threading.Thread(target=srv.serve, args=(w._on_sock_request,), daemon=True).start()
+    out: dict = {}
 
     def agent():
-        out["resp"] = run_cmd(str(bus_dir), "mgr", "recruit", ["codex", "coder"], timeout=10)
+        out["resp"] = run_cmd(str(box_dir), frm, cmd, args, timeout=timeout)
 
     th = threading.Thread(target=agent, daemon=True)
     th.start()
-
     loop = GLib.MainLoop()
-    GLib.timeout_add(40, lambda: w._ask_tick() or True)  # host faz o poll da mailbox
-    GLib.timeout_add(80, lambda: th.is_alive() or loop.quit())  # encerra quando o agente respondeu
+    GLib.timeout_add(50, lambda: th.is_alive() or loop.quit())  # encerra quando o agente respondeu
     GLib.timeout_add(12000, loop.quit)  # rede de segurança
     loop.run()
     th.join(timeout=3)
+    srv.stop()
+    return out.get("resp", {})
 
-    assert out.get("resp", {}).get("ok"), out.get("resp")  # o agente recebeu OK pela mailbox
+
+def test_recruit_ponta_a_ponta_pelo_socket(tmp_path):
+    """E2E REAL: o shim conecta no SOCKET da box; o host (_on_sock_request → _maestro_handle
+    → idle_add → dispatch) executa na main-thread e responde. Mocka SÓ a criação do widget."""
+    box = tmp_path / "bus" / "box" / "mgr"
+    box.mkdir(parents=True)
+    w, created = _make_win()
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    w._ask_bus_dir = str(tmp_path / "bus")
+
+    resp = _run_via_socket(w, box, "mgr", "recruit", ["codex", "coder"])
+
+    assert resp.get("ok"), resp  # o agente recebeu OK pelo socket
     assert len(created) == 1  # criou exatamente 1 recruta
     nid = created[0][0]
     assert ("mgr", nid) in w.edges.list() or (nid, "mgr") in w.edges.list()  # cabo
     assert w.model.node_cfg(nid, "role") == "coder"  # papel atribuído
+
+
+def test_socket_anti_spoofing_no_canvas(tmp_path):
+    """IDENTIDADE POR CANAL: 'intruder' conecta no SEU socket mentindo frm='mgr' no payload.
+
+    O host carimba frm='intruder' (o canal), o gate rejeita (intruder não é manager), e
+    NADA é criado — o spoofing que existia na Fase 6 fica impossível por construção (ADR-17).
+    """
+    box_intruder = tmp_path / "bus" / "box" / "intruder"
+    box_intruder.mkdir(parents=True)
+    w, created = _make_win()
+    w.model.set_node_cfg("mgr", "maestro", "1")  # mgr é manager; intruder NÃO
+    w._ask_bus_dir = str(tmp_path / "bus")
+
+    resp = _run_via_socket(w, box_intruder, "mgr", "recruit", ["codex", "coder"])
+
+    assert not resp.get("ok")  # recusado
+    assert "Maestro" in (resp.get("error") or "")  # intruder não está em Maestro mode
+    assert created == []  # NADA foi criado em nome do mgr

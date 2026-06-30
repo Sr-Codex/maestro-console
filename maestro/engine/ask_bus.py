@@ -51,30 +51,34 @@ def new_id() -> str:
     return uuid.uuid4().hex
 
 
-def install_client(bus_dir: str | Path) -> Path:
-    """Copia o cliente ``ask_client.py`` como ``<bus>/maestro-ask`` (executável).
+def bin_dir(bus_dir: str | Path) -> Path:
+    """Diretório RO dos shims, compartilhado por todos os agentes: ``<bus>/bin`` (ADR-17)."""
+    return Path(bus_dir) / "bin"
 
-    O mailbox é montado rw no sandbox (shared_paths), então o agente roda
-    ``"$MAESTRO_ASK_BUS/maestro-ask" <nó> "<prompt>"``. Stdlib-only no cliente.
+
+def install_client(bus_dir: str | Path) -> Path:
+    """Copia o cliente ``ask_client.py`` como ``<bus>/bin/maestro-ask`` (executável).
+
+    Os shims ficam num ``<bus>/bin`` visível READ-ONLY (via o ``--ro-bind / /`` do
+    sandbox) e na PATH; cada agente os chama por ``"$MAESTRO_BIN/maestro-ask" ...``.
     """
     import shutil
 
-    bus = Path(bus_dir)
-    bus.mkdir(parents=True, exist_ok=True)
-    src = Path(__file__).with_name("ask_client.py")
-    dest = bus / "maestro-ask"
-    shutil.copyfile(src, dest)
+    b = bin_dir(bus_dir)
+    b.mkdir(parents=True, exist_ok=True)
+    dest = b / "maestro-ask"
+    shutil.copyfile(Path(__file__).with_name("ask_client.py"), dest)
     dest.chmod(0o755)
     return dest
 
 
 def install_maestri_client(bus_dir: str | Path) -> Path:
-    """Copia ``maestri_client.py`` como ``<bus>/maestri`` (executável) — CLI de Maestro mode."""
+    """Copia ``maestri_client.py`` como ``<bus>/bin/maestri`` (executável) — CLI de Maestro mode."""
     import shutil
 
-    bus = Path(bus_dir)
-    bus.mkdir(parents=True, exist_ok=True)
-    dest = bus / "maestri"
+    b = bin_dir(bus_dir)
+    b.mkdir(parents=True, exist_ok=True)
+    dest = b / "maestri"
     shutil.copyfile(Path(__file__).with_name("maestri_client.py"), dest)
     dest.chmod(0o755)
     return dest
@@ -90,15 +94,15 @@ def maestro_skill_text(node: str) -> str:
         f"{MAESTRO_SKILL_BEGIN}\n"
         "## Maestro mode (você gerencia uma equipe)\n\n"
         f"Você é o MANAGER '{node}'. Pode recrutar agentes no canvas, conectá-los e dispensá-los. "
-        'Chame SEMPRE pelo caminho absoluto `"$MAESTRO_ASK_BUS/maestri"` (a PATH pode ser resetada '
+        'Chame SEMPRE pelo caminho absoluto `"$MAESTRO_BIN/maestri"` (a PATH pode ser resetada '
         "pelo .bashrc):\n\n"
-        '    "$MAESTRO_ASK_BUS/maestri" recruit <agente> [papel]  # agente conectado ABAIXO\n'
-        '    "$MAESTRO_ASK_BUS/maestri" list                      # seus recrutas\n'
-        '    "$MAESTRO_ASK_BUS/maestri" reassign <nó> <papel>     # troca o papel\n'
-        '    "$MAESTRO_ASK_BUS/maestri" wire <a> [b]              # liga um cabo (b=você)\n'
-        '    "$MAESTRO_ASK_BUS/maestri" dismiss <nó>              # dispensa um recruta\n\n'
+        '    "$MAESTRO_BIN/maestri" recruit <agente> [papel]  # agente conectado ABAIXO\n'
+        '    "$MAESTRO_BIN/maestri" list                      # seus recrutas\n'
+        '    "$MAESTRO_BIN/maestri" reassign <nó> <papel>     # troca o papel\n'
+        '    "$MAESTRO_BIN/maestri" wire <a> [b]              # liga um cabo (b=você)\n'
+        '    "$MAESTRO_BIN/maestri" dismiss <nó>              # dispensa um recruta\n\n'
         "Cada recruta vira um terminal de agente real; fale com ele por cabo via "
-        '`"$MAESTRO_ASK_BUS/maestro-ask" <nó> "..."`. Recrute só o necessário; dispense ao fim.'
+        '`"$MAESTRO_BIN/maestro-ask" <nó> "..."`. Recrute só o necessário; dispense ao fim.'
         f"\n{MAESTRO_SKILL_END}"
     )
 
@@ -131,7 +135,7 @@ def ask_skill_text(node: str) -> str:
         "## Ferramenta: maestro-ask (falar com agentes conectados por cabo)\n\n"
         f"Você é o agente '{node}'. Quando um terminal estiver ligado a você por um "
         "CABO, você pode CONSULTAR esse outro agente rodando, no seu shell:\n\n"
-        '    "$MAESTRO_ASK_BUS/maestro-ask" <nó> "<sua pergunta>"\n\n'
+        '    "$MAESTRO_BIN/maestro-ask" <nó> "<sua pergunta>"\n\n'
         'Ele bloqueia até o outro agente responder e imprime "Answer from <nó>: ...". '
         "Use para delegar ou checar algo (ex.: pedir revisão). Use só os nós que "
         'aparecem na dica "[maestro] cabo ligado a \'X\'". Ao receber perguntas de '
@@ -196,6 +200,32 @@ def _check_id(rid: object) -> str:
     if not isinstance(rid, str) or not _SAFE_ID.match(rid):
         raise AskBusError(f"id inválido: {rid!r}")
     return rid
+
+
+def validate_req(req: AskRequest) -> None:
+    """Valida um pedido (entrada NÃO-confiável). Levanta AskBusError se inválido.
+
+    Usado tanto pelo transporte de arquivos (AskBus) quanto pelo de socket (host).
+    Não valida ``frm`` como identidade — no socket a identidade vem do CANAL (ADR-17);
+    aqui só checa forma (tamanho, cmd/args, depth).
+    """
+    _check_id(req.id)
+    if not req.frm or not isinstance(req.frm, str) or len(req.frm) > 200:
+        raise AskBusError("frm inválido")
+    if req.cmd:  # comando Maestro mode (to/prompt vazios; valida cmd/args)
+        if len(req.cmd) > 64 or not re.match(r"^[a-z][a-z0-9_-]*$", req.cmd):
+            raise AskBusError("cmd inválido")
+        if not isinstance(req.args, list) or len(req.args) > 16:
+            raise AskBusError("args inválidos")
+        if sum(len(str(a).encode("utf-8")) for a in req.args) > ASK_MAX_PROMPT_BYTES:
+            raise AskBusError("args excedem o limite")
+    else:  # ask normal: exige destino + prompt
+        if not req.to or not isinstance(req.to, str) or len(req.to) > 200:
+            raise AskBusError("to inválido")
+        if len(req.prompt.encode("utf-8")) > ASK_MAX_PROMPT_BYTES:
+            raise AskBusError(f"prompt excede {ASK_MAX_PROMPT_BYTES} bytes")
+    if req.depth < 0 or req.depth > 100:
+        raise AskBusError("depth inválido")
 
 
 class AskBus:
@@ -290,23 +320,7 @@ class AskBus:
 
     # -- validação (entrada não-confiável) --
     def _validate_req(self, req: AskRequest) -> None:
-        _check_id(req.id)
-        if not req.frm or not isinstance(req.frm, str) or len(req.frm) > 200:
-            raise AskBusError("frm inválido")
-        if req.cmd:  # comando Maestro mode (to/prompt vazios; valida cmd/args)
-            if len(req.cmd) > 64 or not re.match(r"^[a-z][a-z0-9_-]*$", req.cmd):
-                raise AskBusError("cmd inválido")
-            if not isinstance(req.args, list) or len(req.args) > 16:
-                raise AskBusError("args inválidos")
-            if sum(len(str(a).encode("utf-8")) for a in req.args) > ASK_MAX_PROMPT_BYTES:
-                raise AskBusError("args excedem o limite")
-        else:  # ask normal: exige destino + prompt
-            if not req.to or not isinstance(req.to, str) or len(req.to) > 200:
-                raise AskBusError("to inválido")
-            if len(req.prompt.encode("utf-8")) > ASK_MAX_PROMPT_BYTES:
-                raise AskBusError(f"prompt excede {ASK_MAX_PROMPT_BYTES} bytes")
-        if req.depth < 0 or req.depth > 100:
-            raise AskBusError("depth inválido")
+        validate_req(req)
 
     def _parse_resp(self, s: str) -> AskResponse:
         data = json.loads(s)
