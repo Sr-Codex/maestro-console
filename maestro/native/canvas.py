@@ -462,6 +462,10 @@ class CanvasWindow:
         self.win.set_default_size(1000, 600)
         key = Gtk.EventControllerKey()
         key.connect("key-pressed", self._on_key)
+        # CAPTURE: o atalho global (Ctrl+1.., Ctrl+Shift+W/A/L/P) é visto ANTES do VTE focado —
+        # senão o terminal em foco "come" a tecla e o atalho não dispara. _on_key devolve False
+        # p/ tudo que não trata, então a digitação normal segue indo pro terminal.
+        key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         self.win.add_controller(key)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -1801,6 +1805,10 @@ class CanvasWindow:
         self._place(frame, (bx, by), self.model.zoom())
         self.frames[nid] = frame
         self.order.append(nid)
+        if not self.model.node_cfg(nid, "shortcut"):  # atalho automático Ctrl+<n> (editável)
+            auto = self._auto_shortcut(nid)
+            if auto:
+                self.model.set_node_cfg(nid, "shortcut", auto)
         self._renumber_nodes()  # atualiza os números de posição (Ctrl+Shift+N) [A.2]
         self._mm_refresh()  # C1: novo nó aparece no minimapa
         self._autofit_all_groups()  # C2: se o nó nasceu dentro de um grupo, ele abraça
@@ -1976,6 +1984,16 @@ class CanvasWindow:
         if term is not None:
             term.grab_focus()
         self._focused_nid = nid
+
+    def _auto_shortcut(self, nid: str) -> str:
+        """Atalho automático Ctrl+<n> (n = 1..9): o menor dígito ainda livre entre os terminais.
+        Fica salvo (node_cfg 'shortcut') → aparece na config e pode ser alterado. >9 = vazio."""
+        used = {self.model.node_cfg(n, "shortcut") for n in self.frames if n != nid}
+        for d in range(1, 10):
+            accel = Gtk.accelerator_name(Gdk.KEY_0 + d, Gdk.ModifierType.CONTROL_MASK)
+            if accel not in used:
+                return accel
+        return ""
 
     def _shortcut_target(self, keyval: int, state) -> str | None:
         """nid cujo atalho custom (node_cfg 'shortcut') bate com a combinação atual, ou None.
