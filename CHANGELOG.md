@@ -3,6 +3,18 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.42.0] — Editar Terminal (Fase 3): Comando + Diretório + Variáveis + Atalho
+Aba **Detalhes** do diálogo "Editar Terminal", tudo por terminal e persistido (`node_cfg`).
+- **Comando custom** (qualquer nó): `bash -lc "<cmd>; exec bash -i"`; vazio = shell/agente padrão.
+- **Diretório de Trabalho** (cwd): no `spawn_async` (`working_directory`) + botão **Procurar…**
+  (`Gtk.FileDialog` de pasta).
+- **Variáveis de ambiente** (KEY=VALUE, uma por linha): mescladas ao ambiente herdado.
+- **Atalho (foco):** captura **qualquer combinação** (Ctrl/Alt/Shift+tecla, via `Gtk.accelerator_*`)
+  → foca aquele terminal de qualquer lugar (prevalece sobre o Ctrl+Shift+1-9 por ordem); **Limpar**.
+- **Respawn no mesmo widget** (pesquisa VTE 0.84): SIGHUP no process group → respawn no
+  `child-exited` (`reset` + `spawn_async`). Botão **↻ Reiniciar** + **auto-respawn no Salvar** se
+  comando/cwd/env mudarem. `make_terminal(argv, cwd, envv)` + `_spawn_into` reusável.
+
 ## [0.41.0] — Editar Terminal (Fase 2): Tema por terminal (+ global, Sistema/Escuro/Claro)
 - **70 temas:** os 4 base + **66 esquemas populares** (iTerm2-Color-Schemes, formato **ghostty**,
   MIT) parseados em `term_themes/schemes.json` (50 escuros + 16 claros: TokyoNight, Nord, One Dark,

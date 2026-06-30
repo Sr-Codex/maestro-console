@@ -16,6 +16,7 @@ import json
 import logging
 import math
 import os
+import signal
 import sys
 import threading
 import unicodedata
@@ -315,21 +316,20 @@ def _on_spawn_done(terminal, pid, error, argv):
             terminal.feed(f"\r\n[maestro] falha ao iniciar agente: {msg}\r\n".encode())
 
 
-def make_terminal(argv: list[str]) -> Vte.Terminal:
-    term = Vte.Terminal()
+def _spawn_into(term: Vte.Terminal, argv: list[str], cwd: str | None = None,
+                envv: list[str] | None = None) -> None:
+    """Dispara argv num Vte.Terminal já existente (cria PTY novo). cwd=working_directory,
+    envv=lista KEY=VALUE (None = herda). Usado por make_terminal e pelo respawn (Fase 3)."""
     term.spawn_async(
-        Vte.PtyFlags.DEFAULT,
-        None,
-        argv,
-        None,
-        GLib.SpawnFlags.DEFAULT,
-        None,
-        None,
-        -1,
-        None,
-        _on_spawn_done,
-        argv,
+        Vte.PtyFlags.DEFAULT, cwd, argv, envv, GLib.SpawnFlags.DEFAULT,
+        None, None, -1, None, _on_spawn_done, argv,
     )
+
+
+def make_terminal(argv: list[str], cwd: str | None = None,
+                  envv: list[str] | None = None) -> Vte.Terminal:
+    term = Vte.Terminal()
+    _spawn_into(term, argv, cwd, envv)
     return term
 
 
@@ -1035,15 +1035,11 @@ class CanvasWindow:
         name = Gtk.Entry()
         name.set_placeholder_text("Nome do Terminal")
         name.set_text(self.model.node_name(nid, ""))
-        det = page(
-            name,
-            soon("Comando — Fase 3"),
-            soon("Monitorar atividade — Fase 4"),
-            soon("Maestro (sub-orquestração) — Fase 6"),
-            soon("Atalho — Fase 3"),
-            soon("Diretório de Trabalho — Fase 3"),
-            soon("SSH Remoto — Fase 7"),
-        )
+        det = page(name)
+        det.append(self._editor_detalhes_section(nid, applies))
+        det.append(soon("Monitorar atividade — Fase 4"))
+        det.append(soon("Maestro (sub-orquestração) — Fase 6"))
+        det.append(soon("SSH Remoto — Fase 7"))
         stack.add_titled(det, "detalhes", "Detalhes")
         # — Aparência — (Fase 1: Fonte; Cor/Ícone nas próximas etapas; Tema na Fase 2)
         ap = page()
@@ -1452,6 +1448,103 @@ class CanvasWindow:
         return [(n, n.lower() + (" dark" if theme_is_dark(n) else " light"))
                 for n in theme_names()]
 
+    @staticmethod
+    def _accel_label(accel: str) -> str:
+        if not accel:
+            return "(nenhum)"
+        ok, kv, mods = Gtk.accelerator_parse(accel)
+        return Gtk.accelerator_get_label(kv, mods) if ok else accel
+
+    def _editor_detalhes_section(self, nid: str, applies: list) -> Gtk.Widget:
+        """Detalhes (Fase 3, Avançada): Comando, Diretório, Variáveis (env), Atalho + Reiniciar.
+        Auto-respawn no Salvar se comando/cwd/env mudarem (respawn no mesmo widget)."""
+        init = {k: self.model.node_cfg(nid, k) for k in ("command", "cwd", "env", "shortcut")}
+        st = {"shortcut": init["shortcut"]}
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+
+        box.append(self._editor_section_label("Comando"))
+        cmd = Gtk.Entry()
+        cmd.set_placeholder_text("vazio = shell/agente padrão (ex.: htop, python3)")
+        cmd.set_text(init["command"])
+        box.append(cmd)
+
+        box.append(self._editor_section_label("Diretório de Trabalho"))
+        drow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        cwd = Gtk.Entry()
+        cwd.set_hexpand(True)
+        cwd.set_placeholder_text("padrão (home)")
+        cwd.set_text(init["cwd"])
+        proc = Gtk.Button(label="Procurar…")
+
+        def pick_dir(_b):
+            dlg = Gtk.FileDialog()
+
+            def done(d, res):
+                try:
+                    folder = d.select_folder_finish(res)
+                except GLib.Error:
+                    return
+                if folder is not None and folder.get_path():
+                    cwd.set_text(folder.get_path())
+
+            dlg.select_folder(self.win, None, done)
+
+        proc.connect("clicked", pick_dir)
+        drow.append(cwd)
+        drow.append(proc)
+        box.append(drow)
+
+        box.append(self._editor_section_label("Variáveis (KEY=VALUE, uma por linha)"))
+        env_sc = Gtk.ScrolledWindow()
+        env_sc.set_min_content_height(54)
+        env_sc.set_max_content_height(90)
+        env_tv = Gtk.TextView()
+        env_tv.get_buffer().set_text(init["env"])
+        env_sc.set_child(env_tv)
+        box.append(env_sc)
+
+        box.append(self._editor_section_label("Atalho (foco)"))
+        srow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        slabel = Gtk.Label(xalign=0)
+        slabel.add_css_class("dim-label")
+
+        def refresh_sc():
+            slabel.set_text(self._accel_label(st["shortcut"]))
+
+        refresh_sc()
+        sset = Gtk.Button(label="Definir…")
+        sset.connect("clicked", lambda _b: self._capture_shortcut(
+            lambda a: (st.update(shortcut=a), refresh_sc())))
+        sclr = Gtk.Button(label="Limpar")
+        sclr.connect("clicked", lambda _b: (st.update(shortcut=""), refresh_sc()))
+        srow.append(slabel)
+        srow.append(sset)
+        srow.append(sclr)
+        box.append(srow)
+
+        def _env_text():
+            b = env_tv.get_buffer()
+            return b.get_text(b.get_start_iter(), b.get_end_iter(), False)
+
+        def _persist():
+            self.model.set_node_cfg(nid, "command", cmd.get_text().strip())
+            self.model.set_node_cfg(nid, "cwd", cwd.get_text().strip())
+            self.model.set_node_cfg(nid, "env", _env_text())
+            self.model.set_node_cfg(nid, "shortcut", st["shortcut"])
+
+        restart = Gtk.Button(label="↻ Reiniciar terminal (aplicar comando/cwd/env)")
+        restart.set_halign(Gtk.Align.START)
+        restart.connect("clicked", lambda _b: (_persist(), self._respawn_node(nid)))
+        box.append(restart)
+
+        def apply():
+            _persist()
+            if any(self.model.node_cfg(nid, k) != init[k] for k in ("command", "cwd", "env")):
+                self._respawn_node(nid)  # auto-respawn se comando/cwd/env mudaram
+
+        applies.append(apply)
+        return box
+
     def _editor_theme_section(self, nid: str, applies: list) -> Gtk.Widget:
         """Seção TEMA (Fase 2): seleciona um tema; o toggle GLOBAL decide o alcance — ligado =
         aplica a TODOS (vira o tema global); desligado = só ESTE terminal. "Seguir o global" tira
@@ -1664,7 +1757,11 @@ class CanvasWindow:
         # KurtJacobson). A tag _drag_nid identifica o head como alça de arrasto.
         head._drag_nid = nid
         self.heads[nid] = head
-        term = make_terminal(argv)
+        frame._base_argv = argv  # argv "natural" (shell/agente) p/ o respawn voltar a ele
+        term = make_terminal(  # comando/cwd/env por-nó (Fase 3)
+            self._effective_argv(nid, argv),
+            self.model.node_cfg(nid, "cwd") or None,
+            self._node_envv(nid))
         frame._term = term  # ref p/ remover de self.terms ao fechar o nó
         fc = Gtk.EventControllerFocus()
         fc.connect("enter", lambda _c, n=nid: self._on_term_focus(n))  # clicar/focar = selecionar
@@ -1879,6 +1976,46 @@ class CanvasWindow:
         if term is not None:
             term.grab_focus()
         self._focused_nid = nid
+
+    def _shortcut_target(self, keyval: int, state) -> str | None:
+        """nid cujo atalho custom (node_cfg 'shortcut') bate com a combinação atual, ou None.
+        Exige modificador (não rouba teclas normais). Serializa via Gtk.accelerator_name."""
+        mods = state & Gtk.accelerator_get_default_mod_mask()
+        if not mods:
+            return None
+        accel = Gtk.accelerator_name(keyval, mods)
+        for nid in self.frames:
+            if self.model.node_cfg(nid, "shortcut") == accel:
+                return nid
+        return None
+
+    def _capture_shortcut(self, on_done) -> None:
+        """Diálogo que captura a PRÓXIMA combinação (Ctrl/Alt/Shift + tecla) → accel string."""
+        win, box = self._dialog("Definir atalho")
+        box.append(Gtk.Label(label="Pressione a combinação (com Ctrl / Alt / Shift)…"))
+        box.append(Gtk.Label(label="Esc cancela.", xalign=0))
+        _mods_only = {
+            Gdk.KEY_Control_L, Gdk.KEY_Control_R, Gdk.KEY_Shift_L, Gdk.KEY_Shift_R,
+            Gdk.KEY_Alt_L, Gdk.KEY_Alt_R, Gdk.KEY_Super_L, Gdk.KEY_Super_R,
+        }
+
+        def pressed(_c, keyval, _kc, state):
+            if keyval == Gdk.KEY_Escape:
+                win.destroy()
+                return True
+            if keyval in _mods_only:
+                return True  # espera a tecla "real"
+            mods = state & Gtk.accelerator_get_default_mod_mask()
+            if not mods:
+                return True  # exige modificador (evita atalho de 1 tecla)
+            on_done(Gtk.accelerator_name(keyval, mods))
+            win.destroy()
+            return True
+
+        kc = Gtk.EventControllerKey()
+        kc.connect("key-pressed", pressed)
+        win.add_controller(kc)
+        win.present()
 
     def _focus_next_attention(self) -> None:
         if self._store is None:
@@ -2364,6 +2501,62 @@ class CanvasWindow:
         """Reaplica o tema a TODOS os terminais por-nó (override prevalece sobre o global)."""
         for nid in list(self.frames):
             self._apply_node_theme(nid)
+
+    # -- comando / diretório / env por terminal + respawn (Fase 3) --
+    def _effective_argv(self, nid: str, base: list[str]) -> list[str]:
+        """argv do terminal: comando custom (`bash -lc '<cmd>; exec bash -i'`) ou o base."""
+        cmd = self.model.node_cfg(nid, "command").strip()
+        return ["/bin/bash", "-lc", f"{cmd}; exec /bin/bash -i"] if cmd else base
+
+    def _node_argv(self, nid: str) -> list[str]:
+        frame = self.frames.get(nid)
+        base = getattr(frame, "_base_argv", ["/bin/bash"]) if frame is not None else ["/bin/bash"]
+        return self._effective_argv(nid, base)
+
+    def _node_envv(self, nid: str) -> list[str] | None:
+        """env custom (linhas KEY=VALUE em node_cfg 'env') mesclado ao ambiente; None = herda."""
+        raw = self.model.node_cfg(nid, "env").strip()
+        if not raw:
+            return None
+        env = dict(os.environ)
+        for line in raw.splitlines():
+            line = line.strip()
+            if "=" in line and not line.startswith("#"):
+                k, _, v = line.partition("=")
+                env[k.strip()] = v.strip()
+        return [f"{k}={v}" for k, v in env.items()]
+
+    def _respawn_node(self, nid: str) -> None:
+        """Reinicia o terminal no MESMO widget com o comando/cwd/env atuais (Fase 3, pesquisa
+        VTE 0.84): SIGHUP no process group → respawn no `child-exited` (um filho por vez)."""
+        frame = self.frames.get(nid)
+        term = getattr(frame, "_term", None) if frame is not None else None
+        if term is None:
+            return
+        argv = self._node_argv(nid)
+        cwd = self.model.node_cfg(nid, "cwd") or None
+        envv = self._node_envv(nid)
+
+        def _go():
+            term.reset(True, True)  # limpa tela + scrollback p/ um restart limpo
+            _spawn_into(term, argv, cwd, envv)
+
+        pty = term.get_pty()
+        if pty is None:  # sem filho rodando → respawn direto
+            _go()
+            return
+        hid = {}
+
+        def _on_exited(t, _status):
+            t.disconnect(hid["id"])
+            _go()
+
+        hid["id"] = term.connect("child-exited", _on_exited)
+        try:  # encerra o filho atual; o respawn acontece no child-exited
+            os.killpg(os.tcgetpgrp(pty.get_fd()), signal.SIGHUP)
+        except OSError:
+            term.disconnect(hid["id"])
+            _go()
 
     # -- fonte por terminal (override) + default global + zoom de fonte (VTE set_font/scale) --
     FONT_SCALE_MIN, FONT_SCALE_MAX = 0.25, 4.0  # clamp do VTE (vte-private.h)
@@ -2979,6 +3172,12 @@ class CanvasWindow:
         # Ctrl+Shift+A: pula pro próximo terminal que precisa de você (atenção) [A.2]
         if ctrl and shift and keyval in (Gdk.KEY_a, Gdk.KEY_A):
             self._focus_next_attention()
+            return True
+        # atalho CUSTOM por terminal (Fase 3): foca o nó cujo node_cfg 'shortcut' bate (prevalece
+        # sobre o por-ordem). Captura/compara via Gtk.accelerator_name (mesma serialização).
+        tgt = self._shortcut_target(keyval, state)
+        if tgt is not None:
+            self._focus_node(tgt)
             return True
         # Ctrl+Shift+1..9: foca o terminal N (posição na ordem) [A.2]
         if ctrl and shift and Gdk.KEY_1 <= keyval <= Gdk.KEY_9:
