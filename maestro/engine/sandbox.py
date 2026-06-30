@@ -60,7 +60,10 @@ def wrap(
         ws,  # workspace: leitura/escrita
         "--chdir",
         ws,
-        "--die-with-parent",  # mata filhos junto (timeout/encerramento)
+        # --unshare-pid: bwrap vira PID 1 do namespace → SIGKILL nele colapsa TODA a árvore
+        # interna (codex/bash). Sem isso, --die-with-parent sozinho VAZA netos (bubblewrap#529).
+        "--unshare-pid",
+        "--die-with-parent",  # rede de segurança: filhos morrem se o app morre
     ]
     if not allow_network:
         args += ["--unshare-net"]

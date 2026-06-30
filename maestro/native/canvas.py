@@ -51,7 +51,16 @@ from ..engine.notes import (  # noqa: E402
     md_wrap_toggle,
     note_to_file,
 )
+from ..engine.roles import (  # noqa: E402
+    discover_roles,
+    install_role_block,
+    load_role_library,
+    remove_role_block,
+    save_role_library,
+    write_role_sidecar,
+)
 from ..engine.state.store import Store  # noqa: E402
+from ..engine.teams import Role  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from ..engine.workspace_registry import WorkspaceRegistry  # noqa: E402
 from .agents import STATE_COLORS, agent_argv, installed_agents  # noqa: E402
@@ -314,6 +323,13 @@ def _on_spawn_done(terminal, pid, error, argv):
         _log.error("falha ao iniciar terminal do nó (argv=%r): %s", argv, msg)
         if terminal is not None:
             terminal.feed(f"\r\n[maestro] falha ao iniciar agente: {msg}\r\n".encode())
+    elif terminal is not None and isinstance(pid, int) and pid > 0:
+        terminal._child_pid = pid  # filho DIRETO (bash ou bwrap) — usado no respawn (Fase 3/5)
+        try:  # pidfd: handle À PROVA de reciclagem de PID (kernel ≥5.3) p/ sinalizar com segurança
+            terminal._pidfd = os.pidfd_open(pid)
+        except (OSError, AttributeError):
+            terminal._pidfd = None
+        terminal._respawn_state = "idle"  # spawn concluído
 
 
 def _spawn_into(term: Vte.Terminal, argv: list[str], cwd: str | None = None,
@@ -1044,11 +1060,10 @@ class CanvasWindow:
         ap.append(self._editor_icon_section(nid, applies))
         ap.append(self._editor_theme_section(nid, applies))
         stack.add_titled(ap, "aparencia", "Aparência")
-        # — Agente — (Fase 5)
-        stack.add_titled(
-            page(soon("Responsabilidade (role): atribuir/buscar, editar instruções, "
-                      "Descobrir, Remover — Fase 5")),
-            "agente", "Agente")
+        # — Agente — (Fase 5: responsabilidade/role)
+        ag = page()
+        ag.append(self._editor_agente_section(nid, applies))
+        stack.add_titled(ag, "agente", "Agente")
 
         # — rodapé: Cancelar / Salvar —
         foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -1289,7 +1304,7 @@ class CanvasWindow:
                 child = flow.get_first_child()
             q = search.get_text().strip().lower()
             shown = 0
-            for key, text in entries:
+            for key, text in (entries() if callable(entries) else entries):  # callable = lista viva
                 if q and q not in text:
                     continue
                 b = Gtk.Button()
@@ -1571,6 +1586,171 @@ class CanvasWindow:
         applies.append(apply)
         return box
 
+    @staticmethod
+    def _fill_rect(cr, w, h, hexc) -> None:
+        r, g, b = _hex_to_rgb(hexc)
+        cr.set_source_rgb(r / 255, g / 255, b / 255)
+        cr.rectangle(0, 0, w, h)
+        cr.fill()
+
+    def _role_edit_dialog(self, role, on_saved) -> None:
+        """Cria/edita um role (name, cor, prompt) na biblioteca. role=None → novo."""
+        win, box = self._dialog("Editar role" if role else "Novo role")
+        win.set_default_size(440, -1)
+        box.append(Gtk.Label(label="Nome", xalign=0))
+        name = Gtk.Entry()
+        name.set_placeholder_text("ex.: backend, reviewer…")
+        if role:
+            name.set_text(role.name)
+        box.append(name)
+        crow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        crow.append(Gtk.Label(label="Cor:"))
+        color = {"hex": role.badge() if role else "#3b82f6"}
+        sw = Gtk.DrawingArea()
+        sw.set_size_request(28, 20)
+        sw.set_draw_func(lambda _a, cr, w, h: self._fill_rect(cr, w, h, color["hex"]))
+        pick = Gtk.Button(label="Escolher…")
+
+        def pickc(_b):
+            dlg = Gtk.ColorDialog()
+            init = Gdk.RGBA()
+            init.parse(color["hex"])
+
+            def done(d, res):
+                try:
+                    rgba = d.choose_rgba_finish(res)
+                except GLib.Error:
+                    return
+                color["hex"] = (f"#{round(rgba.red * 255):02x}{round(rgba.green * 255):02x}"
+                                f"{round(rgba.blue * 255):02x}")
+                sw.queue_draw()
+
+            dlg.choose_rgba(win, init, None, done)
+
+        pick.connect("clicked", pickc)
+        crow.append(sw)
+        crow.append(pick)
+        box.append(crow)
+        box.append(Gtk.Label(label="Instruções (prompt)", xalign=0))
+        psc = Gtk.ScrolledWindow()
+        psc.set_min_content_height(120)
+        ptv = Gtk.TextView()
+        ptv.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        if role:
+            ptv.get_buffer().set_text(role.instruction)
+        psc.set_child(ptv)
+        box.append(psc)
+        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        foot.set_halign(Gtk.Align.END)
+        cancel = Gtk.Button(label="Cancelar")
+        cancel.connect("clicked", lambda _b: win.destroy())
+        save = Gtk.Button(label="Salvar")
+        save.add_css_class("suggested-action")
+
+        def do_save(_b):
+            nm = name.get_text().strip()
+            if not nm:
+                return
+            b = ptv.get_buffer()
+            prompt = b.get_text(b.get_start_iter(), b.get_end_iter(), False)
+            roles = [r for r in self._roles() if r.name != nm]
+            roles.append(Role(nm, "", prompt, color["hex"]))
+            self._save_roles(roles)
+            win.destroy()
+            on_saved(nm)
+
+        save.connect("clicked", do_save)
+        foot.append(cancel)
+        foot.append(save)
+        box.append(foot)
+        win.present()
+        name.grab_focus()
+
+    def _editor_agente_section(self, nid: str, applies: list) -> Gtk.Widget:
+        """Aba Agente (Fase 5): atribuir/buscar role (biblioteca), criar/editar, Descobrir (varre
+        o cwd), Remover. Aplica no Salvar (node_cfg 'role' + _apply_node_role)."""
+        st = {"role": self.model.node_cfg(nid, "role")}
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.append(self._editor_section_label("Responsabilidade (role)"))
+        cur = Gtk.Label(xalign=0)
+        cur.add_css_class("dim-label")
+
+        def refresh():
+            r = next((x for x in self._roles() if x.name == st["role"]), None)
+            cur.set_text(f"Atual: {r.name}" if r else "Atual: (nenhum)")
+
+        box.append(cur)
+
+        def role_entries():
+            return [(r.name, (r.name + " " + r.instruction).lower()) for r in self._roles()]
+
+        def role_render(name):
+            r = next((x for x in self._roles() if x.name == name), None)
+            col = r.badge() if r else "#888888"
+            bx = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+            da = Gtk.DrawingArea()
+            da.set_size_request(16, 16)
+            da.set_draw_func(lambda _a, cr, w, h, c=col: self._fill_rect(cr, w, h, c))
+            bx.append(da)
+            bx.append(Gtk.Label(label=name))
+            return bx
+
+        def assign(name):
+            st["role"] = name
+            refresh()
+
+        row1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        row1.append(self._search_picker("🔎 Atribuir…", role_entries, role_render, assign))
+        rem = Gtk.Button(label="Remover")
+        rem.connect("clicked", lambda _b: assign(""))
+        row1.append(rem)
+        box.append(row1)
+
+        row2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        new = Gtk.Button(label="Novo role…")
+        new.connect("clicked", lambda _b: self._role_edit_dialog(None, assign))
+        edit = Gtk.Button(label="Editar…")
+
+        def do_edit(_b):
+            r = next((x for x in self._roles() if x.name == st["role"]), None)
+            if r is not None:
+                self._role_edit_dialog(r, assign)
+
+        edit.connect("clicked", do_edit)
+        disc = Gtk.Button(label="🔎 Descobrir")
+        disc_lbl = Gtk.Label(xalign=0)
+        disc_lbl.add_css_class("dim-label")
+
+        def do_discover(_b):
+            cwd = self.model.node_cfg(nid, "cwd") or str(Path.home())
+            found = discover_roles(cwd)
+            if found:
+                lib = {r.name: r for r in self._roles()}
+                for r in found:
+                    lib[r.name] = r
+                self._save_roles(list(lib.values()))
+            disc_lbl.set_text(
+                f"{len(found)} role(s) importado(s) do cwd" if found else "nenhum role no cwd")
+
+        disc.connect("clicked", do_discover)
+        row2.append(new)
+        row2.append(edit)
+        row2.append(disc)
+        box.append(row2)
+        box.append(disc_lbl)
+
+        refresh()
+
+        def apply():
+            changed = self.model.node_cfg(nid, "role") != st["role"]
+            self.model.set_node_cfg(nid, "role", st["role"])
+            self._apply_node_role(nid)  # escreve os arquivos de instrução + accent
+            if changed and self._role_targets(nid):  # M4: só nó-AGENTE reinicia (shell não injeta)
+                self._respawn_node(nid)  # reinicia → a IA relê o role no próximo start
+
+        applies.append(apply)
+        return box
+
     def _editor_theme_section(self, nid: str, applies: list) -> Gtk.Widget:
         """Seção TEMA (Fase 2): seleciona um tema; o toggle GLOBAL decide o alcance — ligado =
         aplica a TODOS (vira o tema global); desligado = só ESTE terminal. "Seguir o global" tira
@@ -1789,6 +1969,11 @@ class CanvasWindow:
             self.model.node_cfg(nid, "cwd") or None,
             self._node_envv(nid))
         frame._term = term  # ref p/ remover de self.terms ao fechar o nó
+        term._respawn_state = "idle"  # state machine do respawn (hardening defensivo)
+        term._respawn_pending = False
+        term._respawn_force_src = None
+        term._destroyed = False
+        term.connect("child-exited", self._on_child_exited, nid)  # PERSISTENTE (zera o PID)
         fc = Gtk.EventControllerFocus()
         fc.connect("enter", lambda _c, n=nid: self._on_term_focus(n))  # clicar/focar = selecionar
         fc.connect("leave", lambda _c, n=nid: self._on_term_unfocus(n))  # monitorar só desfocado
@@ -1816,6 +2001,7 @@ class CanvasWindow:
         if nicon:
             self._apply_node_icon(nid, nicon)
         self._apply_node_theme(nid)  # tema por-nó (override) ou global — Fase 2
+        self._apply_node_role(nid)  # role (Fase 5): accent + sidecar (injeção é no spawn do agente)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(head)
         box.append(term)
@@ -1979,6 +2165,20 @@ class CanvasWindow:
         """
         self._set_node_monitor(nid, False)  # para o monitor de atividade (Fase 4)
         self._mon_alerted.discard(nid)
+        _t = getattr(self.frames.get(nid), "_term", None)
+        if _t is not None:  # H1: invalida respawn em voo (não roda _go() em widget destruído)
+            _t._destroyed = True
+            _src = getattr(_t, "_respawn_force_src", None)
+            if _src:
+                GLib.source_remove(_src)
+                _t._respawn_force_src = None
+            _fd = getattr(_t, "_pidfd", None)
+            if _fd is not None:
+                try:
+                    os.close(_fd)
+                except OSError:
+                    pass
+                _t._pidfd = None
         frame = self.frames.pop(nid, None)
         if frame is None:
             return
@@ -2570,37 +2770,85 @@ class CanvasWindow:
                 env[k.strip()] = v.strip()
         return [f"{k}={v}" for k, v in env.items()]
 
-    def _respawn_node(self, nid: str) -> None:
-        """Reinicia o terminal no MESMO widget com o comando/cwd/env atuais (Fase 3, pesquisa
-        VTE 0.84): SIGHUP no process group → respawn no `child-exited` (um filho por vez)."""
+    @staticmethod
+    def _signal_child(term, sig) -> bool:
+        """Sinaliza o filho via PIDFD (à prova de reciclagem) ou, na falta, pelo PID guardado.
+        Nunca sinaliza um PID nulo (reciclado). Devolve True se enviou."""
+        fd = getattr(term, "_pidfd", None)
+        if fd is not None:
+            try:
+                signal.pidfd_send_signal(fd, sig)
+                return True
+            except (ProcessLookupError, OSError):
+                return False
+        pid = getattr(term, "_child_pid", None)
+        if pid:
+            try:
+                os.kill(pid, sig)
+                return True
+            except OSError:
+                return False
+        return False
+
+    def _on_child_exited(self, term, _status, nid) -> None:
+        """Handler PERSISTENTE de child-exited (1x por terminal). Invalida o PID (já reapeado →
+        reciclável) e, se havia um restart pendente, respawna DEFERIDO (fora do stack do sinal)."""
+        fd = getattr(term, "_pidfd", None)
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        term._pidfd = None
+        term._child_pid = None
+        src = getattr(term, "_respawn_force_src", None)
+        if src:
+            GLib.source_remove(src)
+            term._respawn_force_src = None
+        want = term._respawn_state == "killing" or getattr(term, "_respawn_pending", False)
+        term._respawn_state = "idle"
+        term._respawn_pending = False
+        if want and not getattr(term, "_destroyed", False) and nid in self.frames:
+            GLib.idle_add(self._do_respawn, nid)  # defere: VTE ainda desmonta o filho/PTY antigos
+
+    def _do_respawn(self, nid: str) -> bool:
         frame = self.frames.get(nid)
         term = getattr(frame, "_term", None) if frame is not None else None
-        if term is None:
-            return
-        argv = self._node_argv(nid)
+        if term is None or getattr(term, "_destroyed", False):
+            return False
         cwd = self.model.node_cfg(nid, "cwd") or None
-        envv = self._node_envv(nid)
+        if cwd and not os.path.isdir(cwd):  # M6: cwd inválido → herda (não falha o spawn)
+            cwd = None
+        if nid in self._mon:  # M1: o BANNER do restart não deve virar falso "parou"
+            self._mon[nid]["skip"] = True
+        term.reset(True, True)  # limpa tela + scrollback p/ um restart limpo
+        _spawn_into(term, self._node_argv(nid), cwd, self._node_envv(nid))
+        return False  # idle one-shot
 
-        def _go():
-            term.reset(True, True)  # limpa tela + scrollback p/ um restart limpo
-            _spawn_into(term, argv, cwd, envv)
-
-        pty = term.get_pty()
-        if pty is None:  # sem filho rodando → respawn direto
-            _go()
+    def _respawn_node(self, nid: str) -> None:
+        """Reinicia o terminal no MESMO widget (state machine — 1 filho por vez). Mata o filho
+        DIRETO via pidfd/PID (bash no shell OU **bwrap**; o sandbox usa --unshare-pid p/ o SIGKILL
+        colapsar o namespace). O respawn em si só acontece no child-exited (C1/C2/H1)."""
+        frame = self.frames.get(nid)
+        term = getattr(frame, "_term", None) if frame is not None else None
+        if term is None or getattr(term, "_destroyed", False):
             return
-        hid = {}
+        if getattr(term, "_respawn_state", "idle") == "killing":
+            term._respawn_pending = True  # C1: coalesce — não dispara um 2º respawn
+            return
+        if not getattr(term, "_child_pid", None):  # sem filho vivo conhecido → respawn direto
+            self._do_respawn(nid)
+            return
+        term._respawn_state = "killing"
+        self._signal_child(term, signal.SIGTERM)
 
-        def _on_exited(t, _status):
-            t.disconnect(hid["id"])
-            _go()
+        def _force_kill():
+            term._respawn_force_src = None
+            if term._respawn_state == "killing":  # ainda não saiu → SIGKILL (com --unshare-pid
+                self._signal_child(term, signal.SIGKILL)  # colapsa o namespace do bwrap)
+            return False
 
-        hid["id"] = term.connect("child-exited", _on_exited)
-        try:  # encerra o filho atual; o respawn acontece no child-exited
-            os.killpg(os.tcgetpgrp(pty.get_fd()), signal.SIGHUP)
-        except OSError:
-            term.disconnect(hid["id"])
-            _go()
+        term._respawn_force_src = GLib.timeout_add(1500, _force_kill)
 
     # -- fonte por terminal (override) + default global + zoom de fonte (VTE set_font/scale) --
     FONT_SCALE_MIN, FONT_SCALE_MAX = 0.25, 4.0  # clamp do VTE (vte-private.h)
@@ -2779,6 +3027,62 @@ class CanvasWindow:
     def _node_ws(self, nid: str):
         base_home = Path(self._ask_bus_dir).parent
         return Workspace(str(base_home / "workspaces")).path(nid)
+
+    # -- Responsabilidades (roles) por terminal (Fase 5) --
+    @staticmethod
+    def _role_lib_path() -> Path:
+        return Path.home() / ".config" / "maestro-console" / "roles.json"
+
+    def _roles(self) -> list:
+        """Biblioteca de papéis (arquivo + built-in)."""
+        return load_role_library(self._role_lib_path())
+
+    def _save_roles(self, roles: list) -> None:
+        save_role_library(self._role_lib_path(), roles)
+
+    def _node_role(self, nid: str):
+        """Role atribuído ao terminal (por nome, da biblioteca), ou None."""
+        name = self.model.node_cfg(nid, "role")
+        if not name:
+            return None
+        return next((r for r in self._roles() if r.name == name), None)
+
+    def _role_targets(self, nid: str) -> list[str]:
+        """Onde ESCREVEMOS o bloco de role: SÓ o workspace ISOLADO do agente (nosso). NUNCA o
+        AGENTS.md/CLAUDE.md do cwd do usuário (respeita o projeto — o cwd recebe só o sidecar
+        .maestri/role.json). Logo: o role vale no MODO AGENTE (codex manual no projeto não pega)."""
+        if self._ask_bus_dir:
+            wsp = self._node_ws(nid)
+            if wsp.is_dir():
+                return [str(wsp)]
+        return []
+
+    def _apply_node_role(self, nid: str) -> None:
+        """Materializa o role: bloco MARCADO (append seguro) no CLAUDE.md/AGENTS.md do cwd e do
+        workspace + sidecar `.maestri/role.json` no cwd + accent = badge. role None = desatribui."""
+        role = self._node_role(nid)
+        targets = self._role_targets(nid)
+        if role is None:  # desatribui: tira o bloco marcado (preserva o resto)
+            for t in targets:
+                try:
+                    remove_role_block(t)
+                except OSError:
+                    pass
+            return
+        for t in targets:
+            try:
+                install_role_block(t, role)
+            except OSError:
+                pass
+        cwd = self.model.node_cfg(nid, "cwd")
+        if cwd and targets:  # M4: sidecar só p/ nó-AGENTE (não cria .maestri no repo de um shell)
+            try:
+                write_role_sidecar(cwd, role)
+            except OSError:
+                pass
+        if not self.model.node_cfg(nid, "color"):  # M2: não sobrescreve o accent que o usuário pôs
+            self.model.set_node_cfg(nid, "color", role.badge())
+            self._apply_node_color(nid, role.badge())
 
     def _materialize_node_notes(self, nid: str) -> None:
         """Grava as notas ligadas ao nó como notes/<id>.md no workspace + atualiza o manifesto."""
@@ -2975,6 +3279,9 @@ class CanvasWindow:
         if st is None:
             return False
         st["quiet_id"] = None
+        if st.pop("skip", False):  # M1: ignora a quiescência do BANNER de restart (sem falso aviso)
+            st["active"] = False
+            return False
         if not st["active"] or self._focused_nid == nid:
             st["active"] = False
             return False
@@ -3772,6 +4079,7 @@ class CanvasWindow:
         base_home = Path(self._ask_bus_dir).parent
         wsp = Workspace(str(base_home / "workspaces")).create(nid)
         install_ask_skill(wsp, nid)  # ensina o maestro-ask ao novo agente
+        # (role recém-criado é vazio; a injeção do role acontece em _add_node → _apply_node_role)
         argv = agent_argv(profiles[base], str(wsp), node=nid, ask_bus_dir=self._ask_bus_dir)
         self._add_node(nid, nid, argv, default=self._next_node_default())
         self.model.add_to_roster(nid, "agent", base)  # persiste -> volta ao reabrir
@@ -4985,6 +5293,7 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
                 continue
             wsp = ws.create(nid)
             install_ask_skill(wsp, nid)  # ensina o agente a usar o maestro-ask
+            # (a injeção do role é feita em _add_node → _apply_node_role, na ordem correta)
             if nid != base and nid not in controller.agents:  # instância extra (runtime)
                 try:
                     controller.add_agent_instance(nid, base)
