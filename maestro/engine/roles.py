@@ -63,3 +63,138 @@ def write_role_files(workspace: str | Path, role: Role) -> dict[str, str]:
         p.write_text(md)
         paths[fname] = str(p)
     return paths
+
+
+# -- Fase 5: biblioteca reusável + sidecar portátil .maestri/role.json + Discover --
+def role_from_sidecar(d: dict) -> Role:
+    """Role a partir de um dict de sidecar (inverso de role_sidecar). Tolerante a chaves."""
+    return Role(
+        name=str(d.get("name", "")).strip(),
+        agent=str(d.get("agent", "")),
+        instruction=str(d.get("prompt", d.get("instruction", ""))),
+        color=str(d.get("color", d.get("badgeColor", ""))),
+    )
+
+
+def builtin_roles() -> list[Role]:
+    """Papéis-semente da biblioteca (dos teams built-in), deduplicados por nome."""
+    from .teams import BUILTIN_TEAMS
+
+    seen: dict[str, Role] = {}
+    for team in BUILTIN_TEAMS.values():
+        for r in team.roles:
+            seen.setdefault(r.name, r)  # 1º papel com o nome vence
+    return list(seen.values())
+
+
+def load_role_library(path: str | Path) -> list[Role]:
+    """Biblioteca de papéis (JSON). Se o arquivo não existe, devolve os built-in."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        roles = [role_from_sidecar(d) for d in data if d.get("name")]
+        return roles or builtin_roles()
+    except (OSError, ValueError):
+        return builtin_roles()
+
+
+def save_role_library(path: str | Path, roles: list[Role]) -> None:
+    """Salva a biblioteca de forma ATÔMICA (temp + os.replace) — um crash no meio não trunca
+    o arquivo nem apaga os papéis custom (H2)."""
+    import os
+    import tempfile
+
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    data = json.dumps([role_sidecar(r) for r in roles], ensure_ascii=False, indent=2) + "\n"
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".roles-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(data)
+        os.replace(tmp, p)  # rename atômico: o leitor vê o arquivo antigo OU o novo, nunca metade
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def write_role_sidecar(directory: str | Path, role: Role) -> str:
+    """Escreve o sidecar PORTÁTIL `.maestri/role.json` no diretório (cwd do terminal)."""
+    d = Path(directory) / ".maestri"
+    d.mkdir(parents=True, exist_ok=True)
+    rj = d / "role.json"
+    rj.write_text(json.dumps(role_sidecar(role), ensure_ascii=False, indent=2) + "\n")
+    return str(rj)
+
+
+ROLE_BLOCK_BEGIN = "<!-- maestro-role:begin -->"
+ROLE_BLOCK_END = "<!-- maestro-role:end -->"
+
+
+def role_block_text(role: Role) -> str:
+    """Bloco MARCADO com o papel — inserido no CLAUDE.md/AGENTS.md (a IA lê no start)."""
+    return (
+        f"{ROLE_BLOCK_BEGIN}\n"
+        f"## Seu papel: {role.name}\n\n"
+        f"{role.instruction}\n"
+        f"{ROLE_BLOCK_END}"
+    )
+
+
+def _replace_block(existing: str, block: str) -> str:
+    """Substitui o bloco marcado (ou anexa, se não existe) — NÃO sobrescreve o resto."""
+    if ROLE_BLOCK_BEGIN in existing and ROLE_BLOCK_END in existing:
+        pre = existing.split(ROLE_BLOCK_BEGIN, 1)[0].rstrip("\n")
+        post = existing.split(ROLE_BLOCK_END, 1)[1].lstrip("\n")
+        joined = f"{pre}\n\n{block}\n"
+        return f"{joined}\n{post}" if post else joined
+    sep = "" if not existing or existing.endswith("\n") else "\n"
+    return f"{existing}{sep}\n{block}\n"
+
+
+def install_role_block(target_dir: str | Path, role: Role) -> None:
+    """Insere/atualiza o bloco de role em CLAUDE.md e AGENTS.md de `target_dir` (append seguro)."""
+    d = Path(target_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    block = role_block_text(role)
+    for fname in ("CLAUDE.md", "AGENTS.md"):
+        p = d / fname
+        existing = p.read_text(encoding="utf-8") if p.exists() else ""
+        p.write_text(_replace_block(existing, block), encoding="utf-8")
+
+
+def remove_role_block(target_dir: str | Path) -> None:
+    """Remove o bloco de role marcado (desatribuir) — preserva o resto do arquivo."""
+    for fname in ("CLAUDE.md", "AGENTS.md"):
+        p = Path(target_dir) / fname
+        if not p.exists():
+            continue
+        existing = p.read_text(encoding="utf-8")
+        if ROLE_BLOCK_BEGIN in existing and ROLE_BLOCK_END in existing:
+            pre = existing.split(ROLE_BLOCK_BEGIN, 1)[0].rstrip("\n")
+            post = existing.split(ROLE_BLOCK_END, 1)[1].lstrip("\n")
+            p.write_text(f"{pre}\n{post}" if post else f"{pre}\n", encoding="utf-8")
+
+
+def discover_roles(cwd: str | Path) -> list[Role]:
+    """Varre o cwd por papéis: `role.json`, `.maestri/role.json` e `*/.maestri/role.json`
+    (branches de colegas). Deduplicado por nome."""
+    base = Path(cwd)
+    candidates = [base / "role.json", base / ".maestri" / "role.json"]
+    try:
+        for sub in base.iterdir():
+            if sub.is_dir():
+                candidates.append(sub / ".maestri" / "role.json")
+    except OSError:
+        pass
+    found: dict[str, Role] = {}
+    for c in candidates:
+        try:
+            if c.is_file():
+                r = role_from_sidecar(json.loads(c.read_text(encoding="utf-8")))
+                if r.name:
+                    found.setdefault(r.name, r)
+        except (OSError, ValueError):
+            continue
+    return list(found.values())

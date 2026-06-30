@@ -71,3 +71,50 @@ def test_builtin_roles_tem_badge_default(tmp_path):
     badges = {r.name: r.badge() for r in cr.roles}
     assert badges == {"coder": "#3b82f6", "reviewer": "#f59e0b"}
     store.close()
+
+
+def test_biblioteca_e_discover(tmp_path):
+    from maestro.engine.roles import (
+        builtin_roles,
+        discover_roles,
+        load_role_library,
+        save_role_library,
+        write_role_sidecar,
+    )
+
+    assert {r.name for r in builtin_roles()} >= {"coder", "reviewer", "planner"}
+    # sidecar portátil .maestri/role.json + discover (raiz e subdir)
+    r = Role("backend", "claude", "Implemente a API.", "#3b82f6")
+    write_role_sidecar(tmp_path, r)
+    sub = tmp_path / "teammate"
+    sub.mkdir()
+    write_role_sidecar(sub, Role("frontend", "codex", "UI.", "#22c55e"))
+    names = {x.name for x in discover_roles(tmp_path)}
+    assert names == {"backend", "frontend"}
+    # biblioteca: salva e recarrega preservando o prompt
+    lib = tmp_path / "roles.json"
+    save_role_library(lib, [*builtin_roles(), r])
+    loaded = load_role_library(lib)
+    assert any(x.name == "backend" and x.instruction == "Implemente a API." for x in loaded)
+    # arquivo ausente -> built-in
+    assert {x.name for x in load_role_library(tmp_path / "nope.json")} >= {"coder"}
+
+
+def test_install_role_block_nao_sobrescreve(tmp_path):
+    from maestro.engine.roles import install_role_block, remove_role_block
+    # arquivo de projeto pré-existente
+    agents = tmp_path / "AGENTS.md"
+    agents.write_text("# Meu projeto\n\nregras importantes do usuário\n", encoding="utf-8")
+    install_role_block(tmp_path, Role("coder", "claude", "Implemente.", "#3b82f6"))
+    txt = agents.read_text(encoding="utf-8")
+    assert "regras importantes do usuário" in txt  # preserva o conteúdo do usuário
+    assert "Seu papel: coder" in txt and "Implemente." in txt
+    # reatribuir ATUALIZA o bloco (não duplica)
+    install_role_block(tmp_path, Role("reviewer", "codex", "Revise.", "#f59e0b"))
+    txt = agents.read_text(encoding="utf-8")
+    assert txt.count("maestro-role:begin") == 1 and "Seu papel: reviewer" in txt
+    assert "coder" not in txt and "regras importantes do usuário" in txt
+    # remover tira só o bloco
+    remove_role_block(tmp_path)
+    txt = agents.read_text(encoding="utf-8")
+    assert "maestro-role" not in txt and "regras importantes do usuário" in txt

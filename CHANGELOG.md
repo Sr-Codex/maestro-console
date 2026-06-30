@@ -3,6 +3,27 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.44.0] — Editar Terminal (Fase 5): Responsabilidades (roles) + hardening defensivo
+**Fase 5 — roles por terminal** (aba Agente do editor):
+- **Biblioteca de papéis** reusável (`~/.config/maestro-console/roles.json`, built-in coder/reviewer/
+  planner) + **criar/editar** (nome, cor, prompt) + **Atribuir/buscar** (picker com swatch) + **Remover**.
+- **Injeção:** ao atribuir, escreve um **bloco MARCADO** (`<!-- maestro-role -->`, append seguro —
+  não sobrescreve o seu projeto) no `CLAUDE.md`/`AGENTS.md` **do workspace ISOLADO do agente** (a IA
+  lê no start). **Respeita o seu projeto:** nunca toca no `AGENTS.md` do seu cwd. Sidecar portátil
+  `.maestri/role.json` + cor accent = badge do role. **Auto-reinicia** o agente p/ reler.
+- **Descobrir:** varre o cwd por `role.json`/`.maestri/` (multi-import). Engine `roles.py` testado.
+
+**Hardening defensivo** (auditoria com pesquisa + revisão adversarial):
+- **Respawn — state machine** (1 filho por vez; duplo Salvar coalesce; respawn só no `child-exited`,
+  deferido): fecha o **duplo-spawn** e o **PID reciclado** (handler persistente zera o `_child_pid`;
+  sinaliza via **pidfd** à prova de reciclagem; nunca mata PID nulo) e o **crash ao fechar durante o
+  respawn** (`_destroyed` + cancela timers no close).
+- **Sandbox `--unshare-pid`:** SIGKILL no bwrap colapsa o namespace → não vaza mais o processo interno
+  (bubblewrap#529).
+- **`roles.json` atômico** (temp + `os.replace`): crash no meio não apaga a biblioteca.
+- Accent do usuário **não** é sobrescrito pelo role; role em **shell** não cria `.maestri`/reinicia à
+  toa; monitor **não** dá falso "parou" pós-restart; **cwd** inexistente herda (não falha o spawn).
+
 ## [0.43.0] — Editar Terminal (Fase 4): Monitorar atividade (+ som)
 - **Monitorar atividade** por terminal (toggle na aba Detalhes + tempo de quietude): observa o
   `contents-changed` e, quando o terminal **para de produzir output estando FORA de foco** (e não
