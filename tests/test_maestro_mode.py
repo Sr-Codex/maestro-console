@@ -63,6 +63,7 @@ def _make_win():
         return _tick[0]
 
     w._maestro_clock = _clock
+    w._sock_server = None  # vigilância (Etapa 4) — testes ligam quando precisam
     w.closed = []
     created = []
 
@@ -280,6 +281,63 @@ def test_maestro_exec_roteia_hitl(tmp_path):
     CanvasWindow._maestro_exec(w, req, res, done)
     assert calls == ["mgr"] and not done.is_set()  # roteou p/ HITL, não despachou direto
     assert created == []  # nada criado sem a decisão humana
+
+
+def test_fleet_hud_text(tmp_path):
+    """HUD: nº de agentes, profundidade máxima e aviso de ciclo."""
+    w, _ = _make_win()
+    w._agent_nids = {"a1", "a2"}
+    w._recruited_by = {"a1": "mgr", "a2": "a1"}  # a2 está a 2 níveis
+    txt = w._fleet_hud_text()
+    assert "2/" in txt and "prof 2" in txt and "ciclo" not in txt
+    w.edges._e = [("a", "b"), ("b", "c"), ("c", "a")]  # fecha um ciclo
+    assert "ciclo" in w._fleet_hud_text()
+
+
+def test_anomaly_tick_dispara_killswitch(tmp_path):
+    """Vigilância ATIVA: rajada de recruit_blocked → kill-switch automático (não passivo)."""
+    import signal
+    import time as _time
+
+    from maestro.engine.maestro_audit import append_event, read_events
+
+    w, _ = _make_win()
+    w._ask_bus_dir = str(tmp_path)
+    w._sock_server = object()  # vigilância ligada
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    w._agent_nids = {"a1"}
+    w.frames = {
+        "a1": SimpleNamespace(_term=SimpleNamespace()),
+        "mgr": SimpleNamespace(_term=None),
+    }
+    sigs = []
+    w._signal_child = lambda term, sig: (sigs.append(sig) or True)
+    now = _time.time()
+    for i in range(8):  # rajada de bloqueios recentes
+        append_event(tmp_path, "recruit_blocked", now=now - i, manager="mgr")
+
+    assert CanvasWindow._anomaly_tick(w) is True  # o tick continua
+    assert sigs == [signal.SIGKILL]  # matou o fleet automaticamente
+    assert not w.model.node_cfg("mgr", "maestro")  # desarmou os managers
+    assert any(e["event"] == "anomaly_killswitch" for e in read_events(tmp_path))
+
+
+def test_anomaly_tick_quieto_sem_burst(tmp_path):
+    """Sem rajada, o tick NÃO mata ninguém (não é trigger-happy)."""
+    import time as _time
+
+    from maestro.engine.maestro_audit import append_event
+
+    w, _ = _make_win()
+    w._ask_bus_dir = str(tmp_path)
+    w._sock_server = object()
+    w._agent_nids = {"a1"}
+    w.frames = {"a1": SimpleNamespace(_term=SimpleNamespace())}
+    sigs = []
+    w._signal_child = lambda term, sig: (sigs.append(sig) or True)
+    append_event(tmp_path, "recruit_blocked", now=_time.time(), manager="mgr")  # 1 só
+    CanvasWindow._anomaly_tick(w)
+    assert sigs == []  # nada morto
 
 
 def test_recruit_audita_sucesso(tmp_path):

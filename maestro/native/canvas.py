@@ -45,7 +45,8 @@ from ..engine.ask_bus import (  # noqa: E402
     validate_req,
 )
 from ..engine.ask_sock import SockServer  # noqa: E402
-from ..engine.maestro_audit import append_event  # noqa: E402
+from ..engine.maestro_audit import append_event, read_events  # noqa: E402
+from ..engine.maestro_guard import has_cycle, spawn_anomaly  # noqa: E402
 from ..engine.ask_router import AskRouter, policy_from_env  # noqa: E402
 from ..engine.attention import attention_items, notify  # noqa: E402
 from ..engine.envelope import EnvelopeState  # noqa: E402
@@ -568,6 +569,7 @@ class CanvasWindow:
         overlay.add_overlay(self._minimap)
         overlay.add_overlay(self._build_fab())  # barra flutuante de ferramentas (topo-centro)
         overlay.add_overlay(self._build_zoom_capsule())  # zoom — cápsula inferior-esquerda
+        overlay.add_overlay(self._build_fleet_hud())  # HUD do fleet (topo-direita) — ADR-17 Etapa 4
         overlay.add_overlay(self._build_note_ctx())  # 2ª pílula: contexto da NOTA selecionada
         overlay.add_overlay(self._build_node_ctx())  # 2ª pílula: contexto do TERMINAL selecionado
         root.append(overlay)
@@ -626,6 +628,8 @@ class CanvasWindow:
             ".fab-btn:disabled { opacity: 0.35; }",
             ".fab-run { color: #89b4fa; }",  # o play (azul)
             ".fab-stop { color: #f38ba0; }",  # kill-switch (vermelho)
+            ".fleet-hud { background: rgba(30,30,46,0.85); color: #cdd6f4; "
+            "padding: 3px 10px; border-radius: 10px; font-size: 12px; }",  # HUD do fleet
             ".fab-attn { color: #f9e2af; font-size: 12px; padding: 0 4px; }",  # ⚠ N
             # diálogo Editar Terminal: rótulo de seção + caixa de preview da fonte
             ".editor-section { font-weight: bold; margin-top: 6px; }",
@@ -3266,6 +3270,8 @@ class CanvasWindow:
         threading.Thread(
             target=self._sock_server.serve, args=(self._on_sock_request,), daemon=True
         ).start()
+        self._refresh_fleet_hud()  # HUD inicial (Etapa 4)
+        GLib.timeout_add_seconds(3, self._anomaly_tick)  # vigilância ativa + HUD
 
     def _ask_edge_allowed(self, frm: str, to: str) -> bool:
         if self.edges is None:
@@ -3569,6 +3575,54 @@ class CanvasWindow:
         if self._ask_bus_dir:
             append_event(self._ask_bus_dir, event, **fields)
 
+    def _build_fleet_hud(self) -> Gtk.Widget:
+        """HUD do fleet (pílula topo-direita): nº de agentes, profundidade, aviso de ciclo."""
+        lbl = Gtk.Label(label="")
+        lbl.add_css_class("fleet-hud")
+        lbl.set_halign(Gtk.Align.END)
+        lbl.set_valign(Gtk.Align.START)
+        lbl.set_margin_top(12)
+        lbl.set_margin_end(12)
+        lbl.set_visible(False)  # só aparece quando há agentes
+        self._fleet_hud = lbl
+        return lbl
+
+    def _fleet_hud_text(self) -> str:
+        """Texto do HUD (puro, testável): '🤖 N/CAP · prof D · ⚠ ciclo'."""
+        n = self._fleet_count()
+        depth = max((self._node_depth(x) for x in self._agent_nids), default=0)
+        parts = [f"🤖 {n}/{self.MAESTRO_FLEET_CAP}"]
+        if depth:
+            parts.append(f"prof {depth}")
+        if self.edges is not None and has_cycle(self.edges.list()):
+            parts.append("⚠ ciclo")
+        return "  ·  ".join(parts)
+
+    def _refresh_fleet_hud(self) -> None:
+        lbl = getattr(self, "_fleet_hud", None)
+        if lbl is None:
+            return
+        n = self._fleet_count()
+        lbl.set_visible(n > 0)
+        if n > 0:
+            lbl.set_text(self._fleet_hud_text())
+
+    def _anomaly_tick(self) -> bool:
+        """Vigilância ATIVA (Etapa 4): rajada de recrutamentos bloqueados → kill-switch
+        AUTOMÁTICO. Tira o trail/HUD do modo passivo. Roda na main thread (GLib timeout)."""
+        if self._sock_server is None:
+            return True
+        try:
+            self._refresh_fleet_hud()
+            events = read_events(self._ask_bus_dir) if self._ask_bus_dir else []
+            if spawn_anomaly(events, now=time.time()) and self._fleet_count() > 0:
+                self._audit("anomaly_killswitch", fleet=self._fleet_count())
+                killed = self._kill_all_agents()
+                _log.warning("anomalia de spawn detectada → kill-switch (%d mortos)", killed)
+        except Exception as exc:  # nunca derruba o tick
+            _log.error("anomaly_tick falhou: %s", exc)
+        return True  # continua
+
     def _kill_all_agents(self) -> int:
         """KILL-SWITCH global (ADR-17): mata o processo de TODOS os agentes vivos.
 
@@ -3587,6 +3641,7 @@ class CanvasWindow:
             if self.model.node_cfg(nid, "maestro"):
                 self.model.set_node_cfg(nid, "maestro", "")
         self._audit("kill_all", killed=killed, fleet_before=len(nids))
+        self._refresh_fleet_hud()
         self.plane.queue_draw()
         return killed
 
@@ -3761,6 +3816,7 @@ class CanvasWindow:
             self.plane.queue_draw()
             self._audit("recruit", manager=frm, node=nid, agent=base, role=role,
                         depth=self._node_depth(nid), fleet=self._fleet_count())
+            self._refresh_fleet_hud()
             extra = f", papel '{role}'" if role else ""
             result.update(ok=True, answer=f"recrutado '{nid}' (agente {base}{extra}), por cabo.")
         elif cmd == "list":
@@ -3793,6 +3849,8 @@ class CanvasWindow:
                                           "node" if b_node else "note")
             self._wake_cables()
             self.plane.queue_draw()
+            if has_cycle(self.edges.list()):  # Etapa 4: avisa que o cabo fechou um ciclo
+                self._audit("cycle_detected", a=a, b=b)
             result.update(ok=True, answer=f"cabo {a} ↔ {b} ligado.")
         elif cmd == "reassign":
             if len(args) < 2 or (args[0] not in self._maestro_connected(frm) and args[0] != frm):
