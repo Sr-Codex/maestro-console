@@ -44,6 +44,7 @@ from ..engine.ask_bus import (  # noqa: E402
     validate_req,
 )
 from ..engine.ask_sock import SockServer  # noqa: E402
+from ..engine.maestro_audit import append_event  # noqa: E402
 from ..engine.ask_router import AskRouter, policy_from_env  # noqa: E402
 from ..engine.attention import attention_items, notify  # noqa: E402
 from ..engine.envelope import EnvelopeState  # noqa: E402
@@ -467,6 +468,7 @@ class CanvasWindow:
         # agente (identidade por canal) + router — só com controller + edges
         self._ask_bus_dir = ask_bus_dir  # p/ criar novos terminais de agente em runtime
         self._sock_server = None  # SockServer: um listener por agente (<box>/sock)
+        self._agent_nids: set[str] = set()  # nós de agente vivos (fonte do fleet-cap/kill-switch)
         self._ask_router = None
         # modo do cabo: "live" (Maestri: digita no terminal vivo do B) ou "headless" (mediado).
         # default live; cai no headless automaticamente se a captura falhar.
@@ -619,6 +621,7 @@ class CanvasWindow:
             ".fab-btn:hover { background-color: rgba(255,255,255,0.08); border-radius: 10px; }",
             ".fab-btn:disabled { opacity: 0.35; }",
             ".fab-run { color: #89b4fa; }",  # o play (azul)
+            ".fab-stop { color: #f38ba0; }",  # kill-switch (vermelho)
             ".fab-attn { color: #f9e2af; font-size: 12px; padding: 0 4px; }",  # ⚠ N
             # diálogo Editar Terminal: rótulo de seção + caixa de preview da fonte
             ".editor-section { font-weight: bold; margin-top: 6px; }",
@@ -856,6 +859,11 @@ class CanvasWindow:
             self._connect_btn.set_tooltip_text("ligar agentes por cabo (Ctrl+Shift+L)")
             self._connect_btn.connect("toggled", self._toggle_connect)
             bar.append(self._connect_btn)
+        # — kill-switch do fleet (ADR-17): só quando o Maestro mode é possível —
+        if self._sock_server is not None:
+            bar.append(self._fab_button(
+                "process-stop-symbolic", "⛔", "Parar TODOS os agentes (kill-switch)",
+                self._confirm_kill_all, css="fab-stop"))
         # — config de software / features globais —
         add("folder-symbolic", "📁", "Árvore de arquivos", "filetree")
         add("view-grid-symbolic", "🗂", "Workspaces", "workspaces")
@@ -2200,6 +2208,7 @@ class CanvasWindow:
         self._mon_alerted.discard(nid)
         if self._sock_server is not None:  # ADR-17: fecha o listener do socket do agente
             self._sock_server.remove_node(nid)
+        self._agent_nids.discard(nid)  # sai do fleet
         _t = getattr(self.frames.get(nid), "_term", None)
         if _t is not None:  # H1: invalida respawn em voo (não roda _go() em widget destruído)
             _t._destroyed = True
@@ -3510,11 +3519,77 @@ class CanvasWindow:
         try:
             os.makedirs(box, mode=0o700, exist_ok=True)
             self._sock_server.add_node(nid, box)
+            self._agent_nids.add(nid)  # entra no fleet (cap global + kill-switch)
         except OSError as exc:
             _log.error("sock_register(%s) falhou: %s", nid, exc)
 
     # -- Maestro mode (Fase 6): comandos do agente-manager roteados pelo host (main thread) --
-    MAESTRO_MAX_RECRUITS = 6  # limite anti-loop de recrutas por manager
+    MAESTRO_MAX_RECRUITS = 6  # limite anti-loop de recrutas POR MANAGER
+    MAESTRO_FLEET_CAP = 12  # teto GLOBAL de agentes vivos no fleet (ADR-17, Etapa 2)
+
+    def _fleet_count(self) -> int:
+        """Total de agentes vivos no fleet (fonte do hard-cap global e do kill-switch)."""
+        return len(self._agent_nids)
+
+    def _audit(self, event: str, **fields) -> None:
+        """Registra um evento na trilha append-only (ADR-17). Best-effort, nunca levanta."""
+        if self._ask_bus_dir:
+            append_event(self._ask_bus_dir, event, **fields)
+
+    def _kill_all_agents(self) -> int:
+        """KILL-SWITCH global (ADR-17): mata o processo de TODOS os agentes vivos.
+
+        Cada agente é seu próprio bwrap (``--unshare-pid``) → o SIGKILL no filho
+        COLAPSA a árvore interna (ceifa a subárvore, não só o topo). Em seguida DESARMA
+        o Maestro mode de todos os nós: recrutar fica bloqueado até você religar o toggle
+        (re-armar = gate humano). Devolve quantos processos foram sinalizados.
+        """
+        nids = list(self._agent_nids)
+        killed = 0
+        for nid in nids:
+            term = getattr(self.frames.get(nid), "_term", None)
+            if term is not None and self._signal_child(term, signal.SIGKILL):
+                killed += 1
+        for nid in list(self.frames):  # desarma TODOS os managers (re-armar é manual)
+            if self.model.node_cfg(nid, "maestro"):
+                self.model.set_node_cfg(nid, "maestro", "")
+        self._audit("kill_all", killed=killed, fleet_before=len(nids))
+        self.plane.queue_draw()
+        return killed
+
+    def _confirm_kill_all(self) -> None:
+        """Confirmação do kill-switch (ação destrutiva: para TODOS os agentes)."""
+        n = self._fleet_count()
+        dlg, box = self._dialog("⛔ Parar todos os agentes")
+        if n == 0:
+            box.append(Gtk.Label(label="Nenhum agente vivo para parar."))
+            ok = Gtk.Button(label="OK")
+            ok.connect("clicked", lambda _b: dlg.destroy())
+            box.append(ok)
+            dlg.present()
+            return
+        msg = Gtk.Label(
+            label=f"Isso MATA o processo de {n} agente(s) e desarma o Maestro mode.\n"
+                  "O trabalho em andamento é interrompido. Religue o toggle p/ recrutar de novo.")
+        msg.set_wrap(True)
+        msg.set_xalign(0.0)
+        box.append(msg)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.set_halign(Gtk.Align.END)
+        cancel = Gtk.Button(label="Cancelar")
+        cancel.connect("clicked", lambda _b: dlg.destroy())
+        stop = Gtk.Button(label="⛔ Parar tudo")
+        stop.add_css_class("destructive-action")
+
+        def _do(_b):
+            dlg.destroy()
+            self._kill_all_agents()
+
+        stop.connect("clicked", _do)
+        row.append(cancel)
+        row.append(stop)
+        box.append(row)
+        dlg.present()
 
     def _maestro_handle(self, req):
         """Worker thread: marshala o comando p/ a MAIN thread (idle_add) e espera a resposta."""
@@ -3569,6 +3644,12 @@ class CanvasWindow:
             if base not in installed_agents():
                 result.update(ok=False, error=f"agente '{base}' não instalado")
                 return
+            if self._fleet_count() >= self.MAESTRO_FLEET_CAP:  # teto GLOBAL (ADR-17)
+                self._audit("recruit_blocked", manager=frm, reason="fleet_cap",
+                            fleet=self._fleet_count())
+                result.update(ok=False,
+                              error=f"limite GLOBAL de {self.MAESTRO_FLEET_CAP} agentes atingido")
+                return
             if len(self._maestro_connected(frm)) >= self.MAESTRO_MAX_RECRUITS:
                 result.update(ok=False, error=f"limite de {self.MAESTRO_MAX_RECRUITS} recrutas")
                 return
@@ -3584,6 +3665,8 @@ class CanvasWindow:
             self._ask_hint(frm, nid)
             self._wake_cables()
             self.plane.queue_draw()
+            self._audit("recruit", manager=frm, node=nid, agent=base, role=role,
+                        fleet=self._fleet_count())
             extra = f", papel '{role}'" if role else ""
             result.update(ok=True, answer=f"recrutado '{nid}' (agente {base}{extra}), por cabo.")
         elif cmd == "list":
@@ -3599,6 +3682,7 @@ class CanvasWindow:
                 result.update(ok=False, error="uso: dismiss <nó> (só um recruta seu)")
                 return
             self._close_node(args[0])
+            self._audit("dismiss", manager=frm, node=args[0])
             result.update(ok=True, answer=f"dispensado '{args[0]}'.")
         elif cmd == "wire":
             if not args:

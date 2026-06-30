@@ -128,6 +128,11 @@ class SockServer:
         self._wake()
         return path
 
+    def nodes(self) -> list[str]:
+        """Nós com listener ativo (= agentes vivos)."""
+        with self._lock:
+            return list(self._listeners.keys())
+
     def remove_node(self, node: str) -> None:
         """Fecha e remove o listener do ``node`` (ao dispensar/fechar o agente)."""
         with self._lock:

@@ -53,6 +53,7 @@ def _make_win():
     w._base_pos = {"mgr": (100.0, 100.0)}
     w._node_size = {"mgr": (420, 220)}
     w.plane = SimpleNamespace(queue_draw=lambda: None)
+    w._agent_nids = set()  # fleet (cap global + kill-switch)
     w.closed = []
     created = []
 
@@ -130,6 +131,56 @@ def test_comando_desconhecido():
     w, _ = _make_win()
     w.model.set_node_cfg("mgr", "maestro", "1")
     assert not _disp(w, "mgr", "explode", [])["ok"]
+
+
+def test_fleet_cap_global(tmp_path):
+    """Teto GLOBAL de agentes (ADR-17 Etapa 2): bloqueia mesmo com o manager sem recrutas."""
+    from maestro.engine.maestro_audit import read_events
+
+    w, _ = _make_win()
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    w._ask_bus_dir = str(tmp_path)
+    w._agent_nids = {f"a{i}" for i in range(w.MAESTRO_FLEET_CAP)}  # fleet cheio
+    r = _disp(w, "mgr", "recruit", ["codex"])
+    assert not r["ok"] and "GLOBAL" in r["error"]
+    assert any(e["event"] == "recruit_blocked" for e in read_events(tmp_path))  # auditado
+
+
+def test_kill_all_ceifa_e_desarma(tmp_path):
+    """Kill-switch: sinaliza SIGKILL em todo o fleet + desarma os managers + audita."""
+    import signal
+
+    from maestro.engine.maestro_audit import read_events
+
+    w, _ = _make_win()
+    w._ask_bus_dir = str(tmp_path)
+    w.model.set_node_cfg("mgr", "maestro", "1")  # manager a ser desarmado
+    w._agent_nids = {"a1", "a2"}
+    w.frames = {
+        "mgr": SimpleNamespace(_term=SimpleNamespace()),
+        "a1": SimpleNamespace(_term=SimpleNamespace()),
+        "a2": SimpleNamespace(_term=SimpleNamespace()),
+    }
+    sigs = []
+    w._signal_child = lambda term, sig: (sigs.append(sig) or True)
+
+    killed = CanvasWindow._kill_all_agents(w)
+
+    assert killed == 2  # sinalizou os 2 agentes do fleet
+    assert sigs == [signal.SIGKILL, signal.SIGKILL]  # SIGKILL colapsa cada bwrap
+    assert not w.model.node_cfg("mgr", "maestro")  # manager desarmado (re-armar é manual)
+    assert any(e["event"] == "kill_all" and e["killed"] == 2 for e in read_events(tmp_path))
+
+
+def test_recruit_audita_sucesso(tmp_path):
+    w, created = _make_win()
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    w._ask_bus_dir = str(tmp_path)
+    assert _disp(w, "mgr", "recruit", ["codex", "coder"])["ok"]
+    from maestro.engine.maestro_audit import read_events
+    evs = read_events(tmp_path)
+    assert any(e["event"] == "recruit" and e["agent"] == "codex" and e["role"] == "coder"
+               for e in evs)
 
 
 def _run_via_socket(w, box_dir, frm, cmd, args, timeout=10):
