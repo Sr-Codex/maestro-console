@@ -472,7 +472,7 @@ class CanvasWindow:
         self._sock_server = None  # SockServer: um listener por agente (<box>/sock)
         self._agent_nids: set[str] = set()  # nós de agente vivos (fonte do fleet-cap/kill-switch)
         self._recruited_by: dict[str, str] = {}  # linhagem: recruta -> manager (profundidade)
-        self._spawn_log: list[float] = []  # timestamps de recrutamentos (rate-limit token-bucket)
+        self._mutate_log: dict[str, list[float]] = {}  # rate-limit por-manager (todos os cmds)
         self._maestro_clock = time.monotonic  # injetável nos testes
         self._ask_router = None
         # modo do cabo: "live" (Maestri: digita no terminal vivo do B) ou "headless" (mediado).
@@ -3564,11 +3564,19 @@ class CanvasWindow:
                 break
         return depth
 
-    def _spawn_rate_ok(self) -> bool:
-        """True se ainda cabe um recrutamento na janela (poda os antigos do token-bucket)."""
+    MUTATING_CMDS = ("recruit", "dismiss", "wire", "reassign")  # consomem token de rate-limit
+
+    def _mutate_rate_ok(self, frm: str) -> bool:
+        """Token-bucket POR-MANAGER para TODOS os comandos mutadores (5d): poda a janela,
+        consome 1 token se couber. Cobre o respawn/edge-DoS de wire/reassign, não só recruit."""
         now = self._maestro_clock()
-        self._spawn_log = [t for t in self._spawn_log if now - t < self.MAESTRO_SPAWN_WINDOW]
-        return len(self._spawn_log) < self.MAESTRO_SPAWN_RATE
+        log = [t for t in self._mutate_log.get(frm, []) if now - t < self.MAESTRO_SPAWN_WINDOW]
+        if len(log) >= self.MAESTRO_SPAWN_RATE:
+            self._mutate_log[frm] = log
+            return False
+        log.append(now)
+        self._mutate_log[frm] = log
+        return True
 
     def _recruit_needs_hitl(self, frm: str) -> bool:
         """Recrutar acima do soft-cap (mas abaixo do hard-cap) pede confirmação humana."""
@@ -3746,15 +3754,16 @@ class CanvasWindow:
         Factorado p/ testes poderem sobrescrever (auto-aprovar/negar) sem GTK.
         """
         decided = {"v": False}
+        dlg, box = self._dialog("Confirmar recrutamento (fleet grande)")
 
-        def decide(approve: bool, _src=None):
+        def decide(approve: bool):
             if decided["v"]:
                 return False
             decided["v"] = True
+            dlg.destroy()  # F5: destrói o diálogo em TODOS os caminhos (inclui o timeout)
             self._apply_recruit_decision(approve, req, result, done)
             return False
 
-        dlg, box = self._dialog("Confirmar recrutamento (fleet grande)")
         msg = Gtk.Label(
             label=f"O agente '{req.frm}' quer recrutar mais um (fleet em "
                   f"{self._fleet_count()}/{self.MAESTRO_FLEET_CAP}). Aprovar?")
@@ -3764,15 +3773,15 @@ class CanvasWindow:
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         row.set_halign(Gtk.Align.END)
         deny = Gtk.Button(label="Negar")
-        deny.connect("clicked", lambda _b: (dlg.destroy(), decide(False)))
+        deny.connect("clicked", lambda _b: decide(False))
         appr = Gtk.Button(label="Aprovar")
         appr.add_css_class("suggested-action")
-        appr.connect("clicked", lambda _b: (dlg.destroy(), decide(True)))
+        appr.connect("clicked", lambda _b: decide(True))
         row.append(deny)
         row.append(appr)
         box.append(row)
-        # se o humano não decidir a tempo, nega (o agente não fica preso)
-        GLib.timeout_add_seconds(40, lambda: decide(False) if not decided["v"] else False)
+        # se o humano não decidir a tempo, nega (o agente não fica preso) + fecha o diálogo
+        GLib.timeout_add_seconds(40, lambda: decide(False))
         dlg.present()
 
     def _maestro_dispatch(self, req, result: dict) -> None:
@@ -3782,6 +3791,10 @@ class CanvasWindow:
             return
         if self.controller is None or not self._ask_bus_dir or self.edges is None:
             result.update(ok=False, error="orquestrador/cabos indisponíveis")
+            return
+        if cmd in self.MUTATING_CMDS and not self._mutate_rate_ok(frm):  # rate-limit p/ TODOS (5d)
+            self._audit("rate_blocked", manager=frm, cmd=cmd)
+            result.update(ok=False, error="muitos comandos em pouco tempo; aguarde")
             return
         if cmd == "recruit":
             if not args:
@@ -3802,10 +3815,6 @@ class CanvasWindow:
                 self._audit("recruit_blocked", manager=frm, reason="max_depth", depth=depth)
                 result.update(ok=False, error=f"profundidade máxima ({depth} níveis) atingida")
                 return
-            if not self._spawn_rate_ok():  # rate-limit token-bucket (Etapa 3)
-                self._audit("recruit_blocked", manager=frm, reason="rate_limit")
-                result.update(ok=False, error="muitos recrutamentos em pouco tempo; aguarde")
-                return
             if len(self._maestro_connected(frm)) >= self.MAESTRO_MAX_RECRUITS:
                 result.update(ok=False, error=f"limite de {self.MAESTRO_MAX_RECRUITS} recrutas")
                 return
@@ -3817,7 +3826,6 @@ class CanvasWindow:
                 return
             self.model.set_node_cfg(nid, "maestro", "")  # recruta NASCE sem poder recrutar
             self._recruited_by[nid] = frm  # linhagem (profundidade)
-            self._spawn_log.append(self._maestro_clock())  # alimenta o rate-limit
             self.edges.add(frm, nid)
             if role:
                 self.model.set_node_cfg(nid, "role", role)
@@ -5782,6 +5790,9 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         win._refresh_attention()
 
     def on_shutdown(_a):
+        win = state.get("win")  # F7: encerra o servidor de socket (fecha listeners, unlink)
+        if win is not None and getattr(win, "_sock_server", None) is not None:
+            win._sock_server.stop()
         st = state.get("store")
         if st is not None:
             st.close()

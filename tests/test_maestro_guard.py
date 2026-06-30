@@ -35,6 +35,13 @@ def test_anomalia_ignora_outros_eventos():
     assert not spawn_anomaly(evs, now=110.0, window=30.0, blocked_threshold=8)  # não são blocked
 
 
+def test_anomalia_conta_todos_os_abusos():
+    """5d: rate_blocked/recruit_denied (wire/dismiss/reassign) também contam, não só recruit."""
+    evs = ([{"event": "rate_blocked", "ts": 100.0 + i} for i in range(4)]
+           + [{"event": "recruit_denied", "ts": 104.0 + i} for i in range(4)])
+    assert spawn_anomaly(evs, now=110.0, window=30.0, blocked_threshold=8)
+
+
 def test_anomalia_abaixo_do_limiar():
     evs = [{"event": "recruit_blocked", "ts": 100.0 + i} for i in range(5)]
     assert not spawn_anomaly(evs, now=110.0, blocked_threshold=8)

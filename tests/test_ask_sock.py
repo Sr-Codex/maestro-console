@@ -165,6 +165,64 @@ def test_add_remove_concorrente_nao_derruba_o_serve(tmp_path):
         srv.stop()
 
 
+def test_slow_read_corta_no_deadline(tmp_path, monkeypatch):
+    """F2: cliente que anuncia N bytes e manda 1 (slowloris) é cortado no deadline ABSOLUTO;
+    o servidor sobrevive e segue atendendo."""
+    import socket as _s
+    import struct as _st
+
+    monkeypatch.setattr("maestro.engine.ask_sock._CONN_TIMEOUT", 0.4)
+    box = tmp_path / "n"
+    box.mkdir()
+    srv = SockServer()
+    srv.add_node("n", str(box))
+    _serve(srv, lambda node, req: {"ok": True})
+    try:
+        c = _s.socket(_s.AF_UNIX, _s.SOCK_STREAM)
+        c.connect(sock_path(box))
+        c.sendall(_st.pack(">I", 1000))  # anuncia 1000 bytes...
+        c.sendall(b"x")  # ...manda 1 e PARA
+        time.sleep(0.8)  # passa do deadline (0.4s) → servidor corta a conexão
+        c.close()
+        assert send_request(sock_path(box), {"cmd": "ok"})["ok"]  # servidor segue vivo
+    finally:
+        srv.stop()
+
+
+def test_teto_de_conexoes_recusa_excesso(tmp_path, monkeypatch):
+    """F1: com o teto saturado, conexões novas são fast-closed (anti thread-DoS)."""
+    import maestro.engine.ask_sock as mod
+
+    monkeypatch.setattr(mod, "MAX_INFLIGHT", 1)
+    box = tmp_path / "n"
+    box.mkdir()
+    block = threading.Event()
+
+    def handle(node, req):
+        block.wait(3.0)  # segura o ÚNICO permite ocupado
+        return {"ok": True}
+
+    srv = SockServer()
+    srv.add_node("n", str(box))
+    _serve(srv, handle)
+    first: dict = {}
+    try:
+        t1 = threading.Thread(
+            target=lambda: first.update(r=send_request(sock_path(box), {"cmd": "1"}, timeout=4)),
+            daemon=True,
+        )
+        t1.start()
+        time.sleep(0.3)  # garante a 1ª conexão dentro do handle (permite tomado)
+        with pytest.raises((SockError, OSError)):  # 2ª: saturado → fast-close → erro
+            send_request(sock_path(box), {"cmd": "2"}, timeout=2)
+        block.set()
+        t1.join(3)
+        assert first.get("r", {}).get("ok")  # a 1ª completou normalmente
+    finally:
+        block.set()
+        srv.stop()
+
+
 def test_frame_grande_demais_rejeitado(tmp_path):
     box = tmp_path / "n"
     box.mkdir()

@@ -55,7 +55,7 @@ def _make_win():
     w.plane = SimpleNamespace(queue_draw=lambda: None)
     w._agent_nids = set()  # fleet (cap global + kill-switch)
     w._recruited_by = {}  # linhagem (profundidade)
-    w._spawn_log = []  # rate-limit
+    w._mutate_log = {}  # rate-limit por-manager (todos os comandos mutadores)
     _tick = [0.0]
 
     def _clock():  # avança muito por chamada → rate-limit não trip por acidente nos testes
@@ -204,7 +204,7 @@ def test_profundidade_da_arvore(tmp_path):
 
 
 def test_rate_limit_token_bucket(tmp_path):
-    """Com relógio FIXO, estoura o rate-limit antes do limite por-manager."""
+    """Com relógio FIXO, estoura o rate-limit (token-bucket por-manager)."""
     w, created = _make_win()
     w._ask_bus_dir = str(tmp_path)
     w.model.set_node_cfg("mgr", "maestro", "1")
@@ -212,7 +212,28 @@ def test_rate_limit_token_bucket(tmp_path):
     for _ in range(w.MAESTRO_SPAWN_RATE):
         assert _disp(w, "mgr", "recruit", ["codex"])["ok"]
     r = _disp(w, "mgr", "recruit", ["codex"])  # próximo na mesma janela → barra
-    assert not r["ok"] and "muitos recrutamentos" in r["error"]
+    assert not r["ok"] and "muitos comandos" in r["error"]
+
+
+def test_rate_limit_cobre_comandos_mutadores(tmp_path):
+    """5d: o rate-limit vale p/ wire/dismiss/reassign, não só recruit (anti respawn/edge-DoS)."""
+    from maestro.engine.maestro_audit import read_events
+
+    w, created = _make_win()
+    w._ask_bus_dir = str(tmp_path)
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    w._maestro_clock = lambda: 50.0  # congelado
+    # cria 1 recruta (consome 1 token), depois martela 'reassign' até estourar
+    assert _disp(w, "mgr", "recruit", ["codex"])["ok"]
+    nid = created[0][0]
+    oks = 0
+    for _ in range(w.MAESTRO_SPAWN_RATE):
+        if _disp(w, "mgr", "reassign", [nid, "coder"])["ok"]:
+            oks += 1
+    r = _disp(w, "mgr", "reassign", [nid, "coder"])  # já estourou a janela
+    assert not r["ok"] and "muitos comandos" in r["error"]
+    assert any(e["event"] == "rate_blocked" and e["cmd"] == "reassign"
+               for e in read_events(tmp_path))
 
 
 def test_recruta_nasce_sem_recrutar(tmp_path):

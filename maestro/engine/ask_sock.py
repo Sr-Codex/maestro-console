@@ -25,11 +25,13 @@ import selectors
 import socket
 import struct
 import threading
+import time
 from collections.abc import Callable
 
 SOCK_NAME = "sock"  # nome do socket dentro de cada box: <box>/sock
 MAX_MSG_BYTES = 1 << 16  # teto de frame (64 KiB); a validação de conteúdo é à parte
-_CONN_TIMEOUT = 30.0  # tempo máx. p/ ler um req / escrever um resp numa conexão
+_CONN_TIMEOUT = 30.0  # DEADLINE ABSOLUTO p/ ler o req (não por-recv → mata slowloris, F2)
+MAX_INFLIGHT = 32  # teto de conexões tratadas em paralelo (anti thread-DoS, F1)
 
 
 class SockError(Exception):
@@ -49,9 +51,14 @@ def _send_msg(conn: socket.socket, obj: dict) -> None:
     conn.sendall(struct.pack(">I", len(data)) + data)
 
 
-def _recv_exact(conn: socket.socket, n: int) -> bytes:
+def _recv_exact(conn: socket.socket, n: int, deadline: float | None = None) -> bytes:
     buf = bytearray()
     while len(buf) < n:
+        if deadline is not None:  # deadline ABSOLUTO (total), não por-recv → anti slowloris
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SockError("deadline de leitura excedido (slow-read)")
+            conn.settimeout(remaining)
         chunk = conn.recv(n - len(buf))
         if not chunk:
             raise SockError("conexão fechada no meio do frame")
@@ -59,11 +66,11 @@ def _recv_exact(conn: socket.socket, n: int) -> bytes:
     return bytes(buf)
 
 
-def _recv_msg(conn: socket.socket) -> dict:
-    (n,) = struct.unpack(">I", _recv_exact(conn, 4))
+def _recv_msg(conn: socket.socket, deadline: float | None = None) -> dict:
+    (n,) = struct.unpack(">I", _recv_exact(conn, 4, deadline))
     if n > MAX_MSG_BYTES:
         raise SockError("frame grande demais")
-    obj = json.loads(_recv_exact(conn, n).decode("utf-8"))
+    obj = json.loads(_recv_exact(conn, n, deadline).decode("utf-8"))
     if not isinstance(obj, dict):
         raise SockError("payload não é objeto JSON")
     return obj
@@ -103,6 +110,7 @@ class SockServer:
         self._listeners: dict[str, tuple[socket.socket, str]] = {}
         self._pending: list[tuple] = []  # ops p/ a thread do serve aplicar no selector
         self._lock = threading.Lock()  # protege _listeners e _pending (NÃO o selector)
+        self._inflight = threading.BoundedSemaphore(MAX_INFLIGHT)  # teto de conexões (F1)
         self._stop = False
         # socketpair p/ acordar o select() ao adicionar/remover nó de outra thread
         self._wake_r, self._wake_w = socket.socketpair()
@@ -199,28 +207,38 @@ class SockServer:
             conn, _ = srv.accept()
         except OSError:
             return
+        if not self._inflight.acquire(blocking=False):  # saturado: fast-fail (anti DoS, F1)
+            try:
+                conn.close()
+            except OSError:
+                pass
+            return
         # conexão curta tratada numa thread própria: o handle pode bloquear (idle_add)
         threading.Thread(
             target=self._handle_conn, args=(conn, node, handle), daemon=True
         ).start()
 
     def _handle_conn(self, conn: socket.socket, node: str, handle: Handler) -> None:
-        with conn:
-            conn.settimeout(_CONN_TIMEOUT)
-            try:
-                req = _recv_msg(conn)
-            except (SockError, OSError, json.JSONDecodeError, ValueError):
-                return
-            try:
-                resp = handle(node, req)  # IDENTIDADE: node vem do canal, não do payload
-                if not isinstance(resp, dict):
-                    resp = {"ok": False, "error": "resposta inválida do host"}
-            except Exception:  # noqa: BLE001 — nunca derruba o servidor por um req ruim
-                resp = {"ok": False, "error": "erro interno no host"}
-            try:
-                _send_msg(conn, resp)
-            except (SockError, OSError):
-                pass
+        try:
+            with conn:
+                deadline = time.monotonic() + _CONN_TIMEOUT  # deadline absoluto p/ ler o req
+                try:
+                    req = _recv_msg(conn, deadline=deadline)
+                except (SockError, OSError, json.JSONDecodeError, ValueError):
+                    return
+                try:
+                    resp = handle(node, req)  # IDENTIDADE: node vem do canal, não do payload
+                    if not isinstance(resp, dict):
+                        resp = {"ok": False, "error": "resposta inválida do host"}
+                except Exception:  # noqa: BLE001 — nunca derruba o servidor por um req ruim
+                    resp = {"ok": False, "error": "erro interno no host"}
+                try:
+                    conn.settimeout(_CONN_TIMEOUT)  # teto também p/ a escrita da resposta
+                    _send_msg(conn, resp)
+                except (SockError, OSError):
+                    pass
+        finally:
+            self._inflight.release()  # devolve o permite, sempre (F1)
 
     def _wake(self) -> None:
         try:

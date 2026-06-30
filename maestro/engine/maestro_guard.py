@@ -33,12 +33,17 @@ def has_cycle(edges: list[tuple]) -> bool:
     return False
 
 
+# eventos de ABUSO contados pela anomalia (5d: não só recruit — TODOS os comandos mutadores)
+ABUSE_EVENTS = frozenset({"recruit_blocked", "rate_blocked", "recruit_denied"})
+
+
 def spawn_anomaly(events: list[dict], *, now: float, window: float = 30.0,
                   blocked_threshold: int = 8) -> bool:
-    """True se houve >= ``blocked_threshold`` eventos ``recruit_blocked`` nos últimos
-    ``window`` segundos — assinatura de um manager em loop de recrutamento (runaway)."""
+    """True se houve >= ``blocked_threshold`` eventos de ABUSO (recruit/rate bloqueado, recruit
+    negado) nos últimos ``window`` s — assinatura de um manager em loop de runaway por QUALQUER
+    comando mutador (wire/dismiss/reassign também geram rate_blocked, não só recruit)."""
     n = 0
     for e in events:
-        if e.get("event") == "recruit_blocked" and now - float(e.get("ts", 0)) <= window:
+        if e.get("event") in ABUSE_EVENTS and now - float(e.get("ts", 0)) <= window:
             n += 1
     return n >= blocked_threshold
