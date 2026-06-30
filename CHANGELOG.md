@@ -3,6 +3,17 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.43.0] — Editar Terminal (Fase 4): Monitorar atividade (+ som)
+- **Monitorar atividade** por terminal (toggle na aba Detalhes + tempo de quietude): observa o
+  `contents-changed` e, quando o terminal **para de produzir output estando FORA de foco** (e não
+  está "pensando" / `tui_busy`), dispara: **dot de atenção** (▲) + entra no **⚠N** + **notificação
+  de desktop** com **resumo** (últimas linhas do output, estilo Ombro). Ao **focar** o terminal, o
+  alerta limpa. Persistido (`node_cfg` `monitor`/`monitor_ms`); reaplicado na criação.
+- **Som de alerta:** `notify()` agora também toca um som (`paplay`/`pw-play` do
+  `freedesktop/complete.oga`, best-effort não-bloqueante) — vale p/ o monitor e p/ a atenção.
+- **Limpeza:** removido o botão 🎨 de tema da cápsula superior (o tema global é definido pelo
+  editor → aba Tema → "Aplicar a TODOS").
+
 ## [0.42.1] — Atalho automático Ctrl+<n> + fix do foco global
 - **Atalho automático:** ao abrir um terminal ele recebe **Ctrl+<n>** (menor dígito 1–9 livre),
   salvo em `node_cfg 'shortcut'` → aparece na config (Detalhes → Atalho) e pode ser alterado/limpo.
