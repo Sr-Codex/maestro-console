@@ -34,9 +34,12 @@ from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Pango, Vte  # noqa
 
 from ..engine.ask_bus import (  # noqa: E402
     AskBus,
+    AskResponse,
     install_ask_skill,
     install_client,
     install_connected_notes_skill,
+    install_maestri_client,
+    install_maestro_skill,
 )
 from ..engine.ask_router import AskRouter, policy_from_env  # noqa: E402
 from ..engine.attention import attention_items, notify  # noqa: E402
@@ -1050,7 +1053,7 @@ class CanvasWindow:
         det = page(name)
         det.append(self._editor_detalhes_section(nid, applies))
         det.append(self._editor_monitor_section(nid, applies))
-        det.append(soon("Maestro (sub-orquestração) — Fase 6"))
+        det.append(self._editor_maestro_section(nid, applies))
         det.append(soon("SSH Remoto — Fase 7"))
         stack.add_titled(det, "detalhes", "Detalhes")
         # — Aparência — (Fase 1: Fonte; Cor/Ícone nas próximas etapas; Tema na Fase 2)
@@ -1586,6 +1589,31 @@ class CanvasWindow:
         applies.append(apply)
         return box
 
+    def _editor_maestro_section(self, nid: str, applies: list) -> Gtk.Widget:
+        """Maestro mode (Fase 6): toggle que promove o agente a MANAGER (recruta/conecta/dispensa
+        via `maestri …`). Vale p/ nó-AGENTE; reinicia p/ a IA ler a manager-skill."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        chk = Gtk.CheckButton(label="Maestro mode (gerenciar uma equipe)")
+        chk.set_active(bool(self.model.node_cfg(nid, "maestro")))
+        box.append(chk)
+        hint = Gtk.Label(
+            label="Promove este AGENTE a manager: ele pode `maestri recruit/list/reassign/wire/"
+                  "dismiss` p/ criar agentes conectados abaixo e atribuir papéis.", xalign=0)
+        hint.add_css_class("dim-label")
+        hint.set_wrap(True)
+        box.append(hint)
+
+        def apply():
+            on = chk.get_active()
+            was = bool(self.model.node_cfg(nid, "maestro"))
+            self.model.set_node_cfg(nid, "maestro", "1" if on else "")
+            self._apply_node_maestro(nid)
+            if on != was and self._role_targets(nid):  # nó-agente → reinicia p/ ler a skill
+                self._respawn_node(nid)
+
+        applies.append(apply)
+        return box
+
     @staticmethod
     def _fill_rect(cr, w, h, hexc) -> None:
         r, g, b = _hex_to_rgb(hexc)
@@ -2002,6 +2030,7 @@ class CanvasWindow:
             self._apply_node_icon(nid, nicon)
         self._apply_node_theme(nid)  # tema por-nó (override) ou global — Fase 2
         self._apply_node_role(nid)  # role (Fase 5): accent + sidecar (injeção é no spawn do agente)
+        self._apply_node_maestro(nid)  # Maestro mode (Fase 6): injeta a manager-skill se ligado
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(head)
         box.append(term)
@@ -3084,6 +3113,18 @@ class CanvasWindow:
             self.model.set_node_cfg(nid, "color", role.badge())
             self._apply_node_color(nid, role.badge())
 
+    def _apply_node_maestro(self, nid: str) -> None:
+        """Maestro mode (Fase 6): injeta a manager-skill no workspace do agente quando o toggle
+        está ligado (a IA lê no start). Off = nada (o host rejeita comandos de não-managers)."""
+        if not self._ask_bus_dir or not self.model.node_cfg(nid, "maestro"):
+            return
+        try:
+            wsp = self._node_ws(nid)
+            if wsp.is_dir():
+                install_maestro_skill(str(wsp), nid)
+        except OSError:
+            pass
+
     def _materialize_node_notes(self, nid: str) -> None:
         """Grava as notas ligadas ao nó como notes/<id>.md no workspace + atualiza o manifesto."""
         if self.notes is None or self.edges is None or not self._ask_bus_dir:
@@ -3409,7 +3450,8 @@ class CanvasWindow:
                 if req.id in self._ask_inflight:
                     continue
                 self._ask_inflight.add(req.id)
-                self._ask_set_edge_state(req.frm, req.to, "busy")
+                if not req.cmd:  # comando Maestro mode não tem cabo p/ pintar de "busy"
+                    self._ask_set_edge_state(req.frm, req.to, "busy")
                 threading.Thread(target=self._ask_process, args=(req,), daemon=True).start()
                 started = True
         except Exception as exc:  # nunca derruba o tick
@@ -3419,16 +3461,17 @@ class CanvasWindow:
         return True  # continua o poll
 
     def _ask_process(self, req) -> None:
-        """Roda em thread daemon: AskRouter.handle chama delegate (síncrono via _run_sync)."""
+        """Roda em thread daemon: ask normal → AskRouter.handle; comando Maestro → host (main)."""
         resp = None
         try:
-            resp = self._ask_router.handle(req)
+            resp = self._maestro_handle(req) if req.cmd else self._ask_router.handle(req)
             self._ask_bus.write_response(resp)
         except Exception as exc:
             _log.error("ask_process falhou: %s", exc)
         finally:
             self._ask_inflight.discard(req.id)
-        GLib.idle_add(self._ask_reflect, req, resp)
+        if not req.cmd:  # comandos não têm cabo p/ refletir cor
+            GLib.idle_add(self._ask_reflect, req, resp)
 
     def _ask_reflect(self, req, resp) -> bool:
         ok = bool(resp and resp.ok)
@@ -3438,6 +3481,120 @@ class CanvasWindow:
         self._ask_set_edge_state(req.frm, req.to, "done" if ok else "failed")
         self.plane.queue_draw()
         return False
+
+    # -- Maestro mode (Fase 6): comandos do agente-manager roteados pelo host (main thread) --
+    MAESTRO_MAX_RECRUITS = 6  # limite anti-loop de recrutas por manager
+
+    def _maestro_handle(self, req):
+        """Worker thread: marshala o comando p/ a MAIN thread (idle_add) e espera a resposta."""
+        result: dict = {}
+        done = threading.Event()
+        GLib.idle_add(self._maestro_exec, req, result, done)
+        if not done.wait(timeout=25):
+            return AskResponse(req.id, False, error="timeout no host")
+        if result.get("ok"):
+            return AskResponse(req.id, True, result.get("answer", "ok"))
+        return AskResponse(req.id, False, error=result.get("error", "erro"))
+
+    def _maestro_connected(self, nid: str) -> list:
+        """Nós LIGADOS a `nid` por cabo (= recrutas/peers do manager)."""
+        out = []
+        for a, b in self.edges.list():
+            if a == nid and b in self.frames:
+                out.append(b)
+            elif b == nid and a in self.frames:
+                out.append(a)
+        return out
+
+    def _place_below(self, nid: str) -> tuple[int, int]:
+        """Posição (base) ABAIXO do nó `nid`, empilhando por nº de recrutas."""
+        x, y = self._base_pos.get(nid, (60.0, 60.0))
+        _w, h = self._node_size.get(nid, (BASE_W, BASE_H))
+        n = len(self._maestro_connected(nid))
+        return (int(x), int(y + h + 40 + n * (h + 24)))
+
+    def _maestro_exec(self, req, result: dict, done) -> bool:
+        try:
+            self._maestro_dispatch(req, result)
+        except Exception as exc:
+            result.update(ok=False, error=str(exc))
+        finally:
+            done.set()
+        return False  # idle one-shot
+
+    def _maestro_dispatch(self, req, result: dict) -> None:
+        frm, cmd, args = req.frm, req.cmd, req.args
+        if not self.model.node_cfg(frm, "maestro"):
+            result.update(ok=False, error="este terminal não está em Maestro mode")
+            return
+        if self.controller is None or not self._ask_bus_dir or self.edges is None:
+            result.update(ok=False, error="orquestrador/cabos indisponíveis")
+            return
+        if cmd == "recruit":
+            if not args:
+                result.update(ok=False, error="uso: recruit <agente> [papel]")
+                return
+            base, role = args[0], (args[1] if len(args) > 1 else "")
+            if base not in installed_agents():
+                result.update(ok=False, error=f"agente '{base}' não instalado")
+                return
+            if len(self._maestro_connected(frm)) >= self.MAESTRO_MAX_RECRUITS:
+                result.update(ok=False, error=f"limite de {self.MAESTRO_MAX_RECRUITS} recrutas")
+                return
+            nid = self._new_agent_terminal(base, default=self._place_below(frm))
+            if nid is None:
+                result.update(ok=False, error="falha ao criar o agente")
+                return
+            self.edges.add(frm, nid)
+            if role:
+                self.model.set_node_cfg(nid, "role", role)
+                self._apply_node_role(nid)
+                self._respawn_node(nid)  # reinicia p/ a IA já abrir com o papel
+            self._ask_hint(frm, nid)
+            self._wake_cables()
+            self.plane.queue_draw()
+            extra = f", papel '{role}'" if role else ""
+            result.update(ok=True, answer=f"recrutado '{nid}' (agente {base}{extra}), por cabo.")
+        elif cmd == "list":
+            conn = self._maestro_connected(frm)
+            if not conn:
+                result.update(ok=True, answer="(sem recrutas conectados)")
+                return
+            lines = [f"- {self.model.node_name(n, n)} (papel: "
+                     f"{(self._node_role(n).name if self._node_role(n) else '—')})" for n in conn]
+            result.update(ok=True, answer="Recrutas conectados:\n" + "\n".join(lines))
+        elif cmd == "dismiss":
+            if not args or args[0] not in self._maestro_connected(frm):
+                result.update(ok=False, error="uso: dismiss <nó> (só um recruta seu)")
+                return
+            self._close_node(args[0])
+            result.update(ok=True, answer=f"dispensado '{args[0]}'.")
+        elif cmd == "wire":
+            if not args:
+                result.update(ok=False, error="uso: wire <a> [b] (b padrão = você)")
+                return
+            a = args[0]
+            b = args[1] if len(args) > 1 else frm
+            self.edges.add(a, b)
+            a_node, b_node = a in self.frames, b in self.frames
+            if a_node and b_node:
+                self._ask_hint(a, b)
+            else:
+                self._on_note_cable_added(a, b, "node" if a_node else "note",
+                                          "node" if b_node else "note")
+            self._wake_cables()
+            self.plane.queue_draw()
+            result.update(ok=True, answer=f"cabo {a} ↔ {b} ligado.")
+        elif cmd == "reassign":
+            if len(args) < 2 or (args[0] not in self._maestro_connected(frm) and args[0] != frm):
+                result.update(ok=False, error="uso: reassign <nó> <papel> (recruta seu)")
+                return
+            self.model.set_node_cfg(args[0], "role", args[1])
+            self._apply_node_role(args[0])
+            self._respawn_node(args[0])
+            result.update(ok=True, answer=f"'{args[0]}' reatribuído ao papel '{args[1]}'.")
+        else:
+            result.update(ok=False, error=f"comando desconhecido: {cmd}")
 
     def _ask_set_edge_state(self, frm: str, to: str, state: str) -> None:
         if self.edges is None:
@@ -4064,7 +4221,7 @@ class CanvasWindow:
         self.plane.queue_draw()
         return nid
 
-    def _new_agent_terminal(self, base: str | None) -> str | None:
+    def _new_agent_terminal(self, base: str | None, default=None) -> str | None:
         if not base or self.controller is None or not self._ask_bus_dir:
             return None
         profiles = installed_agents()
@@ -4081,7 +4238,7 @@ class CanvasWindow:
         install_ask_skill(wsp, nid)  # ensina o maestro-ask ao novo agente
         # (role recém-criado é vazio; a injeção do role acontece em _add_node → _apply_node_role)
         argv = agent_argv(profiles[base], str(wsp), node=nid, ask_bus_dir=self._ask_bus_dir)
-        self._add_node(nid, nid, argv, default=self._next_node_default())
+        self._add_node(nid, nid, argv, default=default or self._next_node_default())
         self.model.add_to_roster(nid, "agent", base)  # persiste -> volta ao reabrir
         self._resize_plane()
         self.plane.queue_draw()
@@ -5270,6 +5427,7 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         ws = Workspace(f"{base}/workspaces")
         ask_bus_dir = f"{base}/ask-bus"
         install_client(ask_bus_dir)  # instala o maestro-ask no mailbox (montado nos agentes)
+        install_maestri_client(ask_bus_dir)  # instala o `maestri` (Maestro mode, Fase 6)
         model = CanvasModel(st)
         # ROSTER persistido: QUAIS terminais existem (abre igual fechou). 1ª vez = semeia
         # com os agentes instalados; depois é a fonte da verdade (inclui shells/instâncias).

@@ -3,6 +3,26 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.45.0] — Editar Terminal (Fase 6): Maestro mode (sub-orquestração)
+**Maestro mode** — um terminal de **agente** pode virar **manager** e montar/coordenar uma equipe
+no próprio canvas, sem sair do shell:
+- **Toggle "Maestro mode (gerenciar uma equipe)"** na aba Detalhes do editor (só p/ nós de agente);
+  ao ligar, injeta a **manager-skill** (bloco marcado `<!-- maestro-mode -->`) no workspace isolado e
+  reinicia o agente p/ reler.
+- **Novo shim `maestri`** (instalado no mailbox junto do `maestro-ask`), comandos:
+  `recruit <agente> [papel]` · `list` · `reassign <nó> <papel>` · `wire <a> [b]` · `dismiss <nó>`.
+  Cada comando vira um `AskRequest` com `cmd`/`args` (protocolo do ask-bus estendido, validado:
+  `cmd` por regex, `args` lista ≤16, total ≤8 KiB).
+- **Host dispatch na main-thread** (`_maestro_handle` → `idle_add` → `_maestro_dispatch`) com **gates**:
+  exige o toggle ligado, agente instalado e **limite de 6 recrutas**. `recruit` cria um terminal de
+  agente real **conectado por cabo ABAIXO** do manager, atribui o papel e reinicia; `list/dismiss/wire/
+  reassign` operam só sobre os recrutas conectados ao manager (não mexe em nós alheios).
+- **Robustez de PATH:** as skills (Maestro e cabos) chamam os shims pelo **caminho absoluto**
+  `"$MAESTRO_ASK_BUS/maestri"` / `"$MAESTRO_ASK_BUS/maestro-ask"` — imune ao reset de `PATH` do
+  `bash -i` interno do sandbox.
+- **Testes:** `test_maestro_mode.py` cobre gates + recruit/list/dismiss/wire/reassign + limite +
+  comando desconhecido, **e um E2E real pela mailbox** (shim escreve → host faz dispatch → responde).
+
 ## [0.44.0] — Editar Terminal (Fase 5): Responsabilidades (roles) + hardening defensivo
 **Fase 5 — roles por terminal** (aba Agente do editor):
 - **Biblioteca de papéis** reusável (`~/.config/maestro-console/roles.json`, built-in coder/reviewer/
