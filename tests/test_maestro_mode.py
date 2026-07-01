@@ -19,6 +19,7 @@ from maestro.native.canvas import CanvasWindow  # noqa: E402
 class _FakeModel:
     def __init__(self):
         self.cfg = {}
+        self.roster = []
 
     def node_cfg(self, nid, key, default=""):
         return self.cfg.get((nid, key), default)
@@ -28,6 +29,12 @@ class _FakeModel:
 
     def node_name(self, nid, default):
         return default
+
+    def node_roster(self):
+        return self.roster
+
+    def set_node_roster(self, roster):
+        self.roster = roster
 
 
 class _FakeEdges:
@@ -138,6 +145,42 @@ def test_limite_de_recrutas():
         assert _disp(w, "mgr", "recruit", ["codex"])["ok"]
     r = _disp(w, "mgr", "recruit", ["codex"])  # 7º → bloqueia
     assert not r["ok"] and "limite" in r["error"]
+
+
+def test_unique_nid_evita_controller_e_roster():
+    """Bug do teste ao vivo: recruit travava com 'id já existe' porque _unique_nid só olhava
+    os frames. Agora pula ids reservados no controller E no roster também."""
+    w, _ = _make_win()
+    w.frames = {"codex-2": object()}  # ocupa codex-2 na tela
+    w.controller = SimpleNamespace(agents={"codex-3": object()})  # codex-3 só no controller
+    w.model.set_node_roster([{"nid": "codex-4", "base": "codex"}])  # codex-4 só no roster
+    assert CanvasWindow._unique_nid(w, "codex") == "codex-5"  # pula 2, 3 e 4
+
+
+def test_node_auto_approve_le_maestro_e_autoapprove():
+    """auto_approve liga por Maestro mode (Fase 1) OU pelo toggle 'permissão total' (Fase 2)."""
+    w, _ = _make_win()
+    assert not CanvasWindow._node_auto_approve(w, "n")  # nada ligado
+    w.model.set_node_cfg("n", "maestro", "1")
+    assert CanvasWindow._node_auto_approve(w, "n")  # Maestro mode implica auto-aprovar
+    w.model.set_node_cfg("n", "maestro", "")
+    w.model.set_node_cfg("n", "autoapprove", "1")
+    assert CanvasWindow._node_auto_approve(w, "n")  # toggle explícito (agente normal)
+
+
+def test_cabo_default_headless_live_optin():
+    """ADR-20: por padrão o cabo entrega por HEADLESS (confiável); 'live' (raspa a TUI) é opt-in."""
+    w = CanvasWindow.__new__(CanvasWindow)
+    calls = []
+    w._ask_live = lambda to, p: (calls.append("live") or "truncado")
+    w._ask_headless = lambda to, p: (calls.append("headless") or "completo")
+    w._ask_mode = "headless"  # padrão → não raspa a tela
+    assert CanvasWindow._ask_delegate(w, "codex-3", "corrija") == "completo"
+    assert calls == ["headless"]
+    calls.clear()
+    w._ask_mode = "live"  # opt-in → tenta raspar
+    assert CanvasWindow._ask_delegate(w, "codex-3", "corrija") == "truncado"
+    assert calls == ["live"]
 
 
 def test_comando_desconhecido():

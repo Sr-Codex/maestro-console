@@ -113,6 +113,20 @@ def test_agent_argv_monta_box_e_env(tmp_path):
 
 
 @pytest.mark.skipif(not bwrap_available(), reason="bwrap ausente")
+def test_agent_argv_auto_approve(tmp_path):
+    """auto_approve anexa as flags de 'sem prompt' do CLI (declaradas no [interactive] do TOML)."""
+    from maestro.engine.adapters.base import load_profiles
+
+    prof = load_profiles()
+    for base, flag in (("claude", "bypassPermissions"), ("codex", "dangerously-bypass")):
+        off_inner = agent_argv(prof[base], str(tmp_path))[-1]
+        on_inner = agent_argv(prof[base], str(tmp_path), auto_approve=True)[-1]
+        assert flag not in off_inner  # sem auto_approve: só o binário
+        assert flag in on_inner  # com auto_approve: a flag entra antes do "; exec bash"
+        assert on_inner.startswith(f"{base} ")  # a flag vem logo após o binário
+
+
+@pytest.mark.skipif(not bwrap_available(), reason="bwrap ausente")
 def test_agent_argv_cai_no_shell_ao_sair_da_ia(tmp_path):
     class _Prof:
         cmd = ["claude"]

@@ -19,3 +19,11 @@ capture = "session id: (\\S+)"
 [headless.permissions]
 args = ["--sandbox", "workspace-write", "-C", "{workspace}"]
 allowed_tools = []
+
+# Auto-aprovação do INTERATIVO. Verificado no binário codex-cli 0.142.4 (2026-07-01):
+# --full-auto foi REMOVIDO do interativo; a sandbox interna (Landlock+seccomp) aninhada
+# no nosso bwrap tende a quebrar. --dangerously-bypass-approvals-and-sandbox desliga a
+# sandbox INTERNA do codex (o bwrap externo já é o confinamento — uso documentado da flag:
+# "intended solely for environments that are externally sandboxed").
+[interactive]
+auto_approve = ["--dangerously-bypass-approvals-and-sandbox"]

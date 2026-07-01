@@ -1,15 +1,17 @@
 # Índice de documentação — maestro console
 
-> Mapa de TODOS os docs, com o estado de cada um. **Atualizado: 2026-06-29 (v0.37.0).**
+> Mapa de TODOS os docs, com o estado de cada um. **Atualizado: 2026-07-01 (v0.46.0).**
 > Regra: **research/auditoria são point-in-time** (legítimo serem antigos — registram a decisão
 > da época); o que descreve "estado/roadmap" e ficou congelado no MVP recebeu **nota de defasagem**.
 
 ## 🟢 Canônicos (fontes de verdade — sempre atuais)
 | Doc | O que é |
 |---|---|
-| [`../CHANGELOG.md`](../CHANGELOG.md) | Histórico real de versões (v0.1.0→v0.37.0). |
-| [`ADR.md`](ADR.md) | Decisões arquiteturais (ADR-1..15), versionado, imutável. |
+| [`../CHANGELOG.md`](../CHANGELOG.md) | Histórico real de versões (v0.1.0→v0.46.0). |
+| [`ADR.md`](ADR.md) | Decisões arquiteturais (ADR-1..20), versionado, imutável. |
 | [`STATUS.md`](STATUS.md) | Estado atual / o que foi entregue (resumo + ponteiros). |
+| [`13-maestro-mode.md`](13-maestro-mode.md) | **Feature (atual):** Maestro mode seguro + auto-aprovação + cabo headless (ADR-16..20). |
+| [`14-plano-orquestracao-equipe.md`](14-plano-orquestracao-equipe.md) | **Plano cirúrgico (a implementar):** orquestração de equipe (Team Templates + materializador reusando o Grupo do canvas). |
 | [`uconsole.md`](uconsole.md) | Contexto do hardware (CM4) — atual. |
 | [`../AGENTS.md`](../AGENTS.md) · [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Regras de processo (atemporais). |
 

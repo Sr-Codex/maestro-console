@@ -475,9 +475,13 @@ class CanvasWindow:
         self._mutate_log: dict[str, list[float]] = {}  # rate-limit por-manager (todos os cmds)
         self._maestro_clock = time.monotonic  # injetável nos testes
         self._ask_router = None
-        # modo do cabo: "live" (Maestri: digita no terminal vivo do B) ou "headless" (mediado).
-        # default live; cai no headless automaticamente se a captura falhar.
-        self._ask_mode = os.environ.get("MAESTRO_ASK_MODE", "live").strip().lower()
+        # modo do cabo: "headless" (PADRÃO — resposta confiável+completa, com contexto via
+        # resume por agente no run_in_session) ou "live" (opt-in: digita no terminal vivo do
+        # B e RASPA a tela p/ você VER a interação — frágil ~70%, ADR-13/ADR-20). A pesquisa
+        # (2026-07-01) confirmou: raspar TUI full-screen trunca por natureza (o próprio Maestri
+        # sofre ~70%: alt-screen não vai p/ scrollback + PTY em chunks). "A resposta nunca deve
+        # vir do pixel da tela; o live é telemetria, não transporte."
+        self._ask_mode = os.environ.get("MAESTRO_ASK_MODE", "headless").strip().lower()
         if ask_bus_dir and controller is not None and edges is not None:
             self._sock_server = SockServer()
             self._ask_router = AskRouter(
@@ -1073,6 +1077,7 @@ class CanvasWindow:
         det.append(self._editor_detalhes_section(nid, applies))
         det.append(self._editor_monitor_section(nid, applies))
         det.append(self._editor_maestro_section(nid, applies))
+        det.append(self._editor_autoapprove_section(nid, applies))
         det.append(soon("SSH Remoto — Fase 7"))
         stack.add_titled(det, "detalhes", "Detalhes")
         # — Aparência — (Fase 1: Fonte; Cor/Ícone nas próximas etapas; Tema na Fase 2)
@@ -1628,6 +1633,34 @@ class CanvasWindow:
             self.model.set_node_cfg(nid, "maestro", "1" if on else "")
             self._apply_node_maestro(nid)
             if on != was and self._role_targets(nid):  # nó-agente → reinicia p/ ler a skill
+                self._rebuild_agent_argv(nid)  # Fase 1: relança com/sem auto-aprovação
+                self._respawn_node(nid)
+
+        applies.append(apply)
+        return box
+
+    def _editor_autoapprove_section(self, nid: str, applies: list) -> Gtk.Widget:
+        """Permissão total (Fase 2): o CLI deste agente roda comandos SEM pedir permissão a
+        cada um. O confinamento REAL continua sendo o bwrap (ADR-6) — isto só remove os
+        prompts. Vale p/ nó-AGENTE; reinicia p/ aplicar."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        chk = Gtk.CheckButton(label="Permissão total (não pedir permissão a cada comando)")
+        chk.set_active(bool(self.model.node_cfg(nid, "autoapprove")))
+        box.append(chk)
+        hint = Gtk.Label(
+            label="Roda o claude/codex sem os prompts de aprovação. O confinamento continua "
+                  "sendo o sandbox (bwrap) — isto só tira as confirmações. Reinicia o agente.",
+            xalign=0)
+        hint.add_css_class("dim-label")
+        hint.set_wrap(True)
+        box.append(hint)
+
+        def apply():
+            on = chk.get_active()
+            was = bool(self.model.node_cfg(nid, "autoapprove"))
+            self.model.set_node_cfg(nid, "autoapprove", "1" if on else "")
+            if on != was and self._agent_base(nid):  # nó-agente → relança com/sem as flags
+                self._rebuild_agent_argv(nid)
                 self._respawn_node(nid)
 
         applies.append(apply)
@@ -2218,6 +2251,12 @@ class CanvasWindow:
             self._sock_server.remove_node(nid)
         self._agent_nids.discard(nid)  # sai do fleet
         self._recruited_by.pop(nid, None)  # sai da linhagem
+        base = self._agent_base(nid)  # desregistra a INSTÂNCIA do controller (libera o id)
+        if self.controller is not None and base is not None and nid != base:
+            try:
+                self.controller.remove_agent_instance(nid)
+            except Exception as exc:  # noqa: BLE001
+                _log.error("remove_agent_instance(%s): %s", nid, exc)
         _t = getattr(self.frames.get(nid), "_term", None)
         if _t is not None:  # H1: invalida respawn em voo (não roda _go() em widget destruído)
             _t._destroyed = True
@@ -2810,6 +2849,32 @@ class CanvasWindow:
         base = getattr(frame, "_base_argv", ["/bin/bash"]) if frame is not None else ["/bin/bash"]
         return self._effective_argv(nid, base)
 
+    def _node_auto_approve(self, nid: str) -> bool:
+        """O CLI deste nó roda SEM prompts de permissão? Sim se Maestro mode (Fase 1) ou o
+        toggle 'permissão total' (Fase 2) estiver ligado — o confinamento real é o bwrap (ADR-6)."""
+        return bool(self.model.node_cfg(nid, "maestro") or self.model.node_cfg(nid, "autoapprove"))
+
+    def _agent_base(self, nid: str) -> str | None:
+        """Base do agente (claude/codex) do nó, a partir do roster persistido."""
+        for spec in self.model.node_roster():
+            if spec.get("nid") == nid:
+                return spec.get("base") or nid
+        return None
+
+    def _rebuild_agent_argv(self, nid: str) -> None:
+        """Recomputa o argv bwrap do agente (ex.: mudou o auto_approve) e atualiza _base_argv,
+        p/ o próximo respawn lançar o CLI com/sem as flags de auto-aprovação."""
+        frame = self.frames.get(nid)
+        base = self._agent_base(nid)
+        if frame is None or base is None or not self._ask_bus_dir:
+            return
+        prof = installed_agents().get(base)
+        if prof is None:
+            return
+        frame._base_argv = agent_argv(prof, str(self._node_ws(nid)), node=nid,
+                                      ask_bus_dir=self._ask_bus_dir,
+                                      auto_approve=self._node_auto_approve(nid))
+
     def _node_envv(self, nid: str) -> list[str] | None:
         """env custom (linhas KEY=VALUE em node_cfg 'env') mesclado ao ambiente; None = herda."""
         raw = self.model.node_cfg(nid, "env").strip()
@@ -3284,9 +3349,11 @@ class CanvasWindow:
         return (frm, to) in pairs or (to, frm) in pairs  # cabo em qualquer sentido
 
     def _ask_delegate(self, to: str, prompt: str) -> str:
-        # MODO LIVE (padrão, estilo Maestri): digita o prompt no terminal VIVO do B e captura
-        # a resposta dele. Cai no HEADLESS (variante a) se não der — A sempre recebe algo.
-        if self._ask_mode != "headless":
+        # PADRÃO = HEADLESS (ADR-20): a resposta vem por um canal confiável e COMPLETO, com
+        # contexto contínuo por agente (run_in_session usa --resume). Só o modo "live" (opt-in
+        # via MAESTRO_ASK_MODE=live) raspa o terminal vivo p/ você VER a interação — mas é frágil
+        # (~70%, trunca); se raspar algo, usa; senão cai no headless mesmo assim.
+        if self._ask_mode == "live":
             ans = self._ask_live(to, prompt)
             if ans and ans.strip():
                 return ans
@@ -4477,8 +4544,15 @@ class CanvasWindow:
     # -- sticky notes no canvas (V9-S3) --
     # -- ➕ novo terminal em runtime (shell ou nova instância de agente) --
     def _unique_nid(self, prefix: str) -> str:
+        # evita colisão com TUDO que "reserva" um id: frames na tela, o registro do
+        # controller (add_agent_instance recusa 'id já existe') e o roster persistido —
+        # senão recruit trava quando sobra um codex-N antigo só no controller (não nos frames).
+        taken = set(self.frames)
+        if self.controller is not None:
+            taken |= set(getattr(self.controller, "agents", {}))
+        taken |= {s.get("nid") for s in self.model.node_roster()}
         i = 2
-        while f"{prefix}-{i}" in self.frames:
+        while f"{prefix}-{i}" in taken:
             i += 1
         return f"{prefix}-{i}"
 
@@ -4535,7 +4609,8 @@ class CanvasWindow:
         wsp = Workspace(str(base_home / "workspaces")).create(nid)
         install_ask_skill(wsp, nid)  # ensina o maestro-ask ao novo agente
         # (role recém-criado é vazio; a injeção do role acontece em _add_node → _apply_node_role)
-        argv = agent_argv(profiles[base], str(wsp), node=nid, ask_bus_dir=self._ask_bus_dir)
+        argv = agent_argv(profiles[base], str(wsp), node=nid, ask_bus_dir=self._ask_bus_dir,
+                          auto_approve=self._node_auto_approve(nid))
         self._add_node(nid, nid, argv, default=default or self._next_node_default())
         self.model.add_to_roster(nid, "agent", base)  # persiste -> volta ao reabrir
         self._resize_plane()
@@ -5755,7 +5830,9 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
                     controller.add_agent_instance(nid, base)
                 except Exception:
                     controller.agents[nid] = prof  # já no registry: garante só o profile
-            argv = agent_argv(prof, str(wsp), node=nid, ask_bus_dir=ask_bus_dir)
+            # restaura o auto-aprovar persistido (Maestro mode / toggle permissão total)
+            auto = bool(model.node_cfg(nid, "maestro") or model.node_cfg(nid, "autoapprove"))
+            argv = agent_argv(prof, str(wsp), node=nid, ask_bus_dir=ask_bus_dir, auto_approve=auto)
             nodes.append((nid, model.node_name(nid, nid), argv))
         if not nodes:  # tudo removido / nada instalado -> um shell de exemplo
             nodes = [("shell-1", "shell", ["/bin/bash"])]

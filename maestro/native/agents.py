@@ -8,6 +8,7 @@ nenhum bypass.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 
 from ..engine.adapters.base import AgentProfile, load_profiles
@@ -34,6 +35,7 @@ def agent_argv(
     *,
     node: str | None = None,
     ask_bus_dir: str | None = None,
+    auto_approve: bool = False,
 ) -> list[str]:
     """argv do agente INTERATIVO (binário sem -p) confinado por bwrap.
 
@@ -62,9 +64,13 @@ def agent_argv(
             "MAESTRO_BIN": bin_dir,  # caminho absoluto dos shims (imune ao reset de PATH)
             "PATH": f"{bin_dir}:{base_path}",
         }
-    # roda a IA dentro de um shell e, ao sair dela, mantém um shell interativo
-    agent_bin = profile.cmd[0]
-    inner = ["/bin/bash", "-c", f"{agent_bin}; exec /bin/bash -i"]
+    # roda a IA dentro de um shell e, ao sair dela, mantém um shell interativo.
+    # auto_approve: anexa as flags de "sem prompt" do CLI (só quando o nó pede; o
+    # confinamento real é o bwrap — ADR-6). Flags declaradas no [interactive] do TOML.
+    launch = profile.cmd[0]
+    if auto_approve and profile.interactive_auto_approve:
+        launch += " " + " ".join(shlex.quote(a) for a in profile.interactive_auto_approve)
+    inner = ["/bin/bash", "-c", f"{launch}; exec /bin/bash -i"]
     return sandbox_wrap(
         inner,
         workspace=workspace,

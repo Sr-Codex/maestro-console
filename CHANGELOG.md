@@ -3,6 +3,22 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.46.0] — Auto-aprovar comandos do agente (sem prompt de permissão)
+O terminal **interativo** do agente pode rodar comandos **sem os prompts de permissão** do CLI,
+quando o nó pede. Seguro por construção: o **ADR-6** já cravou que as flags de permissão do CLI
+"só evitam prompts, não confinam — o limite efetivo é o bwrap"; então isto **só remove o atrito**,
+sem afrouxar o sandbox nem a autoridade-no-host do Maestro mode.
+- **Fase 1 — Maestro mode sem prompt:** ao ligar o Maestro mode, o manager passa a rodar
+  `maestri recruit/list/…` sem pedir permissão a cada comando (era a dor: o CLI perguntava toda vez).
+- **Fase 2 — toggle "Permissão total" por nó** (aba Detalhes): auto-aprova **qualquer** agente
+  (não só managers), on-demand — usar claude/codex sem aprovar comando a comando. Persiste (`node_cfg`).
+- **Flags declarativas** no `[interactive].auto_approve` de cada `adapters/*.toml` (ADR-4), **verificadas
+  nos binários instalados**: claude 2.1.197 → `--permission-mode bypassPermissions`; codex 0.142.4 →
+  `--dangerously-bypass-approvals-and-sandbox` (o `--full-auto` saiu; a sandbox interna do codex
+  aninhada no bwrap quebra → essa flag desliga a interna dele, o bwrap externo é o confinamento).
+- **Provado em runtime** (dentro do bwrap real, sem mock): claude e codex rodaram um `echo` sem prompt.
+  Decisão em **ADR-19**. Supervisão de fleet (HUD, auditoria, kill-switch, anomalia) permanece.
+
 ## [0.45.0] — Editar Terminal (Fase 6): Maestro mode SEGURO (sub-orquestração)
 **Maestro mode** — um terminal de **agente** pode virar **manager** e montar/coordenar uma equipe
 no próprio canvas, sem sair do shell. Feature **original** (diverge do Maestri, que é orquestração
