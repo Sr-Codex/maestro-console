@@ -32,6 +32,8 @@ def action_menu_items(
         items.append(("📝 nova nota", "note"))
     if has_groups:
         items.append(("⬚ novo grupo", "group"))
+    if has_controller and has_groups:
+        items.append(("🧩 montar equipe", "team"))
     if has_floors:
         items.append(("🧱 floors…", "floors"))
     if has_routines and has_controller:

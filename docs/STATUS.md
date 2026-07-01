@@ -1,6 +1,6 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-01 · v0.46.0**.
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-01 · v0.47.0**.
 > **Fontes de verdade canônicas:** [`CHANGELOG.md`](../CHANGELOG.md) (histórico completo
 > v0.1.0→v0.46.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..20). Este arquivo resume o
 > estado; em caso de divergência, o CHANGELOG/ADR mandam. Os artefatos em `_bmad-output/`
@@ -50,6 +50,14 @@
 - **Auto-aprovação** (ADR-19): Maestro mode / toggle "Permissão total" por nó → o CLI roda sem prompts
   (o bwrap é o confinamento). **Cabo por headless** por padrão (ADR-20): resposta completa + contexto.
 
+### Orquestração de equipe — Fase A (v0.47.0), ver [`docs/14-plano-orquestracao-equipe.md`](14-plano-orquestracao-equipe.md)
+- **Team Templates** (`engine/team_templates.py`): `TeamTemplate`→`GroupSpec`(+`leader` schema)→
+  `AgentSpec`(=`Role`), placeholders (`{projeto}`), persistência atômica, built-ins.
+- **`_materialize_team()`**: monta Grupos do canvas + recruta os membros DENTRO de cada um (grid,
+  pertinência geométrica), guard-rails (fleet-cap, tamanho de grupo), WYSIWYG, auditado.
+- **FAB "🧩 Montar equipe"**: lista built-in+salvos, preview, Montar (com placeholder), Excluir.
+- Fase B (NL → confirma → materializa) e editor visual de template ficam para depois.
+
 ## O que NÃO está feito (lacunas conhecidas)
 - **Medidor de custo/tokens + teto de orçamento** — diferencial-âncora de `docs/08`; parser/ledger
   existem (PR #9) mas a feature de produto está **reservada/não entregue** (F1 em `docs/10`).
@@ -61,11 +69,14 @@
   validação semântica plena e **egress allow-list de rede** — adiados, com controles
   compensatórios (caps + kill-switch + HITL + auditoria).
 - **SSH remoto (Fase 7 do Editar Terminal)** — ainda não iniciado.
+- **Orquestração de equipe — Fase B** (NL → confirma → materializa) e o **editor visual** de
+  Team Templates (criar/editar grupo+membro pela UI) — ainda não iniciados; v1 usa built-ins +
+  edição manual do JSON (`docs/14`).
 
 ## Stack / device
 - **Linux aarch64** (Kali) no **ClockworkPi uConsole / CM4**; **Python ≥3.11**.
 - Canvas: **GTK4 + VTE-gtk4** (PyGObject), python do sistema. Engine: venv.
-- **495 testes** (pytest) + live opt-in (bwrap: socket-em-sandbox, drill do kill-switch); lint **ruff**.
+- **532 testes** (pytest) + live opt-in (bwrap: socket-em-sandbox, drill do kill-switch); lint **ruff**.
 
 ## Como navegar a documentação
 - **Estado atual:** este arquivo. · **Histórico de versões:** `CHANGELOG.md`. · **Decisões:** `docs/ADR.md`.

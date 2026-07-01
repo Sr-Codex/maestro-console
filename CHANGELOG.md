@@ -3,6 +3,28 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.47.0] — Orquestração de equipe (Fase A): Team Templates + materializador
+Mandar UMA instrução e o maestro montar uma **organização inteira** — grupos do canvas +
+terminais recrutados dentro deles, com papéis, de uma vez (docs/14, plano cirúrgico validado
+com 2ª rodada de pesquisa comparando repos em crescimento rápido e grandes players como CrewAI,
+Google ADK, OpenAI Agents SDK, Claude Agent SDK).
+- **`TeamTemplate`** (`engine/team_templates.py`): `AgentSpec` (=`Role`) → `GroupSpec` (com
+  `leader` opcional, schema-only por ora) → `TeamTemplate`. Persistência atômica (temp+
+  `os.replace`), espelhando `roles.py:save_role_library`, em
+  `~/.config/maestro-console/team_templates.json`. 2 built-ins (`dev-trio`; `equipe-projeto`,
+  com placeholder).
+- **Placeholders** (`{projeto}` etc.) via `str.format_map` tolerante (chave ausente não quebra):
+  `render_team_template`/`placeholder_names` — reuso de template entre projetos, promovido da
+  v2 pra já (padrão CrewAI `agents.yaml`, pesquisa 2026-07-01).
+- **`_materialize_team()`** (canvas): cria os Grupos + recruta os membros DENTRO de cada um
+  (posicionamento em grid, pertinência é **geométrica** — sobreposição ≥25%, não "add_member").
+  Guard-rails: total ≤ `MAESTRO_FLEET_CAP`; grupo > 8 agentes bloqueia; > 5 avisa (recomendado:
+  3-4, dado empírico de dois papers de 2026). WYSIWYG (`_autofit_group`+`_persist_group`).
+  Auditado (`team_materialize`).
+- **FAB "🧩 Montar equipe"**: lista templates (built-in + salvos), preview de grupos/papéis,
+  Montar (pede valores de placeholder quando há) e Excluir (custom).
+- Fase B (linguagem natural → confirma → materializa) fica para uma próxima fatia.
+
 ## [0.46.0] — Auto-aprovar comandos do agente (sem prompt de permissão)
 O terminal **interativo** do agente pode rodar comandos **sem os prompts de permissão** do CLI,
 quando o nó pede. Seguro por construção: o **ADR-6** já cravou que as flags de permissão do CLI
