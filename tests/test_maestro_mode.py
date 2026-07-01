@@ -140,6 +140,17 @@ def test_limite_de_recrutas():
     assert not r["ok"] and "limite" in r["error"]
 
 
+def test_node_auto_approve_le_maestro_e_autoapprove():
+    """auto_approve liga por Maestro mode (Fase 1) OU pelo toggle 'permissão total' (Fase 2)."""
+    w, _ = _make_win()
+    assert not CanvasWindow._node_auto_approve(w, "n")  # nada ligado
+    w.model.set_node_cfg("n", "maestro", "1")
+    assert CanvasWindow._node_auto_approve(w, "n")  # Maestro mode implica auto-aprovar
+    w.model.set_node_cfg("n", "maestro", "")
+    w.model.set_node_cfg("n", "autoapprove", "1")
+    assert CanvasWindow._node_auto_approve(w, "n")  # toggle explícito (agente normal)
+
+
 def test_comando_desconhecido():
     w, _ = _make_win()
     w.model.set_node_cfg("mgr", "maestro", "1")

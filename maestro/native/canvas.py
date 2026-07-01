@@ -1073,6 +1073,7 @@ class CanvasWindow:
         det.append(self._editor_detalhes_section(nid, applies))
         det.append(self._editor_monitor_section(nid, applies))
         det.append(self._editor_maestro_section(nid, applies))
+        det.append(self._editor_autoapprove_section(nid, applies))
         det.append(soon("SSH Remoto — Fase 7"))
         stack.add_titled(det, "detalhes", "Detalhes")
         # — Aparência — (Fase 1: Fonte; Cor/Ícone nas próximas etapas; Tema na Fase 2)
@@ -1629,6 +1630,33 @@ class CanvasWindow:
             self._apply_node_maestro(nid)
             if on != was and self._role_targets(nid):  # nó-agente → reinicia p/ ler a skill
                 self._rebuild_agent_argv(nid)  # Fase 1: relança com/sem auto-aprovação
+                self._respawn_node(nid)
+
+        applies.append(apply)
+        return box
+
+    def _editor_autoapprove_section(self, nid: str, applies: list) -> Gtk.Widget:
+        """Permissão total (Fase 2): o CLI deste agente roda comandos SEM pedir permissão a
+        cada um. O confinamento REAL continua sendo o bwrap (ADR-6) — isto só remove os
+        prompts. Vale p/ nó-AGENTE; reinicia p/ aplicar."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        chk = Gtk.CheckButton(label="Permissão total (não pedir permissão a cada comando)")
+        chk.set_active(bool(self.model.node_cfg(nid, "autoapprove")))
+        box.append(chk)
+        hint = Gtk.Label(
+            label="Roda o claude/codex sem os prompts de aprovação. O confinamento continua "
+                  "sendo o sandbox (bwrap) — isto só tira as confirmações. Reinicia o agente.",
+            xalign=0)
+        hint.add_css_class("dim-label")
+        hint.set_wrap(True)
+        box.append(hint)
+
+        def apply():
+            on = chk.get_active()
+            was = bool(self.model.node_cfg(nid, "autoapprove"))
+            self.model.set_node_cfg(nid, "autoapprove", "1" if on else "")
+            if on != was and self._agent_base(nid):  # nó-agente → relança com/sem as flags
+                self._rebuild_agent_argv(nid)
                 self._respawn_node(nid)
 
         applies.append(apply)
