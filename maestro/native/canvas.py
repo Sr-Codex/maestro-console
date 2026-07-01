@@ -2247,6 +2247,12 @@ class CanvasWindow:
             self._sock_server.remove_node(nid)
         self._agent_nids.discard(nid)  # sai do fleet
         self._recruited_by.pop(nid, None)  # sai da linhagem
+        base = self._agent_base(nid)  # desregistra a INSTÂNCIA do controller (libera o id)
+        if self.controller is not None and base is not None and nid != base:
+            try:
+                self.controller.remove_agent_instance(nid)
+            except Exception as exc:  # noqa: BLE001
+                _log.error("remove_agent_instance(%s): %s", nid, exc)
         _t = getattr(self.frames.get(nid), "_term", None)
         if _t is not None:  # H1: invalida respawn em voo (não roda _go() em widget destruído)
             _t._destroyed = True
@@ -4532,8 +4538,15 @@ class CanvasWindow:
     # -- sticky notes no canvas (V9-S3) --
     # -- ➕ novo terminal em runtime (shell ou nova instância de agente) --
     def _unique_nid(self, prefix: str) -> str:
+        # evita colisão com TUDO que "reserva" um id: frames na tela, o registro do
+        # controller (add_agent_instance recusa 'id já existe') e o roster persistido —
+        # senão recruit trava quando sobra um codex-N antigo só no controller (não nos frames).
+        taken = set(self.frames)
+        if self.controller is not None:
+            taken |= set(getattr(self.controller, "agents", {}))
+        taken |= {s.get("nid") for s in self.model.node_roster()}
         i = 2
-        while f"{prefix}-{i}" in self.frames:
+        while f"{prefix}-{i}" in taken:
             i += 1
         return f"{prefix}-{i}"
 

@@ -45,6 +45,22 @@ def test_add_agent_instance_id_duplicado(tmp_path):
         store.close()
 
 
+def test_remove_agent_instance_libera_o_id(tmp_path):
+    """Ao dispensar/fechar, a instância sai do dict E do registry → o id pode ser reusado
+    (fix do 'id já existe' no recruit quando sobrava um codex-N antigo só no controller)."""
+    c, store = _ctrl(tmp_path)
+    try:
+        c.add_agent_instance("codex-3", "claude")
+        c.remove_agent_instance("codex-3")
+        assert "codex-3" not in c.agents
+        assert c._registry.get("codex-3") is None
+        c.add_agent_instance("codex-3", "claude")  # id liberado: re-registra sem erro
+        assert "codex-3" in c.agents
+        c.remove_agent_instance("nao-existe")  # idempotente: não levanta
+    finally:
+        store.close()
+
+
 def test_toolbar_tem_novo_terminal():
     items = action_menu_items(
         has_controller=True,

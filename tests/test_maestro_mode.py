@@ -19,6 +19,7 @@ from maestro.native.canvas import CanvasWindow  # noqa: E402
 class _FakeModel:
     def __init__(self):
         self.cfg = {}
+        self.roster = []
 
     def node_cfg(self, nid, key, default=""):
         return self.cfg.get((nid, key), default)
@@ -28,6 +29,12 @@ class _FakeModel:
 
     def node_name(self, nid, default):
         return default
+
+    def node_roster(self):
+        return self.roster
+
+    def set_node_roster(self, roster):
+        self.roster = roster
 
 
 class _FakeEdges:
@@ -138,6 +145,16 @@ def test_limite_de_recrutas():
         assert _disp(w, "mgr", "recruit", ["codex"])["ok"]
     r = _disp(w, "mgr", "recruit", ["codex"])  # 7º → bloqueia
     assert not r["ok"] and "limite" in r["error"]
+
+
+def test_unique_nid_evita_controller_e_roster():
+    """Bug do teste ao vivo: recruit travava com 'id já existe' porque _unique_nid só olhava
+    os frames. Agora pula ids reservados no controller E no roster também."""
+    w, _ = _make_win()
+    w.frames = {"codex-2": object()}  # ocupa codex-2 na tela
+    w.controller = SimpleNamespace(agents={"codex-3": object()})  # codex-3 só no controller
+    w.model.set_node_roster([{"nid": "codex-4", "base": "codex"}])  # codex-4 só no roster
+    assert CanvasWindow._unique_nid(w, "codex") == "codex-5"  # pula 2, 3 e 4
 
 
 def test_node_auto_approve_le_maestro_e_autoapprove():

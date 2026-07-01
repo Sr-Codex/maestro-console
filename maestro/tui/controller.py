@@ -57,6 +57,15 @@ class TUIController:
         self.agents[new_id] = self.agents[base_id]  # mesma profile (mesmo binário)
         self._registry.register(new_id, base_id)  # type = base (claude/codex)
 
+    def remove_agent_instance(self, nid: str) -> None:
+        """Desregistra um agente-INSTÂNCIA (ao fechar/dispensar o nó) — libera o id p/ reuso
+        e evita a colisão 'id já existe' em recruit futuro. Idempotente."""
+        self.agents.pop(nid, None)
+        try:
+            self._registry.unregister(nid)
+        except Exception:  # noqa: BLE001 — remoção best-effort não pode derrubar o close
+            pass
+
     # -- consultas ------------------------------------------------------
     def list_agents(self) -> list[AgentRecord]:
         return self._registry.list()
