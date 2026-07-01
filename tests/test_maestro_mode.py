@@ -74,11 +74,13 @@ def _make_win():
         return nid
 
     w._new_agent_terminal = fake_new_agent
-    w._apply_node_role = lambda nid: None
-    w._respawn_node = lambda nid: None
+    w._apply_node_role = lambda nid: None  # fronteira (escreve arquivo/GTK) — mock OK
+    w._respawn_node = lambda nid: None  # fronteira (subprocess/GTK) — mock OK
     w._ask_hint = lambda a, b: None
     w._wake_cables = lambda: None
-    w._node_role = lambda nid: None
+    # _node_role NÃO é fronteira (lógica pura sobre node_cfg + biblioteca) → roda o REAL
+    # (era mockado p/ None e ESCONDEU o bug do papel livre; ver revisão de conduta P1)
+    w._roles = lambda: []  # biblioteca vazia → papéis livres viram Role ad-hoc
     w._on_note_cable_added = lambda *a: None
 
     def fake_close(nid):
