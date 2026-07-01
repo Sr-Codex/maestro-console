@@ -475,9 +475,13 @@ class CanvasWindow:
         self._mutate_log: dict[str, list[float]] = {}  # rate-limit por-manager (todos os cmds)
         self._maestro_clock = time.monotonic  # injetável nos testes
         self._ask_router = None
-        # modo do cabo: "live" (Maestri: digita no terminal vivo do B) ou "headless" (mediado).
-        # default live; cai no headless automaticamente se a captura falhar.
-        self._ask_mode = os.environ.get("MAESTRO_ASK_MODE", "live").strip().lower()
+        # modo do cabo: "headless" (PADRÃO — resposta confiável+completa, com contexto via
+        # resume por agente no run_in_session) ou "live" (opt-in: digita no terminal vivo do
+        # B e RASPA a tela p/ você VER a interação — frágil ~70%, ADR-13/ADR-20). A pesquisa
+        # (2026-07-01) confirmou: raspar TUI full-screen trunca por natureza (o próprio Maestri
+        # sofre ~70%: alt-screen não vai p/ scrollback + PTY em chunks). "A resposta nunca deve
+        # vir do pixel da tela; o live é telemetria, não transporte."
+        self._ask_mode = os.environ.get("MAESTRO_ASK_MODE", "headless").strip().lower()
         if ask_bus_dir and controller is not None and edges is not None:
             self._sock_server = SockServer()
             self._ask_router = AskRouter(
@@ -3345,9 +3349,11 @@ class CanvasWindow:
         return (frm, to) in pairs or (to, frm) in pairs  # cabo em qualquer sentido
 
     def _ask_delegate(self, to: str, prompt: str) -> str:
-        # MODO LIVE (padrão, estilo Maestri): digita o prompt no terminal VIVO do B e captura
-        # a resposta dele. Cai no HEADLESS (variante a) se não der — A sempre recebe algo.
-        if self._ask_mode != "headless":
+        # PADRÃO = HEADLESS (ADR-20): a resposta vem por um canal confiável e COMPLETO, com
+        # contexto contínuo por agente (run_in_session usa --resume). Só o modo "live" (opt-in
+        # via MAESTRO_ASK_MODE=live) raspa o terminal vivo p/ você VER a interação — mas é frágil
+        # (~70%, trunca); se raspar algo, usa; senão cai no headless mesmo assim.
+        if self._ask_mode == "live":
             ans = self._ask_live(to, prompt)
             if ans and ans.strip():
                 return ans

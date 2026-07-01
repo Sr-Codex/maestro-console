@@ -168,6 +168,21 @@ def test_node_auto_approve_le_maestro_e_autoapprove():
     assert CanvasWindow._node_auto_approve(w, "n")  # toggle explícito (agente normal)
 
 
+def test_cabo_default_headless_live_optin():
+    """ADR-20: por padrão o cabo entrega por HEADLESS (confiável); 'live' (raspa a TUI) é opt-in."""
+    w = CanvasWindow.__new__(CanvasWindow)
+    calls = []
+    w._ask_live = lambda to, p: (calls.append("live") or "truncado")
+    w._ask_headless = lambda to, p: (calls.append("headless") or "completo")
+    w._ask_mode = "headless"  # padrão → não raspa a tela
+    assert CanvasWindow._ask_delegate(w, "codex-3", "corrija") == "completo"
+    assert calls == ["headless"]
+    calls.clear()
+    w._ask_mode = "live"  # opt-in → tenta raspar
+    assert CanvasWindow._ask_delegate(w, "codex-3", "corrija") == "truncado"
+    assert calls == ["live"]
+
+
 def test_comando_desconhecido():
     w, _ = _make_win()
     w.model.set_node_cfg("mgr", "maestro", "1")
