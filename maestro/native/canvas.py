@@ -3192,10 +3192,12 @@ class CanvasWindow:
                 return [str(wsp)]
         return []
 
-    def _apply_node_role(self, nid: str) -> None:
-        """Materializa o role: bloco MARCADO (append seguro) no CLAUDE.md/AGENTS.md do cwd e do
-        workspace + sidecar `.maestri/role.json` no cwd + accent = badge. role None = desatribui."""
-        role = self._node_role(nid)
+    def _apply_role_spec(self, nid: str, role) -> None:
+        """Materializa um Role JÁ RESOLVIDO (bloco marcado + sidecar + accent). `role=None`
+        desatribui. Extraído de `_apply_node_role` pra quem já tem o Role em mãos e NÃO deve
+        perder a instrução na resolução por nome/biblioteca (ex.: `_materialize_team`, cujo
+        `AgentSpec.instruction` já vem com placeholders interpolados — resolver por
+        `_node_role`/nome perderia esse texto e escreveria só o NOME como instrução)."""
         targets = self._role_targets(nid)
         if role is None:  # desatribui: tira o bloco marcado (preserva o resto)
             for t in targets:
@@ -3218,6 +3220,10 @@ class CanvasWindow:
         if not self.model.node_cfg(nid, "color"):  # M2: não sobrescreve o accent que o usuário pôs
             self.model.set_node_cfg(nid, "color", role.badge())
             self._apply_node_color(nid, role.badge())
+
+    def _apply_node_role(self, nid: str) -> None:
+        """Materializa o role ATRIBUÍDO por nome (`node_cfg('role')` + biblioteca/ad-hoc)."""
+        self._apply_role_spec(nid, self._node_role(nid))
 
     def _apply_node_maestro(self, nid: str) -> None:
         """Maestro mode (Fase 6): injeta a manager-skill no workspace do agente quando o toggle
@@ -5353,8 +5359,8 @@ class CanvasWindow:
                                 member=member.name, reason=getattr(self, "_last_recruit_error", ""))
                     continue
                 agents_created += 1
-                self.model.set_node_cfg(nid, "role", member.name)
-                self._apply_node_role(nid)
+                self.model.set_node_cfg(nid, "role", member.name)  # nome p/ display/badge/HUD
+                self._apply_role_spec(nid, member)  # instrução REAL do template (não a lib)
                 if manager:
                     self._recruited_by[nid] = manager
                     self.edges.add(manager, nid)

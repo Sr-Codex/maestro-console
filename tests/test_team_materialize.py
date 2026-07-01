@@ -16,6 +16,7 @@ from maestro.engine.groups import Groups
 from maestro.engine.state.store import Store
 from maestro.engine.team_templates import GroupSpec, TeamTemplate
 from maestro.engine.teams import Role
+from maestro.engine.workspace import Workspace
 from maestro.native.canvas import CanvasWindow  # noqa: E402
 
 
@@ -48,7 +49,7 @@ def _make_win(tmp_path, fail_indices=frozenset()):
     w = CanvasWindow.__new__(CanvasWindow)  # sem __init__ → não cria GTK
     w.model = _FakeModel()
     w.controller = object()
-    w._ask_bus_dir = str(tmp_path / "bus")
+    w._ask_bus_dir = str(tmp_path / "home" / "bus")
     w.edges = _FakeEdges()
     w.groups = Groups(Store(tmp_path / "m.db"))
     w.frames = {}
@@ -85,10 +86,13 @@ def _make_win(tmp_path, fail_indices=frozenset()):
         nid = f"{base}-{i + 1}"
         created.append((nid, default))
         w._base_pos[nid] = tuple(default) if default else (0.0, 0.0)
+        # espelha o `_new_agent_terminal` real: cria o workspace isolado ANTES de devolver o
+        # nid — `_apply_role_spec` (real, não mockado) escreve o bloco de role nele.
+        Workspace(str(tmp_path / "home" / "workspaces")).create(nid)
         return nid
 
     w._new_agent_terminal = fake_new_agent
-    w._apply_node_role = lambda nid: None  # fronteira (escreve arquivo/GTK) — mock OK
+    w._apply_node_color = lambda nid, hexc: None  # fronteira (CSS/GTK) — mock OK
     w._respawn_node = lambda nid: None  # fronteira (subprocess/GTK) — mock OK
     w._resize_plane = lambda: None  # GTK
     w._refresh_fleet_hud = lambda: None  # GTK
@@ -126,6 +130,27 @@ def test_materialize_posiciona_membros_dentro_do_grupo_geometricamente(tmp_path)
     gid = w.groups.list()[0].id
     members = CanvasWindow._group_members(w, gid)
     assert len(members) == 3
+
+
+def test_materialize_escreve_instrucao_real_no_workspace_nao_so_o_nome(tmp_path):
+    """Regressão: `_apply_node_role` resolve o papel pelo NOME (`node_cfg`) contra a
+    biblioteca e, sem entrada lá, usaria o NOME como instrução — perdendo o texto real
+    (com placeholder já interpolado) do `AgentSpec`. `_materialize_team` precisa escrever
+    via `_apply_role_spec(nid, member)` direto, preservando a instrução completa."""
+    w, created = _make_win(tmp_path)
+    rich_instruction = "Arquiteto do projeto n8n. Decide desenho técnico; result objetivo."
+    spec = TeamTemplate(
+        name="t",
+        groups=[GroupSpec(name="G", members=[Role("arquiteto", "claude", rich_instruction)])],
+    )
+    result = CanvasWindow._materialize_team(w, spec)
+    assert result["ok"]
+    nid = created[0][0]
+    ws = Workspace(str(tmp_path / "home" / "workspaces")).path(nid)
+    agents_md = (ws / "AGENTS.md").read_text(encoding="utf-8")
+    assert rich_instruction in agents_md
+    # a armadilha do bug original: escrever só o NOME como se fosse a instrução
+    assert "Seu papel: arquiteto\n\narquiteto\n" not in agents_md
 
 
 def test_materialize_recusa_fleet_cap_estourado_e_nao_cria_nada(tmp_path):
