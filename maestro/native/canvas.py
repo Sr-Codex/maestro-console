@@ -19,6 +19,7 @@ import os
 import signal
 import sys
 import threading
+import time
 import unicodedata
 from pathlib import Path
 
@@ -33,15 +34,23 @@ gi.require_version("Pango", "1.0")
 from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Pango, Vte  # noqa: E402
 
 from ..engine.ask_bus import (  # noqa: E402
-    AskBus,
+    AskBusError,
+    AskRequest,
+    AskResponse,
     install_ask_skill,
     install_client,
     install_connected_notes_skill,
+    install_maestri_client,
+    install_maestro_skill,
+    validate_req,
 )
 from ..engine.ask_router import AskRouter, policy_from_env  # noqa: E402
+from ..engine.ask_sock import SockServer  # noqa: E402
 from ..engine.attention import attention_items, notify  # noqa: E402
 from ..engine.envelope import EnvelopeState  # noqa: E402
 from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
+from ..engine.maestro_audit import append_event, read_events  # noqa: E402
+from ..engine.maestro_guard import has_cycle, spawn_anomaly  # noqa: E402
 from ..engine.notes import (  # noqa: E402
     file_to_note,
     md_enter_continuation,
@@ -457,16 +466,20 @@ class CanvasWindow:
         self._selected: tuple[str, str] | None = None  # (kind, id) selecionado (borda azul)
         self._note_editing: str | None = None  # nota em edição in-place (formata ao sair)
         self._ptr_over: tuple[str, str] | None = None  # (kind,id) sob o cursor (roteio do scroll)
-        # cabos interativos (ADR-11): mailbox + router — só com controller + edges
+        # cabos interativos (ADR-11) + Maestro mode (ADR-17): transporte por SOCKET por
+        # agente (identidade por canal) + router — só com controller + edges
         self._ask_bus_dir = ask_bus_dir  # p/ criar novos terminais de agente em runtime
-        self._ask_bus = None
+        self._sock_server = None  # SockServer: um listener por agente (<box>/sock)
+        self._agent_nids: set[str] = set()  # nós de agente vivos (fonte do fleet-cap/kill-switch)
+        self._recruited_by: dict[str, str] = {}  # linhagem: recruta -> manager (profundidade)
+        self._mutate_log: dict[str, list[float]] = {}  # rate-limit por-manager (todos os cmds)
+        self._maestro_clock = time.monotonic  # injetável nos testes
         self._ask_router = None
-        self._ask_inflight: set[str] = set()
         # modo do cabo: "live" (Maestri: digita no terminal vivo do B) ou "headless" (mediado).
         # default live; cai no headless automaticamente se a captura falhar.
         self._ask_mode = os.environ.get("MAESTRO_ASK_MODE", "live").strip().lower()
         if ask_bus_dir and controller is not None and edges is not None:
-            self._ask_bus = AskBus(ask_bus_dir)
+            self._sock_server = SockServer()
             self._ask_router = AskRouter(
                 edge_allowed=self._ask_edge_allowed,
                 delegate=self._ask_delegate,
@@ -556,6 +569,7 @@ class CanvasWindow:
         overlay.add_overlay(self._minimap)
         overlay.add_overlay(self._build_fab())  # barra flutuante de ferramentas (topo-centro)
         overlay.add_overlay(self._build_zoom_capsule())  # zoom — cápsula inferior-esquerda
+        overlay.add_overlay(self._build_fleet_hud())  # HUD do fleet (topo-direita) — ADR-17 Etapa 4
         overlay.add_overlay(self._build_note_ctx())  # 2ª pílula: contexto da NOTA selecionada
         overlay.add_overlay(self._build_node_ctx())  # 2ª pílula: contexto do TERMINAL selecionado
         root.append(overlay)
@@ -613,6 +627,9 @@ class CanvasWindow:
             ".fab-btn:hover { background-color: rgba(255,255,255,0.08); border-radius: 10px; }",
             ".fab-btn:disabled { opacity: 0.35; }",
             ".fab-run { color: #89b4fa; }",  # o play (azul)
+            ".fab-stop { color: #f38ba0; }",  # kill-switch (vermelho)
+            ".fleet-hud { background: rgba(30,30,46,0.85); color: #cdd6f4; "
+            "padding: 3px 10px; border-radius: 10px; font-size: 12px; }",  # HUD do fleet
             ".fab-attn { color: #f9e2af; font-size: 12px; padding: 0 4px; }",  # ⚠ N
             # diálogo Editar Terminal: rótulo de seção + caixa de preview da fonte
             ".editor-section { font-weight: bold; margin-top: 6px; }",
@@ -850,6 +867,11 @@ class CanvasWindow:
             self._connect_btn.set_tooltip_text("ligar agentes por cabo (Ctrl+Shift+L)")
             self._connect_btn.connect("toggled", self._toggle_connect)
             bar.append(self._connect_btn)
+        # — kill-switch do fleet (ADR-17): só quando o Maestro mode é possível —
+        if self._sock_server is not None:
+            bar.append(self._fab_button(
+                "process-stop-symbolic", "⛔", "Parar TODOS os agentes (kill-switch)",
+                self._confirm_kill_all, css="fab-stop"))
         # — config de software / features globais —
         add("folder-symbolic", "📁", "Árvore de arquivos", "filetree")
         add("view-grid-symbolic", "🗂", "Workspaces", "workspaces")
@@ -1050,7 +1072,7 @@ class CanvasWindow:
         det = page(name)
         det.append(self._editor_detalhes_section(nid, applies))
         det.append(self._editor_monitor_section(nid, applies))
-        det.append(soon("Maestro (sub-orquestração) — Fase 6"))
+        det.append(self._editor_maestro_section(nid, applies))
         det.append(soon("SSH Remoto — Fase 7"))
         stack.add_titled(det, "detalhes", "Detalhes")
         # — Aparência — (Fase 1: Fonte; Cor/Ícone nas próximas etapas; Tema na Fase 2)
@@ -1586,6 +1608,31 @@ class CanvasWindow:
         applies.append(apply)
         return box
 
+    def _editor_maestro_section(self, nid: str, applies: list) -> Gtk.Widget:
+        """Maestro mode (Fase 6): toggle que promove o agente a MANAGER (recruta/conecta/dispensa
+        via `maestri …`). Vale p/ nó-AGENTE; reinicia p/ a IA ler a manager-skill."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        chk = Gtk.CheckButton(label="Maestro mode (gerenciar uma equipe)")
+        chk.set_active(bool(self.model.node_cfg(nid, "maestro")))
+        box.append(chk)
+        hint = Gtk.Label(
+            label="Promove este AGENTE a manager: ele pode `maestri recruit/list/reassign/wire/"
+                  "dismiss` p/ criar agentes conectados abaixo e atribuir papéis.", xalign=0)
+        hint.add_css_class("dim-label")
+        hint.set_wrap(True)
+        box.append(hint)
+
+        def apply():
+            on = chk.get_active()
+            was = bool(self.model.node_cfg(nid, "maestro"))
+            self.model.set_node_cfg(nid, "maestro", "1" if on else "")
+            self._apply_node_maestro(nid)
+            if on != was and self._role_targets(nid):  # nó-agente → reinicia p/ ler a skill
+                self._respawn_node(nid)
+
+        applies.append(apply)
+        return box
+
     @staticmethod
     def _fill_rect(cr, w, h, hexc) -> None:
         r, g, b = _hex_to_rgb(hexc)
@@ -2002,6 +2049,8 @@ class CanvasWindow:
             self._apply_node_icon(nid, nicon)
         self._apply_node_theme(nid)  # tema por-nó (override) ou global — Fase 2
         self._apply_node_role(nid)  # role (Fase 5): accent + sidecar (injeção é no spawn do agente)
+        self._apply_node_maestro(nid)  # Maestro mode (Fase 6): injeta a manager-skill se ligado
+        self._sock_register(nid, argv)  # ADR-17: listener do socket só p/ nó de agente (bwrap)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(head)
         box.append(term)
@@ -2165,6 +2214,10 @@ class CanvasWindow:
         """
         self._set_node_monitor(nid, False)  # para o monitor de atividade (Fase 4)
         self._mon_alerted.discard(nid)
+        if self._sock_server is not None:  # ADR-17: fecha o listener do socket do agente
+            self._sock_server.remove_node(nid)
+        self._agent_nids.discard(nid)  # sai do fleet
+        self._recruited_by.pop(nid, None)  # sai da linhagem
         _t = getattr(self.frames.get(nid), "_term", None)
         if _t is not None:  # H1: invalida respawn em voo (não roda _go() em widget destruído)
             _t._destroyed = True
@@ -3041,11 +3094,15 @@ class CanvasWindow:
         save_role_library(self._role_lib_path(), roles)
 
     def _node_role(self, nid: str):
-        """Role atribuído ao terminal (por nome, da biblioteca), ou None."""
-        name = self.model.node_cfg(nid, "role")
+        """Role atribuído ao terminal, ou None. Se o nome casar com a biblioteca, usa o
+        Role rico de lá; senão, monta um Role AD-HOC com o texto livre como instrução —
+        assim papéis livres (ex.: vindos do `maestri recruit <ag> "papel livre"`) também
+        são materializados no workspace e aparecem no `list` (antes virava None → "—")."""
+        name = (self.model.node_cfg(nid, "role") or "").strip()
         if not name:
             return None
-        return next((r for r in self._roles() if r.name == name), None)
+        lib = next((r for r in self._roles() if r.name == name), None)
+        return lib if lib is not None else Role(name=name, agent="", instruction=name, color="")
 
     def _role_targets(self, nid: str) -> list[str]:
         """Onde ESCREVEMOS o bloco de role: SÓ o workspace ISOLADO do agente (nosso). NUNCA o
@@ -3083,6 +3140,18 @@ class CanvasWindow:
         if not self.model.node_cfg(nid, "color"):  # M2: não sobrescreve o accent que o usuário pôs
             self.model.set_node_cfg(nid, "color", role.badge())
             self._apply_node_color(nid, role.badge())
+
+    def _apply_node_maestro(self, nid: str) -> None:
+        """Maestro mode (Fase 6): injeta a manager-skill no workspace do agente quando o toggle
+        está ligado (a IA lê no start). Off = nada (o host rejeita comandos de não-managers)."""
+        if not self._ask_bus_dir or not self.model.node_cfg(nid, "maestro"):
+            return
+        try:
+            wsp = self._node_ws(nid)
+            if wsp.is_dir():
+                install_maestro_skill(str(wsp), nid)
+        except OSError:
+            pass
 
     def _materialize_node_notes(self, nid: str) -> None:
         """Grava as notas ligadas ao nó como notes/<id>.md no workspace + atualiza o manifesto."""
@@ -3199,10 +3268,14 @@ class CanvasWindow:
         # 4b: materializa notas dos cabos restaurados e liga o poll de sync agente→nota
         self._materialize_all_connected_notes()
         GLib.timeout_add(interval_ms, self._note_files_tick)
-        if self._ask_bus is None:
+        if self._sock_server is None:
             return
-        self._ask_bus.cleanup(max_age_seconds=3600)  # limpa órfãos (broker sobrevive)
-        GLib.timeout_add(interval_ms, self._ask_tick)
+        # os listeners por agente já foram criados em _add_node; sobe a thread de accept
+        threading.Thread(
+            target=self._sock_server.serve, args=(self._on_sock_request,), daemon=True
+        ).start()
+        self._refresh_fleet_hud()  # HUD inicial (Etapa 4)
+        GLib.timeout_add_seconds(3, self._anomaly_tick)  # vigilância ativa + HUD
 
     def _ask_edge_allowed(self, frm: str, to: str) -> bool:
         if self.edges is None:
@@ -3400,35 +3473,43 @@ class CanvasWindow:
         st["done"].set()
         return False
 
-    def _ask_tick(self) -> bool:
-        if self._ask_bus is None:
-            return False
-        started = False
-        try:
-            for req in self._ask_bus.pending_requests():
-                if req.id in self._ask_inflight:
-                    continue
-                self._ask_inflight.add(req.id)
-                self._ask_set_edge_state(req.frm, req.to, "busy")
-                threading.Thread(target=self._ask_process, args=(req,), daemon=True).start()
-                started = True
-        except Exception as exc:  # nunca derruba o tick
-            _log.error("ask_tick falhou: %s", exc)
-        if started:
-            self.plane.queue_draw()
-        return True  # continua o poll
+    def _on_sock_request(self, node: str, data: dict) -> dict:
+        """Trata 1 pedido vindo do socket do agente ``node`` (roda em thread do SockServer).
 
-    def _ask_process(self, req) -> None:
-        """Roda em thread daemon: AskRouter.handle chama delegate (síncrono via _run_sync)."""
-        resp = None
+        IDENTIDADE POR CANAL (ADR-17): o remetente é ``node`` (qual socket aceitou a
+        conexão) — qualquer ``frm`` no payload é IGNORADO. Devolve o dict de resposta.
+        """
         try:
-            resp = self._ask_router.handle(req)
-            self._ask_bus.write_response(resp)
-        except Exception as exc:
-            _log.error("ask_process falhou: %s", exc)
-        finally:
-            self._ask_inflight.discard(req.id)
-        GLib.idle_add(self._ask_reflect, req, resp)
+            depth = int(data.get("depth", 0))
+        except (TypeError, ValueError):
+            depth = 0
+        raw_args = data.get("args", [])
+        req = AskRequest(
+            id=(str(data.get("id", "")) or "x")[:64],
+            frm=node,  # <- canal, não o payload (anti-spoofing)
+            to=str(data.get("to", "")),
+            prompt=str(data.get("prompt", "")),
+            depth=depth,
+            cmd=str(data.get("cmd", "")),
+            args=[str(a) for a in raw_args] if isinstance(raw_args, list) else [],
+        )
+        try:
+            validate_req(req)
+        except AskBusError as e:
+            return {"id": req.id, "ok": False, "error": f"pedido inválido: {e}"}
+        if req.cmd:  # comando Maestro mode → host (main thread, com gates)
+            resp = self._maestro_handle(req)
+        else:  # cabo (maestro-ask) → router; pinta o cabo de busy/done na main
+            GLib.idle_add(self._ask_set_edge_state, req.frm, req.to, "busy")
+            GLib.idle_add(self.plane.queue_draw)
+            try:
+                resp = self._ask_router.handle(req)
+            except Exception as exc:  # noqa: BLE001 — nunca derruba o servidor de socket
+                _log.error("ask handle falhou: %s", exc)
+                resp = AskResponse(req.id, False, error="erro no host")
+            GLib.idle_add(self._ask_reflect, req, resp)
+        return {"id": resp.id, "ok": bool(resp.ok),
+                "answer": resp.answer, "error": resp.error}
 
     def _ask_reflect(self, req, resp) -> bool:
         ok = bool(resp and resp.ok)
@@ -3438,6 +3519,376 @@ class CanvasWindow:
         self._ask_set_edge_state(req.frm, req.to, "done" if ok else "failed")
         self.plane.queue_draw()
         return False
+
+    def _box_dir(self, nid: str) -> str:
+        """Caixa privada do agente ``nid`` (ADR-17): ``<bus>/box/<nid>`` (bind RW isolado)."""
+        return os.path.join(str(self._ask_bus_dir), "box", nid)
+
+    def _sock_register(self, nid: str, argv) -> None:
+        """Cria o listener do socket da box do agente (só nós de agente: argv via bwrap)."""
+        if self._sock_server is None or not self._ask_bus_dir:
+            return
+        if not argv or argv[0] != "bwrap":  # shells não têm socket (não são agentes)
+            return
+        box = self._box_dir(nid)
+        try:
+            os.makedirs(box, mode=0o700, exist_ok=True)
+            self._sock_server.add_node(nid, box)
+            self._agent_nids.add(nid)  # entra no fleet (cap global + kill-switch)
+        except OSError as exc:
+            _log.error("sock_register(%s) falhou: %s", nid, exc)
+
+    # -- Maestro mode (Fase 6): comandos do agente-manager roteados pelo host (main thread) --
+    MAESTRO_MAX_RECRUITS = 6  # limite anti-loop de recrutas POR MANAGER
+    MAESTRO_FLEET_CAP = 12  # teto GLOBAL de agentes vivos no fleet (ADR-17, Etapa 2)
+    MAESTRO_MAX_DEPTH = 2  # profundidade máx. da ÁRVORE de recrutamento (mgr→a→b), Etapa 3
+    MAESTRO_SOFT_CAP = 8  # acima disso, recrutar exige confirmação humana (HITL)
+    MAESTRO_SPAWN_RATE = 5  # máx. de recrutamentos por janela (rate-limit token-bucket)
+    MAESTRO_SPAWN_WINDOW = 60.0  # janela do rate-limit, em segundos
+
+    def _fleet_count(self) -> int:
+        """Total de agentes vivos no fleet (fonte do hard-cap global e do kill-switch)."""
+        return len(self._agent_nids)
+
+    def _node_depth(self, nid: str) -> int:
+        """Profundidade do nó na ÁRVORE de recrutamento (host-derivada, NÃO o depth do payload).
+
+        0 = raiz (nó posto pelo humano). Sobe pela linhagem ``_recruited_by`` com guarda
+        anti-ciclo (a árvore é 1-parent, mas protege contra estado corrompido)."""
+        depth, cur, seen = 0, nid, set()
+        while cur in self._recruited_by and cur not in seen:
+            seen.add(cur)
+            cur = self._recruited_by[cur]
+            depth += 1
+            if depth > 64:  # cinto de segurança
+                break
+        return depth
+
+    MUTATING_CMDS = ("recruit", "dismiss", "wire", "reassign")  # consomem token de rate-limit
+
+    def _mutate_rate_ok(self, frm: str) -> bool:
+        """Token-bucket POR-MANAGER para TODOS os comandos mutadores (5d): poda a janela,
+        consome 1 token se couber. Cobre o respawn/edge-DoS de wire/reassign, não só recruit."""
+        now = self._maestro_clock()
+        log = [t for t in self._mutate_log.get(frm, []) if now - t < self.MAESTRO_SPAWN_WINDOW]
+        if len(log) >= self.MAESTRO_SPAWN_RATE:
+            self._mutate_log[frm] = log
+            return False
+        log.append(now)
+        self._mutate_log[frm] = log
+        return True
+
+    def _recruit_needs_hitl(self, frm: str) -> bool:
+        """Recrutar acima do soft-cap (mas abaixo do hard-cap) pede confirmação humana."""
+        return self.MAESTRO_SOFT_CAP <= self._fleet_count() < self.MAESTRO_FLEET_CAP
+
+    def _audit(self, event: str, **fields) -> None:
+        """Registra um evento na trilha append-only (ADR-17). Best-effort, nunca levanta."""
+        if self._ask_bus_dir:
+            append_event(self._ask_bus_dir, event, **fields)
+
+    def _build_fleet_hud(self) -> Gtk.Widget:
+        """HUD do fleet (pílula topo-direita): nº de agentes, profundidade, aviso de ciclo."""
+        lbl = Gtk.Label(label="")
+        lbl.add_css_class("fleet-hud")
+        lbl.set_halign(Gtk.Align.END)
+        lbl.set_valign(Gtk.Align.START)
+        lbl.set_margin_top(12)
+        lbl.set_margin_end(12)
+        lbl.set_visible(False)  # só aparece quando há agentes
+        self._fleet_hud = lbl
+        return lbl
+
+    def _fleet_hud_text(self) -> str:
+        """Texto do HUD (puro, testável): '🤖 N/CAP · prof D · ⚠ ciclo'."""
+        n = self._fleet_count()
+        depth = max((self._node_depth(x) for x in self._agent_nids), default=0)
+        parts = [f"🤖 {n}/{self.MAESTRO_FLEET_CAP}"]
+        if depth:
+            parts.append(f"prof {depth}")
+        if self.edges is not None and has_cycle(self.edges.list()):
+            parts.append("⚠ ciclo")
+        return "  ·  ".join(parts)
+
+    def _refresh_fleet_hud(self) -> None:
+        lbl = getattr(self, "_fleet_hud", None)
+        if lbl is None:
+            return
+        n = self._fleet_count()
+        lbl.set_visible(n > 0)
+        if n > 0:
+            lbl.set_text(self._fleet_hud_text())
+
+    def _anomaly_tick(self) -> bool:
+        """Vigilância ATIVA (Etapa 4): rajada de recrutamentos bloqueados → kill-switch
+        AUTOMÁTICO. Tira o trail/HUD do modo passivo. Roda na main thread (GLib timeout)."""
+        if self._sock_server is None:
+            return True
+        try:
+            self._refresh_fleet_hud()
+            events = read_events(self._ask_bus_dir) if self._ask_bus_dir else []
+            if spawn_anomaly(events, now=time.time()) and self._fleet_count() > 0:
+                self._audit("anomaly_killswitch", fleet=self._fleet_count())
+                killed = self._kill_all_agents()
+                _log.warning("anomalia de spawn detectada → kill-switch (%d mortos)", killed)
+        except Exception as exc:  # nunca derruba o tick
+            _log.error("anomaly_tick falhou: %s", exc)
+        return True  # continua
+
+    def _kill_all_agents(self) -> int:
+        """KILL-SWITCH global (ADR-17): mata o processo de TODOS os agentes vivos.
+
+        Cada agente é seu próprio bwrap (``--unshare-pid``) → o SIGKILL no filho
+        COLAPSA a árvore interna (ceifa a subárvore, não só o topo). Em seguida DESARMA
+        o Maestro mode de todos os nós: recrutar fica bloqueado até você religar o toggle
+        (re-armar = gate humano). Devolve quantos processos foram sinalizados.
+        """
+        nids = list(self._agent_nids)
+        killed = 0
+        for nid in nids:
+            term = getattr(self.frames.get(nid), "_term", None)
+            if term is not None and self._signal_child(term, signal.SIGKILL):
+                killed += 1
+        for nid in list(self.frames):  # desarma TODOS os managers (re-armar é manual)
+            if self.model.node_cfg(nid, "maestro"):
+                self.model.set_node_cfg(nid, "maestro", "")
+        self._audit("kill_all", killed=killed, fleet_before=len(nids))
+        self._refresh_fleet_hud()
+        self.plane.queue_draw()
+        return killed
+
+    def _confirm_kill_all(self) -> None:
+        """Confirmação do kill-switch (ação destrutiva: para TODOS os agentes)."""
+        n = self._fleet_count()
+        dlg, box = self._dialog("⛔ Parar todos os agentes")
+        if n == 0:
+            box.append(Gtk.Label(label="Nenhum agente vivo para parar."))
+            ok = Gtk.Button(label="OK")
+            ok.connect("clicked", lambda _b: dlg.destroy())
+            box.append(ok)
+            dlg.present()
+            return
+        msg = Gtk.Label(
+            label=f"Isso MATA o processo de {n} agente(s) e desarma o Maestro mode.\n"
+                  "O trabalho em andamento é interrompido. Religue o toggle p/ recrutar de novo.")
+        msg.set_wrap(True)
+        msg.set_xalign(0.0)
+        box.append(msg)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.set_halign(Gtk.Align.END)
+        cancel = Gtk.Button(label="Cancelar")
+        cancel.connect("clicked", lambda _b: dlg.destroy())
+        stop = Gtk.Button(label="⛔ Parar tudo")
+        stop.add_css_class("destructive-action")
+
+        def _do(_b):
+            dlg.destroy()
+            self._kill_all_agents()
+
+        stop.connect("clicked", _do)
+        row.append(cancel)
+        row.append(stop)
+        box.append(row)
+        dlg.present()
+
+    def _maestro_handle(self, req):
+        """Worker thread: marshala o comando p/ a MAIN thread (idle_add) e espera a resposta."""
+        result: dict = {}
+        done = threading.Event()
+        GLib.idle_add(self._maestro_exec, req, result, done)
+        if not done.wait(timeout=50):  # folga p/ o HITL (humano confirmar); shim espera 60s
+            return AskResponse(req.id, False, error="timeout no host")
+        if result.get("ok"):
+            return AskResponse(req.id, True, result.get("answer", "ok"))
+        return AskResponse(req.id, False, error=result.get("error", "erro"))
+
+    def _own_recruit(self, frm: str, nid: str) -> bool:
+        """`nid` é recruta DIRETO de `frm`? Decisão de AUTORIDADE (ADR-17): vem da linhagem
+        host-only `_recruited_by` (infalsificável) — NUNCA dos cabos, que o agente cria com
+        `wire` (senão = confused deputy: wire numa vítima → dismiss/reassign nela)."""
+        return bool(nid) and self._recruited_by.get(nid) == frm
+
+    def _maestro_connected(self, nid: str) -> list:
+        """Nós LIGADOS a `nid` por cabo. SÓ p/ exibição (list)/UI — NÃO p/ autoridade."""
+        out = []
+        for a, b in self.edges.list():
+            if a == nid and b in self.frames:
+                out.append(b)
+            elif b == nid and a in self.frames:
+                out.append(a)
+        return out
+
+    def _place_below(self, nid: str) -> tuple[int, int]:
+        """Posição (base) ABAIXO do nó `nid`, empilhando por nº de recrutas."""
+        x, y = self._base_pos.get(nid, (60.0, 60.0))
+        _w, h = self._node_size.get(nid, (BASE_W, BASE_H))
+        n = len(self._maestro_connected(nid))
+        return (int(x), int(y + h + 40 + n * (h + 24)))
+
+    def _maestro_exec(self, req, result: dict, done) -> bool:
+        try:
+            # HITL (Etapa 3): recrutar acima do soft-cap pausa e PERGUNTA ao humano. O
+            # diálogo é assíncrono → `done` é setado no callback da decisão, não aqui.
+            if req.cmd == "recruit" and self._recruit_needs_hitl(req.frm):
+                self._hitl_recruit(req, result, done)
+                return False
+            self._maestro_dispatch(req, result)
+        except Exception as exc:
+            result.update(ok=False, error=str(exc))
+        done.set()
+        return False  # idle one-shot
+
+    def _apply_recruit_decision(self, approve: bool, req, result: dict, done) -> None:
+        """Aplica a decisão humana do HITL (separado do GTK p/ ser testável)."""
+        if approve:
+            self._maestro_dispatch(req, result)
+        else:
+            self._audit("recruit_denied", manager=req.frm, fleet=self._fleet_count())
+            result.update(ok=False, error="recrutamento negado pelo humano")
+        done.set()
+
+    def _hitl_recruit(self, req, result: dict, done) -> None:
+        """Pausa-e-pergunta: o humano aprova/nega um recrutamento acima do soft-cap.
+
+        Aprovar → roda o dispatch; negar/timeout → recusa. `done` é setado na decisão.
+        Factorado p/ testes poderem sobrescrever (auto-aprovar/negar) sem GTK.
+        """
+        decided = {"v": False}
+        dlg, box = self._dialog("Confirmar recrutamento (fleet grande)")
+
+        def decide(approve: bool):
+            if decided["v"]:
+                return False
+            decided["v"] = True
+            dlg.destroy()  # F5: destrói o diálogo em TODOS os caminhos (inclui o timeout)
+            self._apply_recruit_decision(approve, req, result, done)
+            return False
+
+        msg = Gtk.Label(
+            label=f"O agente '{req.frm}' quer recrutar mais um (fleet em "
+                  f"{self._fleet_count()}/{self.MAESTRO_FLEET_CAP}). Aprovar?")
+        msg.set_wrap(True)
+        msg.set_xalign(0.0)
+        box.append(msg)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.set_halign(Gtk.Align.END)
+        deny = Gtk.Button(label="Negar")
+        deny.connect("clicked", lambda _b: decide(False))
+        appr = Gtk.Button(label="Aprovar")
+        appr.add_css_class("suggested-action")
+        appr.connect("clicked", lambda _b: decide(True))
+        row.append(deny)
+        row.append(appr)
+        box.append(row)
+        # se o humano não decidir a tempo, nega (o agente não fica preso) + fecha o diálogo
+        GLib.timeout_add_seconds(40, lambda: decide(False))
+        dlg.present()
+
+    def _maestro_dispatch(self, req, result: dict) -> None:
+        frm, cmd, args = req.frm, req.cmd, req.args
+        if not self.model.node_cfg(frm, "maestro"):
+            result.update(ok=False, error="este terminal não está em Maestro mode")
+            return
+        if self.controller is None or not self._ask_bus_dir or self.edges is None:
+            result.update(ok=False, error="orquestrador/cabos indisponíveis")
+            return
+        if cmd in self.MUTATING_CMDS and not self._mutate_rate_ok(frm):  # rate-limit p/ TODOS (5d)
+            self._audit("rate_blocked", manager=frm, cmd=cmd)
+            result.update(ok=False, error="muitos comandos em pouco tempo; aguarde")
+            return
+        if cmd == "recruit":
+            if not args:
+                result.update(ok=False, error="uso: recruit <agente> [papel]")
+                return
+            base, role = args[0], (args[1] if len(args) > 1 else "")
+            if base not in installed_agents():
+                result.update(ok=False, error=f"agente '{base}' não instalado")
+                return
+            if self._fleet_count() >= self.MAESTRO_FLEET_CAP:  # teto GLOBAL (ADR-17)
+                self._audit("recruit_blocked", manager=frm, reason="fleet_cap",
+                            fleet=self._fleet_count())
+                result.update(ok=False,
+                              error=f"limite GLOBAL de {self.MAESTRO_FLEET_CAP} agentes atingido")
+                return
+            depth = self._node_depth(frm)
+            if depth >= self.MAESTRO_MAX_DEPTH:  # profundidade da árvore (Etapa 3)
+                self._audit("recruit_blocked", manager=frm, reason="max_depth", depth=depth)
+                result.update(ok=False, error=f"profundidade máxima ({depth} níveis) atingida")
+                return
+            if len(self._maestro_connected(frm)) >= self.MAESTRO_MAX_RECRUITS:
+                result.update(ok=False, error=f"limite de {self.MAESTRO_MAX_RECRUITS} recrutas")
+                return
+            nid = self._new_agent_terminal(base, default=self._place_below(frm))
+            if nid is None:
+                why = getattr(self, "_last_recruit_error", "") or "verifique auth/limite do CLI"
+                self._audit("recruit_blocked", manager=frm, reason="spawn_fail", detail=why)
+                result.update(ok=False, error=f"falha ao criar '{base}': {why}")
+                return
+            self.model.set_node_cfg(nid, "maestro", "")  # recruta NASCE sem poder recrutar
+            self._recruited_by[nid] = frm  # linhagem (profundidade)
+            self.edges.add(frm, nid)
+            if role:
+                self.model.set_node_cfg(nid, "role", role)
+                self._apply_node_role(nid)
+                self._respawn_node(nid)  # reinicia p/ a IA já abrir com o papel
+            self._ask_hint(frm, nid)
+            self._wake_cables()
+            self.plane.queue_draw()
+            self._audit("recruit", manager=frm, node=nid, agent=base, role=role,
+                        depth=self._node_depth(nid), fleet=self._fleet_count())
+            self._refresh_fleet_hud()
+            extra = f", papel '{role}'" if role else ""
+            result.update(ok=True, answer=f"recrutado '{nid}' (agente {base}{extra}), por cabo.")
+        elif cmd == "list":
+            conn = self._maestro_connected(frm)
+            if not conn:
+                result.update(ok=True, answer="(sem recrutas conectados)")
+                return
+            lines = [f"- {self.model.node_name(n, n)} (papel: "
+                     f"{(self._node_role(n).name if self._node_role(n) else '—')})" for n in conn]
+            result.update(ok=True, answer="Recrutas conectados:\n" + "\n".join(lines))
+        elif cmd == "dismiss":
+            if not args or not self._own_recruit(frm, args[0]):  # autoridade = linhagem (5a)
+                result.update(ok=False, error="uso: dismiss <nó> (só um recruta DIRETO seu)")
+                return
+            self._close_node(args[0])
+            self._audit("dismiss", manager=frm, node=args[0])
+            result.update(ok=True, answer=f"dispensado '{args[0]}'.")
+        elif cmd == "wire":
+            if not args:
+                result.update(ok=False, error="uso: wire <a> [b] (b padrão = você)")
+                return
+            a = args[0]
+            b = args[1] if len(args) > 1 else frm
+            # autoridade host-only: só liga VOCÊ ou seus recrutas DIRETOS (não nós alheios)
+            if not all(n == frm or self._own_recruit(frm, n) for n in (a, b)):
+                result.update(ok=False, error="só liga você ou um recruta DIRETO seu")
+                return
+            if has_cycle(self.edges.list() + [(a, b)]):  # recusa cabo que fecha ciclo (5a/F7)
+                result.update(ok=False, error="recusado: esse cabo fecharia um ciclo")
+                return
+            self.edges.add(a, b)
+            a_node, b_node = a in self.frames, b in self.frames
+            if a_node and b_node:
+                self._ask_hint(a, b)
+            else:
+                self._on_note_cable_added(a, b, "node" if a_node else "note",
+                                          "node" if b_node else "note")
+            self._wake_cables()
+            self.plane.queue_draw()
+            self._audit("wire", manager=frm, a=a, b=b)
+            result.update(ok=True, answer=f"cabo {a} ↔ {b} ligado.")
+        elif cmd == "reassign":
+            if len(args) < 2 or not (args[0] == frm or self._own_recruit(frm, args[0])):
+                result.update(ok=False, error="uso: reassign <nó> <papel> (você ou recruta seu)")
+                return
+            self.model.set_node_cfg(args[0], "role", args[1])
+            self._apply_node_role(args[0])
+            self._respawn_node(args[0])
+            self._audit("reassign", manager=frm, node=args[0], role=args[1])  # auditoria (5a)
+            result.update(ok=True, answer=f"'{args[0]}' reatribuído ao papel '{args[1]}'.")
+        else:
+            result.update(ok=False, error=f"comando desconhecido: {cmd}")
 
     def _ask_set_edge_state(self, frm: str, to: str, state: str) -> None:
         if self.edges is None:
@@ -3559,7 +4010,7 @@ class CanvasWindow:
 
     def _ask_hint(self, src: str, dst: str) -> None:
         """Avisa ambos os terminais que podem conversar pelo cabo (maestro-ask)."""
-        if self._ask_bus is None:
+        if self._sock_server is None:
             return
         for a, b in ((src, dst), (dst, src)):
             fr = self.frames.get(a)
@@ -3567,7 +4018,7 @@ class CanvasWindow:
             if term is not None:
                 term.feed(
                     f"\r\n\x1b[2m[maestro] cabo ligado a '{b}'. Para perguntar: "
-                    f'maestro-ask {b} "<sua pergunta>"\x1b[0m\r\n'.encode()
+                    f'"$MAESTRO_BIN/maestro-ask" {b} "<sua pergunta>"\x1b[0m\r\n'.encode()
                 )
 
     def _on_key(self, _c, keyval, _keycode, state):
@@ -4064,24 +4515,28 @@ class CanvasWindow:
         self.plane.queue_draw()
         return nid
 
-    def _new_agent_terminal(self, base: str | None) -> str | None:
+    def _new_agent_terminal(self, base: str | None, default=None) -> str | None:
+        self._last_recruit_error = ""  # motivo da última falha (p/ a mensagem do recruit)
         if not base or self.controller is None or not self._ask_bus_dir:
+            self._last_recruit_error = "orquestrador/cabos indisponíveis"
             return None
         profiles = installed_agents()
         if base not in profiles:
+            self._last_recruit_error = f"CLI '{base}' não instalado"
             return None
         nid = self._unique_nid(base)
         try:
             self.controller.add_agent_instance(nid, base)  # delegate/maestro-ask resolve nid
         except Exception as exc:
             _log.error("add_agent_instance falhou: %s", exc)
+            self._last_recruit_error = str(exc)
             return None
         base_home = Path(self._ask_bus_dir).parent
         wsp = Workspace(str(base_home / "workspaces")).create(nid)
         install_ask_skill(wsp, nid)  # ensina o maestro-ask ao novo agente
         # (role recém-criado é vazio; a injeção do role acontece em _add_node → _apply_node_role)
         argv = agent_argv(profiles[base], str(wsp), node=nid, ask_bus_dir=self._ask_bus_dir)
-        self._add_node(nid, nid, argv, default=self._next_node_default())
+        self._add_node(nid, nid, argv, default=default or self._next_node_default())
         self.model.add_to_roster(nid, "agent", base)  # persiste -> volta ao reabrir
         self._resize_plane()
         self.plane.queue_draw()
@@ -5270,6 +5725,7 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         ws = Workspace(f"{base}/workspaces")
         ask_bus_dir = f"{base}/ask-bus"
         install_client(ask_bus_dir)  # instala o maestro-ask no mailbox (montado nos agentes)
+        install_maestri_client(ask_bus_dir)  # instala o `maestri` (Maestro mode, Fase 6)
         model = CanvasModel(st)
         # ROSTER persistido: QUAIS terminais existem (abre igual fechou). 1ª vez = semeia
         # com os agentes instalados; depois é a fonte da verdade (inclui shells/instâncias).
@@ -5334,6 +5790,9 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         win._refresh_attention()
 
     def on_shutdown(_a):
+        win = state.get("win")  # F7: encerra o servidor de socket (fecha listeners, unlink)
+        if win is not None and getattr(win, "_sock_server", None) is not None:
+            win._sock_server.stop()
         st = state.get("store")
         if st is not None:
             st.close()

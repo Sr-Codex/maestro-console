@@ -1,68 +1,60 @@
-"""Testes da ponte sandbox (Fase 2): cliente maestro-ask + setenv + wiring (ADR-11)."""
+"""Testes da ponte sandbox: cliente maestro-ask por SOCKET (ADR-17) + setenv + wiring."""
 
 import ast
+import threading
 
 import pytest
 
-from maestro.engine.ask_bus import AskBus, AskResponse, install_client
+from maestro.engine.ask_bus import install_client
 from maestro.engine.ask_client import ask, main
+from maestro.engine.ask_sock import SockServer
 from maestro.engine.sandbox import bwrap_available
 from maestro.engine.sandbox import wrap as sandbox_wrap
 from maestro.native.agents import agent_argv
 
 
+def _serve(box_dir, node, handle) -> SockServer:
+    srv = SockServer()
+    srv.add_node(node, str(box_dir))
+    threading.Thread(target=srv.serve, args=(handle,), daemon=True).start()
+    return srv
+
+
 def test_ask_roundtrip(tmp_path):
-    bus = tmp_path / "bus"
-    bus.mkdir()
-    estado = {}
-
-    def host_responde(_delay):  # simula o host respondendo na 1ª espera
-        if "ok" in estado:
-            return
-        reqs = list(bus.glob("req-*.json"))
-        if reqs:
-            rid = reqs[0].name[len("req-") : -len(".json")]
-            (bus / f"resp-{rid}.json").write_text(
-                '{"id":"%s","ok":true,"answer":"42"}' % rid, encoding="utf-8"
-            )
-            estado["ok"] = True
-
-    resp = ask(str(bus), "A", "B", "oi", sleep=host_responde)
-    assert resp["ok"] and resp["answer"] == "42"
+    box = tmp_path / "box"
+    box.mkdir()
+    srv = _serve(box, "A", lambda node, req: {"id": req.get("id"), "ok": True, "answer": "42"})
+    try:
+        resp = ask(str(box), "A", "B", "oi", timeout=5)
+        assert resp["ok"] and resp["answer"] == "42"
+    finally:
+        srv.stop()
 
 
-def test_compat_client_req_lido_e_resp_escrita_pelo_askbus(tmp_path):
-    # prova que o cliente (stdlib) e o AskBus (engine) falam o MESMO protocolo
-    bus_dir = str(tmp_path / "bus")
-    bus = AskBus(bus_dir)
-    cap = {}
+def test_identidade_vem_do_canal_e_protocolo(tmp_path):
+    """O host recebe a identidade do CANAL (node), e o protocolo to/prompt chega certo."""
+    box = tmp_path / "box"
+    box.mkdir()
+    cap: dict = {}
 
-    def host(_delay):
-        if "ok" in cap:
-            return
-        pend = bus.pending_requests()  # AskBus LÊ o req do cliente
-        if pend:
-            cap["req"] = pend[0]
-            bus.write_response(AskResponse(id=pend[0].id, ok=True, answer="ok!"))
-            cap["ok"] = True
+    def handle(node, req):
+        cap["node"], cap["req"] = node, req
+        return {"id": req.get("id"), "ok": True, "answer": "ok!"}
 
-    resp = ask(bus_dir, "A", "B", "revise foo.py", sleep=host)
-    assert cap["req"].frm == "A" and cap["req"].prompt == "revise foo.py"
-    assert resp["ok"] and resp["answer"] == "ok!"  # cliente LÊ a resp do AskBus
+    srv = _serve(box, "A", handle)
+    try:
+        resp = ask(str(box), "A", "B", "revise foo.py", timeout=5)
+        assert cap["node"] == "A"  # identidade = canal (não o frm do payload)
+        assert cap["req"]["to"] == "B" and cap["req"]["prompt"] == "revise foo.py"
+        assert resp["ok"] and resp["answer"] == "ok!"
+    finally:
+        srv.stop()
 
 
-def test_ask_timeout(tmp_path):
-    ticks = iter([0, 1, 2, 3, 1000])  # deadline=5; última leitura passa do prazo
-    resp = ask(
-        str(tmp_path / "bus"),
-        "A",
-        "B",
-        "oi",
-        timeout=5,
-        sleep=lambda _d: None,
-        clock=lambda: next(ticks),
-    )
-    assert not resp["ok"] and "timeout" in resp["error"]
+def test_ask_sem_host_devolve_erro(tmp_path):
+    # sem socket no caminho -> conexão recusada -> erro (não trava nem levanta)
+    resp = ask(str(tmp_path / "box"), "A", "B", "oi", timeout=1)
+    assert not resp["ok"] and resp["error"]
 
 
 def test_main_sem_env_recusa():
@@ -76,20 +68,27 @@ def test_main_args_insuficientes():
 def test_install_client_copia_executavel_valido(tmp_path):
     dest = install_client(tmp_path / "bus")
     assert dest.name == "maestro-ask" and dest.exists()
+    assert dest.parent.name == "bin"  # ADR-17: shims ficam em <bus>/bin (RO)
     assert dest.stat().st_mode & 0o111  # executável
     ast.parse(dest.read_text(encoding="utf-8"))  # é Python válido
 
 
 @pytest.mark.skipif(not bwrap_available(), reason="bwrap ausente")
-def test_wrap_emite_setenv():
-    argv = sandbox_wrap(["x"], workspace="/tmp", setenv={"MAESTRO_NODE": "A"})
+def test_wrap_emite_setenv(tmp_path):
+    argv = sandbox_wrap(["x"], workspace=str(tmp_path), setenv={"MAESTRO_NODE": "A"})
     assert "--setenv" in argv
     i = argv.index("--setenv")
     assert argv[i + 1] == "MAESTRO_NODE" and argv[i + 2] == "A"
 
 
 @pytest.mark.skipif(not bwrap_available(), reason="bwrap ausente")
-def test_agent_argv_monta_mailbox_e_env(tmp_path):
+def test_wrap_dropa_capabilities(tmp_path):
+    argv = sandbox_wrap(["x"], workspace=str(tmp_path))
+    assert "--cap-drop" in argv and argv[argv.index("--cap-drop") + 1] == "ALL"
+
+
+@pytest.mark.skipif(not bwrap_available(), reason="bwrap ausente")
+def test_agent_argv_monta_box_e_env(tmp_path):
     bus = tmp_path / "bus"
     bus.mkdir()
 
@@ -98,12 +97,18 @@ def test_agent_argv_monta_mailbox_e_env(tmp_path):
         rw_paths = []
 
     argv = agent_argv(_Prof(), str(tmp_path / "ws"), node="A", ask_bus_dir=str(bus))
-    joined = " ".join(argv)
-    assert "MAESTRO_NODE" in argv and str(bus.resolve()) in joined
-    assert "MAESTRO_ASK_BUS" in argv
-    # mailbox no PATH -> agente chama 'maestro-ask' direto (sem caminho absoluto)
-    assert "PATH" in argv and any(a.startswith(f"{bus}:") for a in argv)
-    # IA roda DENTRO de um shell: ao sair dela, cai num shell normal
+    box = str(bus / "box" / "A")
+    bindir = str(bus / "bin")
+    # env: MAESTRO_ASK_BUS aponta p/ a BOX do agente; MAESTRO_BIN p/ os shims
+    assert argv[argv.index("MAESTRO_ASK_BUS") + 1] == box
+    assert argv[argv.index("MAESTRO_BIN") + 1] == bindir
+    assert argv[argv.index("MAESTRO_NODE") + 1] == "A"
+    # ADR-17: a box é criada (p/ o bind existir) e é SÓ ela que é montada (não o <bus> pai)
+    assert (bus / "box" / "A").is_dir()
+    assert any(a.startswith(f"{bindir}:") for a in argv)  # PATH começa pelo bin/
+    assert str(bus) not in [
+        a for i, a in enumerate(argv) if i and argv[i - 1] == "--bind"
+    ]  # nenhum --bind do <bus> inteiro
     assert "/bin/bash" in argv and any("exec /bin/bash" in a for a in argv)
 
 

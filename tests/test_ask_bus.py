@@ -84,4 +84,5 @@ def test_request_data_no_disco_eh_json_valido(tmp_path):
     rid = new_id()
     p = bus.write_request(AskRequest(id=rid, frm="A", to="B", prompt="oi", depth=2))
     data = json.loads(p.read_text(encoding="utf-8"))
-    assert data == {"id": rid, "frm": "A", "to": "B", "prompt": "oi", "depth": 2}
+    assert data == {"id": rid, "frm": "A", "to": "B", "prompt": "oi", "depth": 2,
+                    "cmd": "", "args": []}  # +campos de Maestro mode (Fase 6)

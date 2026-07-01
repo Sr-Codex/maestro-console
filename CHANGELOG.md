@@ -3,6 +3,36 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.45.0] — Editar Terminal (Fase 6): Maestro mode SEGURO (sub-orquestração)
+**Maestro mode** — um terminal de **agente** pode virar **manager** e montar/coordenar uma equipe
+no próprio canvas, sem sair do shell. Feature **original** (diverge do Maestri, que é orquestração
+só-humana — ver ADR-16), construída sob a regra de ouro de multi-agente: **toda autoridade é imposta
+pelo HOST a partir de estado que só ele controla, nunca de campos que o agente preenche** (ADR-17).
+- **Toggle "Maestro mode"** (aba Detalhes, só nós de agente) → injeta a **manager-skill** no workspace
+  isolado e reinicia. Shim **`maestri`**: `recruit <agente> [papel]` · `list` · `reassign` · `wire` ·
+  `dismiss`. Cada comando cria um terminal de agente real **conectado por cabo ABAIXO** do manager.
+- **Identidade por canal (anti-spoofing por construção):** o transporte agente↔host é um **socket
+  Unix *pathname* por agente** (`<bus>/box/<nó>/sock`, bind-montado só naquele agente); o host deriva
+  o remetente de QUAL listener aceitou a conexão e **ignora** o `frm` do payload. Shims em `<bus>/bin`
+  (RO) chamados por `$MAESTRO_BIN/...` (imune ao reset de PATH). Sandbox com `--cap-drop ALL`.
+- **Kill-switch global** ("⛔ Parar tudo" na cápsula principal): SIGKILL via pidfd em todo o fleet —
+  cada agente é seu bwrap `--unshare-pid`, então o sinal **colapsa a árvore inteira** (ceifa a
+  subárvore) — e **desarma** o Maestro mode de todos (re-armar = gate humano).
+- **Tetos impostos pelo host:** **global** (12 agentes), **profundidade** da árvore de recrutamento
+  derivada da linhagem (máx. 2), **por-manager** (6) e **rate-limit** (token-bucket 5/60s). Recruta
+  **nasce sem poder recrutar** (promover exige o toggle humano → mata o fork-bomb). Acima do soft-cap
+  (8), recrutar **pausa e PERGUNTA ao humano** (HITL).
+- **Observabilidade que AGE:** **HUD do fleet** (nº/profundidade/ciclo), **auditoria append-only**
+  (`<bus>/audit.jsonl`) e **vigilância ativa** — rajada de recrutamentos bloqueados dispara o
+  kill-switch **automaticamente**. **Detecção de ciclo** nos cabos (union-find).
+- **Provas de runtime (sem mocks):** probe de socket através de bind-mount bwrap real + identidade
+  por canal; **tabletop drill** do kill-switch (SIGKILL via pidfd reapeia toda a subárvore, 0
+  sobreviventes); app sobe limpo. **Testes:** socket/identidade, anti-spoofing no canvas, fleet-cap,
+  profundidade, rate-limit, HITL, kill-all, anomalia, ciclo, auditoria (+E2E pelo socket).
+- **Risco residual registrado (ADR-17):** proveniência/tainting de conteúdo, validação semântica plena
+  e egress allow-list de rede ficam para depois (controles compensatórios: caps + kill-switch + HITL +
+  auditoria). Mapa de cobertura OWASP ASI no ADR.
+
 ## [0.44.0] — Editar Terminal (Fase 5): Responsabilidades (roles) + hardening defensivo
 **Fase 5 — roles por terminal** (aba Agente do editor):
 - **Biblioteca de papéis** reusável (`~/.config/maestro-console/roles.json`, built-in coder/reviewer/
