@@ -17,18 +17,34 @@ from maestro.engine.state.store import Store
 from maestro.engine.team_templates import GroupSpec, TeamTemplate
 from maestro.engine.teams import Role
 from maestro.engine.workspace import Workspace
-from maestro.native.canvas import CanvasWindow  # noqa: E402
+from maestro.native.canvas import BASE_H, BASE_W, GROUP_PAD, CanvasWindow  # noqa: E402
 
 
 class _FakeModel:
     def __init__(self):
         self.cfg = {}
+        self.positions = {}
 
     def node_cfg(self, nid, key, default=""):
         return self.cfg.get((nid, key), default)
 
     def set_node_cfg(self, nid, key, val):
         self.cfg[(nid, key)] = val
+
+    def position(self, nid, default):
+        return self.positions.get(nid, default)
+
+    def set_position(self, nid, x, y):
+        self.positions[nid] = (x, y)
+
+    def zoom(self):
+        return 1.0
+
+    def node_name(self, nid, default):
+        return default
+
+    def node_roster(self):
+        return []
 
 
 class _FakeEdges:
@@ -130,6 +146,50 @@ def test_materialize_posiciona_membros_dentro_do_grupo_geometricamente(tmp_path)
     gid = w.groups.list()[0].id
     members = CanvasWindow._group_members(w, gid)
     assert len(members) == 3
+
+
+def test_free_region_origin_canvas_vazio_usa_cascata_padrao(tmp_path):
+    w, _created = _make_win(tmp_path)
+    assert CanvasWindow._free_region_origin(w) == (60.0, 60.0)
+
+
+def test_free_region_origin_evita_conteudo_existente(tmp_path):
+    w, _created = _make_win(tmp_path)
+    w._base_pos["existing-node"] = (100.0, 100.0)
+    w._node_size["existing-node"] = (400.0, 300.0)  # ocupa até y=400
+    w._group_base["g1"] = (0.0, 900.0)
+    w._group_size["g1"] = (600.0, 50.0)  # ocupa até y=950
+    ox, oy = CanvasWindow._free_region_origin(w)
+    assert oy == 950.0 + GROUP_PAD * 2  # abaixo de TUDO que já existe
+    assert ox == 0.0  # alinhado ao mais à esquerda que já existe
+
+
+def test_materialize_nao_sobrepoe_conteudo_existente(tmp_path):
+    """Regressão ao vivo: grupos/agentes novos nasciam em cima de cards já presentes no
+    canvas (a cascata modular de `_next_node_default` repete depois de 6 itens)."""
+    w, _created = _make_win(tmp_path)
+    w._base_pos["existing"] = (0.0, 0.0)
+    w._node_size["existing"] = (BASE_W, BASE_H)  # ocupa (0,0)-(420,220)
+    spec = _template([["coder"]])
+    CanvasWindow._materialize_team(w, spec)
+    gid = w.groups.list()[0].id
+    _gx, gy = w._group_base[gid]
+    assert gy >= 220  # nasce ABAIXO do card existente, não em cima
+
+
+def test_materialize_forca_posicao_mesmo_com_posicao_persistida_orfa(tmp_path):
+    """Regressão ao vivo: o grupo nascia num lugar e os nós-terminal em outro — porque
+    `model.position()` prefere uma posição PERSISTIDA antiga (id reciclado/órfão) em vez
+    da posição calculada pelo materializador."""
+    w, created = _make_win(tmp_path)
+    w.model.positions["claude-1"] = (9999.0, 9999.0)  # posição "órfã" simulada
+    spec = _template([["coder"]])
+    result = CanvasWindow._materialize_team(w, spec)
+    assert result["ok"]
+    nid = created[0][0]
+    assert nid == "claude-1"
+    assert w._base_pos[nid] != (9999.0, 9999.0)
+    assert w.model.positions[nid] == w._base_pos[nid]  # persistido foi sobrescrito
 
 
 def test_materialize_escreve_instrucao_real_no_workspace_nao_so_o_nome(tmp_path):

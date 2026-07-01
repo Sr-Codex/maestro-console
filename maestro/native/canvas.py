@@ -5301,6 +5301,40 @@ class CanvasWindow:
         custom = [t for t in templates if t.name not in BUILTIN_TEAM_TEMPLATES]
         save_team_templates(self._team_templates_path(), custom)
 
+    def _free_region_origin(self) -> tuple[float, float]:
+        """Origem livre pra nascer uma leva de itens SEM sobrepor nada que já existe no
+        canvas (nós, notas, grupos) — abaixo de tudo que já está lá. `_next_node_default()`
+        é uma cascata modular (bom pra 1 item por vez); materializar vários itens de uma vez
+        precisa de uma área genuinamente livre, não um ponto que pode repetir (mod 6)."""
+        xs: list[float] = []
+        bottoms: list[float] = []
+        for nid, (x, y) in self._base_pos.items():
+            w, h = self._item_size("node", nid)
+            xs.append(x)
+            bottoms.append(y + h)
+        for nid, (x, y) in self._note_base.items():
+            w, h = self._item_size("note", nid)
+            xs.append(x)
+            bottoms.append(y + h)
+        for gid, (x, y) in self._group_base.items():
+            w, h = self._group_size.get(gid, (0.0, 0.0))
+            xs.append(x)
+            bottoms.append(y + h)
+        if not bottoms:
+            ox, oy = self._next_node_default()
+            return (float(ox), float(oy))
+        return (min(xs), max(bottoms) + GROUP_PAD * 2)
+
+    def _force_node_position(self, nid: str, x: float, y: float) -> None:
+        """Aplica a posição CALCULADA no nó recém-criado, sobrescrevendo qualquer posição
+        persistida antiga (`model.position()` prefere o que já está salvo pro id — um id
+        reciclado/órfão faria o nó "nascer" longe do grupo que acabou de abraçá-lo)."""
+        self.model.set_position(nid, x, y)
+        self._base_pos[nid] = (x, y)
+        frame = self.frames.get(nid)
+        if frame is not None:
+            self._place(frame, (x, y), self.model.zoom())
+
     def _materialize_team(self, spec: TeamTemplate, *, manager: str | None = None) -> dict:
         """Cria os Grupos do canvas + recruta os membros DENTRO de cada grupo, com papéis e
         cabos (docs/14 §5.A2). Ação do HUMANO via FAB (ou já confirmada pelo humano na Fase B)
@@ -5332,7 +5366,7 @@ class CanvasWindow:
             if len(g.members) > self.MAESTRO_TEAM_GROUP_WARN
         ]
 
-        ox, oy = self._next_node_default()
+        ox, oy = self._free_region_origin()
         gx, gy = float(ox), float(oy)
         gap = GROUP_PAD * 2
         groups_created = agents_created = 0
@@ -5359,6 +5393,7 @@ class CanvasWindow:
                                 member=member.name, reason=getattr(self, "_last_recruit_error", ""))
                     continue
                 agents_created += 1
+                self._force_node_position(nid, px, py)  # nunca herda posição persistida antiga
                 self.model.set_node_cfg(nid, "role", member.name)  # nome p/ display/badge/HUD
                 self._apply_role_spec(nid, member)  # instrução REAL do template (não a lib)
                 if manager:
@@ -5387,31 +5422,48 @@ class CanvasWindow:
         box.append(ok)
         dlg.present()
 
-    def _do_materialize_team(self, spec: TeamTemplate) -> None:
-        result = self._materialize_team(spec)
+    def _do_materialize_team(self, spec: TeamTemplate, *, manager: str | None = None) -> None:
+        result = self._materialize_team(spec, manager=manager)
         if not result["ok"]:
             self._team_result_dialog(f"Não deu pra montar: {result['error']}")
             return
         msg = (f"Equipe '{spec.name}' montada: {result['groups']} grupo(s), "
                f"{result['agents']} agente(s).")
+        if manager:
+            msg += f"\nConectada ao orquestrador '{manager}'."
         if result["warnings"]:
             msg += "\n⚠ " + "; ".join(result["warnings"])
         self._team_result_dialog(msg)
 
+    def _agent_node_choices(self) -> list[tuple[str, str]]:
+        """(nid, nome de exibição) dos nós-AGENTE vivos no canvas — candidatos a orquestrador
+        pra ligar a equipe recém-montada (opção "criar equipe com orquestrador")."""
+        kind_by_nid = {s.get("nid"): s.get("kind") for s in self.model.node_roster()}
+        return [
+            (nid, self.model.node_name(nid, nid))
+            for nid in self.order
+            if nid in self.frames and kind_by_nid.get(nid) == "agent"
+        ]
+
     def _confirm_materialize_team(self, parent_win, tpl: TeamTemplate) -> None:
-        """Se o template tem placeholders (`{projeto}` etc.), pede os valores antes de montar."""
+        """Pede valores de placeholder (se houver) + deixa escolher um orquestrador
+        (agente já no canvas) pra ligar a equipe — ou nível principal (nenhum), o default."""
+        win, box = self._dialog(f"Montar — {tpl.name}")
         names = placeholder_names(tpl)
-        if not names:
-            parent_win.destroy()
-            self._do_materialize_team(tpl)
-            return
-        win, box = self._dialog(f"Preencher — {tpl.name}")
         entries = {}
         for n in names:
             box.append(Gtk.Label(label=f"{{{n}}}", xalign=0))
             entry = Gtk.Entry()
             entries[n] = entry
             box.append(entry)
+        box.append(Gtk.Label(label="Conectar ao orquestrador (opcional)", xalign=0))
+        mgr_combo = Gtk.ComboBoxText()
+        mgr_combo.append_text("(nenhum — nível principal)")
+        choices = self._agent_node_choices()
+        for nid, label in choices:
+            mgr_combo.append_text(f"{label} ({nid})")
+        mgr_combo.set_active(0)
+        box.append(mgr_combo)
         foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         foot.set_halign(Gtk.Align.END)
         cancel = Gtk.Button(label="Cancelar")
@@ -5421,10 +5473,12 @@ class CanvasWindow:
 
         def do_montar(_b):
             values = {n: e.get_text().strip() for n, e in entries.items()}
-            rendered = render_team_template(tpl, **values)
+            rendered = render_team_template(tpl, **values) if names else tpl
+            idx = mgr_combo.get_active()
+            manager = choices[idx - 1][0] if idx > 0 else None
             win.destroy()
             parent_win.destroy()
-            self._do_materialize_team(rendered)
+            self._do_materialize_team(rendered, manager=manager)
 
         montar.connect("clicked", do_montar)
         foot.append(cancel)
