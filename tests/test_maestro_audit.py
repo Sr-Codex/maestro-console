@@ -1,5 +1,7 @@
 """Testes da trilha de auditoria append-only (ADR-17, Etapa 2)."""
 
+import pytest
+
 from maestro.engine.maestro_audit import append_event, audit_path, read_events
 
 
@@ -9,7 +11,8 @@ def test_append_e_read_roundtrip(tmp_path):
     append_event(bus, "dismiss", now=2.0, manager="mgr", node="codex-1")
     evs = read_events(bus)
     assert [e["event"] for e in evs] == ["recruit", "dismiss"]
-    assert evs[0]["manager"] == "mgr" and evs[0]["node"] == "codex-1" and evs[0]["ts"] == 1.0
+    assert evs[0]["manager"] == "mgr" and evs[0]["node"] == "codex-1"
+    assert evs[0]["ts"] == pytest.approx(1.0)  # float: sem == exato (Sonar S1244)
     assert evs[1]["event"] == "dismiss"
 
 

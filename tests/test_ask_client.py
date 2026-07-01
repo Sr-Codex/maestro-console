@@ -74,16 +74,16 @@ def test_install_client_copia_executavel_valido(tmp_path):
 
 
 @pytest.mark.skipif(not bwrap_available(), reason="bwrap ausente")
-def test_wrap_emite_setenv():
-    argv = sandbox_wrap(["x"], workspace="/tmp", setenv={"MAESTRO_NODE": "A"})
+def test_wrap_emite_setenv(tmp_path):
+    argv = sandbox_wrap(["x"], workspace=str(tmp_path), setenv={"MAESTRO_NODE": "A"})
     assert "--setenv" in argv
     i = argv.index("--setenv")
     assert argv[i + 1] == "MAESTRO_NODE" and argv[i + 2] == "A"
 
 
 @pytest.mark.skipif(not bwrap_available(), reason="bwrap ausente")
-def test_wrap_dropa_capabilities():
-    argv = sandbox_wrap(["x"], workspace="/tmp")
+def test_wrap_dropa_capabilities(tmp_path):
+    argv = sandbox_wrap(["x"], workspace=str(tmp_path))
     assert "--cap-drop" in argv and argv[argv.index("--cap-drop") + 1] == "ALL"
 
 

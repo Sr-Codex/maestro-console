@@ -24,8 +24,11 @@ from maestro.engine.sandbox import bwrap_available
 
 pytestmark = pytest.mark.skipif(not bwrap_available(), reason="live: requer bwrap")
 
+# "/tmp" aqui é o PONTO DE MONTAGEM de um tmpfs PRIVADO dentro do sandbox (o oposto de
+# escrita insegura) — não é um diretório do host. Sonar S5443 é falso-positivo.
+_TMPFS_MOUNT = "/tmp"  # NOSONAR S5443: montagem tmpfs no sandbox, não escrita em dir do host
 _BWRAP_BASE = ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
-               "--tmpfs", "/tmp", "--unshare-pid", "--die-with-parent", "--cap-drop", "ALL"]
+               "--tmpfs", _TMPFS_MOUNT, "--unshare-pid", "--die-with-parent", "--cap-drop", "ALL"]
 
 
 def test_socket_atravessa_bwrap_e_identidade_por_canal(tmp_path):

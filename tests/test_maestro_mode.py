@@ -5,6 +5,7 @@ recruit/list/dismiss/wire/reassign + os gates de segurança (toggle, agente vál
 """
 
 import os
+import tempfile
 from types import SimpleNamespace
 
 import pytest
@@ -47,7 +48,7 @@ def _make_win():
     w = CanvasWindow.__new__(CanvasWindow)  # sem __init__ → não cria GTK
     w.model = _FakeModel()
     w.controller = object()
-    w._ask_bus_dir = "/tmp/bus"
+    w._ask_bus_dir = tempfile.mkdtemp(prefix="maestro-test-")  # dir seguro (não /tmp hardcoded)
     w.edges = _FakeEdges()
     w.frames = {"mgr": object()}
     w._base_pos = {"mgr": (100.0, 100.0)}
@@ -189,7 +190,6 @@ def test_profundidade_da_arvore(tmp_path):
     w, created = _make_win()
     w._ask_bus_dir = str(tmp_path)
     w.model.set_node_cfg("mgr", "maestro", "1")
-    a1 = created and None
     # mgr recruta a1 (profundidade 1)
     assert _disp(w, "mgr", "recruit", ["codex"])["ok"]
     a1 = created[0][0]
@@ -207,7 +207,7 @@ def test_profundidade_da_arvore(tmp_path):
 
 def test_rate_limit_token_bucket(tmp_path):
     """Com relógio FIXO, estoura o rate-limit (token-bucket por-manager)."""
-    w, created = _make_win()
+    w, _ = _make_win()
     w._ask_bus_dir = str(tmp_path)
     w.model.set_node_cfg("mgr", "maestro", "1")
     w._maestro_clock = lambda: 100.0  # tempo congelado → token-bucket não repõe
@@ -228,10 +228,8 @@ def test_rate_limit_cobre_comandos_mutadores(tmp_path):
     # cria 1 recruta (consome 1 token), depois martela 'reassign' até estourar
     assert _disp(w, "mgr", "recruit", ["codex"])["ok"]
     nid = created[0][0]
-    oks = 0
-    for _ in range(w.MAESTRO_SPAWN_RATE):
-        if _disp(w, "mgr", "reassign", [nid, "coder"])["ok"]:
-            oks += 1
+    for _ in range(w.MAESTRO_SPAWN_RATE - 1):  # consome os tokens restantes da janela
+        _disp(w, "mgr", "reassign", [nid, "coder"])
     r = _disp(w, "mgr", "reassign", [nid, "coder"])  # já estourou a janela
     assert not r["ok"] and "muitos comandos" in r["error"]
     assert any(e["event"] == "rate_blocked" and e["cmd"] == "reassign"
@@ -432,8 +430,8 @@ def test_wire_recusa_ciclo_e_audita(tmp_path):
     w, created = _make_win()
     w._ask_bus_dir = str(tmp_path)
     w.model.set_node_cfg("mgr", "maestro", "1")
-    _disp(w, "mgr", "recruit", ["codex"])  # a = codex-1
-    _disp(w, "mgr", "recruit", ["codex"])  # b = codex-2
+    _disp(w, "mgr", "recruit", ["codex"])  # 1º recruta
+    _disp(w, "mgr", "recruit", ["codex"])  # 2º recruta
     a, b = created[0][0], created[1][0]
     w.edges._e = []  # zera os cabos de recruta p/ isolar o teste do wire
     assert _disp(w, "mgr", "wire", [a, b])["ok"]  # liga 2 recrutas → ok
@@ -445,7 +443,7 @@ def test_wire_recusa_ciclo_e_audita(tmp_path):
 
 
 def test_recruit_audita_sucesso(tmp_path):
-    w, created = _make_win()
+    w, _ = _make_win()
     w.model.set_node_cfg("mgr", "maestro", "1")
     w._ask_bus_dir = str(tmp_path)
     assert _disp(w, "mgr", "recruit", ["codex", "coder"])["ok"]

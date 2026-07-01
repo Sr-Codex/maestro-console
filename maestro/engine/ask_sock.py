@@ -224,7 +224,7 @@ class SockServer:
                 deadline = time.monotonic() + _CONN_TIMEOUT  # deadline absoluto p/ ler o req
                 try:
                     req = _recv_msg(conn, deadline=deadline)
-                except (SockError, OSError, json.JSONDecodeError, ValueError):
+                except (SockError, OSError, ValueError):  # JSONDecodeError ⊂ ValueError
                     return
                 try:
                     resp = handle(node, req)  # IDENTIDADE: node vem do canal, não do payload
@@ -258,5 +258,5 @@ class SockServer:
             return
         try:
             os.unlink(path)
-        except (FileNotFoundError, OSError):
+        except OSError:  # cobre FileNotFoundError (subclasse)
             pass
