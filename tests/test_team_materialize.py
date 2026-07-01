@@ -24,6 +24,7 @@ class _FakeModel:
     def __init__(self):
         self.cfg = {}
         self.positions = {}
+        self.sizes = {}
 
     def node_cfg(self, nid, key, default=""):
         return self.cfg.get((nid, key), default)
@@ -36,6 +37,12 @@ class _FakeModel:
 
     def set_position(self, nid, x, y):
         self.positions[nid] = (x, y)
+
+    def node_size(self, nid, default):
+        return self.sizes.get(nid, default)
+
+    def set_node_size(self, nid, w, h):
+        self.sizes[nid] = (w, h)
 
     def zoom(self):
         return 1.0
@@ -190,6 +197,28 @@ def test_materialize_forca_posicao_mesmo_com_posicao_persistida_orfa(tmp_path):
     assert nid == "claude-1"
     assert w._base_pos[nid] != (9999.0, 9999.0)
     assert w.model.positions[nid] == w._base_pos[nid]  # persistido foi sobrescrito
+
+
+def test_materialize_forca_tamanho_mesmo_com_tamanho_persistido_orfao(tmp_path):
+    """Regressão ao vivo (achado real na sessão): um id reciclado/órfão pode ter um
+    TAMANHO persistido de um resize manual anterior, bem maior que o nominal
+    (`BASE_W`×`BASE_H`) — o card nascia gigante, estourando o grid e sobrepondo os
+    vizinhos dentro do mesmo grupo. `_force_node_rect` precisa sobrescrever o tamanho,
+    não só a posição."""
+    w, created = _make_win(tmp_path)
+    w.model.sizes["claude-1"] = (740.0, 640.0)  # tamanho "órfão" simulado (resize antigo)
+    spec = _template([["coder", "reviewer", "qe"]])  # 3 lado a lado no grid
+    result = CanvasWindow._materialize_team(w, spec)
+    assert result["ok"]
+    nid = created[0][0]
+    assert nid == "claude-1"
+    assert w._node_size[nid] == (BASE_W, BASE_H)
+    assert w.model.sizes[nid] == (BASE_W, BASE_H)  # persistido foi sobrescrito
+    # com o tamanho forçado, os 3 cards do grid não se tocam (col a col)
+    positions = [w._base_pos[n] for n, _d in created]
+    xs = sorted(p[0] for p in positions)
+    assert xs[1] - xs[0] >= BASE_W  # espaço horizontal >= a largura real do card
+    assert xs[2] - xs[1] >= BASE_W
 
 
 def test_materialize_escreve_instrucao_real_no_workspace_nao_so_o_nome(tmp_path):

@@ -5325,15 +5325,16 @@ class CanvasWindow:
             return (float(ox), float(oy))
         return (min(xs), max(bottoms) + GROUP_PAD * 2)
 
-    def _force_node_position(self, nid: str, x: float, y: float) -> None:
-        """Aplica a posição CALCULADA no nó recém-criado, sobrescrevendo qualquer posição
-        persistida antiga (`model.position()` prefere o que já está salvo pro id — um id
-        reciclado/órfão faria o nó "nascer" longe do grupo que acabou de abraçá-lo)."""
-        self.model.set_position(nid, x, y)
-        self._base_pos[nid] = (x, y)
-        frame = self.frames.get(nid)
-        if frame is not None:
-            self._place(frame, (x, y), self.model.zoom())
+    def _force_node_rect(self, nid: str, x: float, y: float, w: float, h: float) -> None:
+        """Aplica a posição+tamanho CALCULADOS no nó recém-criado, sobrescrevendo qualquer
+        posição/tamanho persistido antigo. `model.position()`/`node_size()` preferem o que já
+        está salvo pro id — um id reciclado/órfão (ex.: um nó fechado antes, redimensionado
+        manualmente, cujo id voltou a ser usado) faria o card "nascer" longe do grid E/OU MUITO
+        maior que o nominal, estourando o grupo e sobrepondo os vizinhos (achado ao vivo:
+        `nodesize_*` órfão bem maior que `BASE_W×BASE_H`). Reusa a mecânica REAL do resize
+        manual (`_item_resize_apply`/`_item_resize_persist`) em vez de duplicar a lógica."""
+        self._item_resize_apply("node", nid, x, y, w, h)
+        self._item_resize_persist("node", nid, x, y, w, h)
 
     def _materialize_team(self, spec: TeamTemplate, *, manager: str | None = None) -> dict:
         """Cria os Grupos do canvas + recruta os membros DENTRO de cada grupo, com papéis e
@@ -5393,7 +5394,8 @@ class CanvasWindow:
                                 member=member.name, reason=getattr(self, "_last_recruit_error", ""))
                     continue
                 agents_created += 1
-                self._force_node_position(nid, px, py)  # nunca herda posição persistida antiga
+                # nunca herda posição/tamanho persistido antigo (id reciclado/órfão)
+                self._force_node_rect(nid, px, py, float(BASE_W), float(BASE_H))
                 self.model.set_node_cfg(nid, "role", member.name)  # nome p/ display/badge/HUD
                 self._apply_role_spec(nid, member)  # instrução REAL do template (não a lib)
                 if manager:
