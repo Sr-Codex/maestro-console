@@ -2,7 +2,8 @@
 
 > **Plano de implementação** para retomar em SESSÃO NOVA (a sessão de origem ficou grande).
 > Autossuficiente: um agente com acesso ao repo + memória consegue executar daqui.
-> Data: 2026-07-01 · PT-BR · Precede o código (protocolo: analisar→pesquisar→**validar/plano**→codar).
+> Data: 2026-07-01 (atualizado no mesmo dia com 2ª rodada de pesquisa, §2.1) · PT-BR · Precede o
+> código (protocolo: analisar→pesquisar→**validar/plano**→codar).
 > Feature aprovada pelo usuário; **fasear: Fase A primeiro** (determinística), depois Fase B (NL).
 
 ## 0. Como retomar (faça primeiro)
@@ -39,11 +40,39 @@ Claude Code Agent Teams, Anthropic, A2A):
 - **Diferencial nosso vs Maestri:** o Maestri NÃO tem grupo visual rotulado nem team-template de 1ª
   classe — **nós já temos o Grupo do canvas**. É a nossa vantagem.
 
+### 2.1 Aprofundamento — repos em crescimento rápido + players (2ª rodada, 2026-07-01)
+Pesquisa adicional pedida pelo usuário (comunidade + repos crescendo rápido + como grandes players
+fazem), comparada linha a linha com nosso design real (`teams.py`/`roles.py`/`groups.py`):
+- **Confirma a arquitetura, não muda nada estrutural.** Google ADK (hierarquia em árvore), OpenAI
+  Agents SDK (Manager pattern = orquestrador central chamando subagentes), Claude Agent SDK (lead
+  agent + subagents com contexto isolado, report-by-artifact) e o próprio n8n (canvas visual +
+  sub-workflows reusáveis) validam: manager humano/central, contexto isolado por agente, JSON
+  interno, Fase A determinística → Fase B NL com confirmação humana.
+- **Dado empírico novo (não estava na 1ª rodada):** dois papers de 2026 (arXiv:2506.18348,
+  arXiv:2506.00066) medem *sweet spot* de **3–4 agentes por grupo**, com degradação visível de
+  5→10. Afina (não substitui) os guard-rails do §8.
+- **CrewAI** (`agents.yaml`, Crews vs Flows, placeholders `{topic}` via `str.format`) segue sendo a
+  referência mais próxima do nosso `TeamTemplate`.
+- **Risco de dependência descartado:** Microsoft AutoGen fragmentou em 3 forks em 2026 (Agent
+  Framework oficial, AutoGen v0.7.x pesquisa, AG2 comunitário) — reforça manter vocabulário PRÓPRIO
+  (`Role`/`Team`/`Group`), nunca copiar API de terceiro 1:1.
+- **"OpenClaw"** (crescimento mais rápido da história do GitHub em 2026) não é um team-template —
+  é agente autônomo solo; múltiplos papers de segurança 2026 (arXiv:2603.27517, arXiv:2604.03131)
+  reforçam (não mudam) nossa postura ADR-16..20.
+- Decisões concretas que isso resolve: ver §3 (`leader` no schema, placeholders promovidos p/ Fase A)
+  e §7/§8 (defaults de UI).
+
 ## 3. Design aprovado
 Entidades (espelham CrewAI/LangGraph):
 - **`AgentSpec`** = reusa `Role` (`engine/teams.py`): `{ name (papel), agent (claude/codex), instruction, color }`.
   (opcional futuro: `goal`, `skills[]` p/ descoberta A2A — NÃO no v1.)
-- **`GroupSpec`** = `{ name, color?, members: [AgentSpec] }`.
+  - **Placeholders** (`{projeto}` etc.) via `str.format` em `name`/`instruction`/`description` —
+    promovido de "v2" para **Fase A** (baixo custo, alto valor; padrão CrewAI `agents.yaml`,
+    2026-07-01 — ver §2.1). Campos sem placeholder passam por `str.format` inofensivamente.
+- **`GroupSpec`** = `{ name, color?, members: [AgentSpec], leader?: str }`. `leader` (nome do papel
+  líder do grupo) é **só schema no v1** — sem comportamento de delegate-mode ainda; adicionado agora
+  pra evitar migration de dado depois (Magentic-One/OpenAI Manager pattern confirmam que liderança de
+  grupo é o padrão a partir de 3 membros — 2026-07-01, ver §2.1).
 - **`TeamTemplate`** = `{ name, description?, groups: [GroupSpec], manager? }`.
 
 Fluxo híbrido:
@@ -75,11 +104,18 @@ os membros. O materializador precisa **calcular posições** (grid) dentro do re
 
 ### 5.A1 — Modelo `TeamTemplate` (engine, testável, gi-free)
 - Novo `engine/team_templates.py` (ou estender `teams.py`): dataclasses `AgentSpec`(=Role ou wrapper),
-  `GroupSpec{name,color,members}`, `TeamTemplate{name,description,groups,manager}` + `to_dict/from_dict`.
+  `GroupSpec{name,color,members,leader=None}`, `TeamTemplate{name,description,groups,manager}` +
+  `to_dict/from_dict`.
+- **Interpolação de placeholders:** função `render(template, **kwargs)` (ou método `TeamTemplate.render`)
+  que aplica `str.format(**kwargs)` nos campos texto (`name`/`instruction`/`description`); chaves
+  ausentes não devem quebrar — usar um dict tolerante (`defaultdict` ou `.format_map` com fallback) em
+  vez de `str.format` cru, que levanta `KeyError` em placeholder não fornecido.
 - Persistência: `load_team_templates()/save_team_templates()` — JSON atômico (temp+os.replace) em
   `~/.config/maestro-console/team_templates.json`, **espelhando `roles.py:save_role_library`**.
-- 2–3 **templates built-in** (ex.: `dev-trio` = coder+reviewer+qe; e um exemplo tipo o n8n como amostra).
-- **Testes:** roundtrip to_dict/from_dict; save/load atômico; built-ins válidos. (rodam no `.venv`).
+- 2–3 **templates built-in** (ex.: `dev-trio` = coder+reviewer+qe; e um exemplo tipo o n8n como amostra,
+  com placeholder `{projeto}` na instrução pra demonstrar reuso).
+- **Testes:** roundtrip to_dict/from_dict (incl. `leader`); save/load atômico; built-ins válidos;
+  interpolação de placeholder (com e sem kwargs fornecidos, chave faltante não quebra). (rodam no `.venv`).
 
 ### 5.A2 — Materializador `_materialize_team(spec, *, manager=None)` (canvas)
 Ordem (tudo na main thread; é ação do HUMANO via FAB → NÃO passa pelo rate-limit de agente):
@@ -105,6 +141,10 @@ Ordem (tudo na main thread; é ação do HUMANO via FAB → NÃO passa pelo rate
 - `_open_team_dialog()`: lista os TeamTemplates (built-in + salvos) com preview (grupos/papéis); botão
   **"Montar"** → `_materialize_team(spec)`. Botões p/ **criar/editar/salvar** template (espelhar o
   `_role_edit_dialog`). Persistência obrigatória.
+- Se o template tiver placeholders, pedir os valores num campo simples antes de montar (`render(spec, **valores)`).
+- **UI sugere 3–4 membros por grupo como default recomendado** (dado empírico: arXiv:2506.18348,
+  arXiv:2506.00066 — sweet spot 3–4, degradação 5→10; ver §2.1) — isto é sugestão de UI/copy, os
+  limites DUROS continuam os do §8 (aviso >5, trava ~8).
 
 ### 5.A4 — Testes Fase A
 - Unit (engine): modelo + persistência (§5.A1).
@@ -129,11 +169,16 @@ Ordem (tudo na main thread; é ação do HUMANO via FAB → NÃO passa pelo rate
 1. **Manager-agente vs humano-T1:** no FAB (humano) os agentes conectam a quê? Opções: (a) top-level
    (humano é o maestro, agentes só agrupados) — mais simples; (b) exige um nó-manager selecionado como pai.
    *Recomendação:* v1 = top-level no FAB; no NL o `frm` (manager que chamou) é o pai. Confirmar com o usuário.
-2. **Líder de grupo (delegate mode):** a pesquisa sugere um coordenador por grupo (3+). v1 pode ser SEM
-   líder (grupos = visual; manager global coordena). Líder-por-grupo (depth 2) = melhoria futura.
+2. **Líder de grupo (delegate mode):** ~~a pesquisa sugere um coordenador por grupo (3+). v1 pode ser
+   SEM líder~~ **RESOLVIDO (2ª rodada, §2.1):** campo `GroupSpec.leader` entra no schema da Fase A
+   AGORA (custo zero, evita migration futura), mas **sem comportamento** de delegate-mode ainda — o
+   manager global continua coordenando na Fase A. Comportamento de líder-por-grupo fica pra depois.
 3. **Formato do template:** JSON (mais simples de persistir/validar) vs YAML (mais legível, à la CrewAI).
-   *Recomendação:* JSON interno + talvez export YAML depois.
-4. **Placeholders** (`{projeto}`): v1 pode omitir; adicionar quando o usuário pedir reuso parametrizado.
+   *Recomendação:* JSON interno + talvez export YAML depois. **Confirmado pela 2ª rodada** — sem mudança;
+   considerar só EXIBIR o template como YAML no dialog de confirmação (Fase B) por legibilidade.
+4. **Placeholders** (`{projeto}`): ~~v1 pode omitir~~ **RESOLVIDO (2ª rodada, §2.1):** promovido para a
+   Fase A — baixo custo (`str.format`/`.format_map` nos campos texto), alto valor (é exatamente o pedido
+   original do usuário de reuso de template entre projetos).
 
 ## 8. Guard-rails & tetos (não regredir a segurança dos ADR-17/18)
 - Total de agentes do template ≤ `MAESTRO_FLEET_CAP` (12); recusar/avisar se estoura.
@@ -149,6 +194,7 @@ Ordem (tudo na main thread; é ação do HUMANO via FAB → NÃO passa pelo rate
 - **Contenção**: materializar N agentes cria N spawns bwrap ~simultâneos; observar o respawn state-machine.
 
 ## 10. Definition of done (Fase A)
-Template persistido + `_materialize_team` + FAB "Montar equipe" + built-ins + guard-rails, testado (unit +
-runtime ao vivo), ruff limpo, CHANGELOG + bump + PR. Depois Fase B (NL→confirma→materializa).
+Template persistido (com `leader` no schema + interpolação de placeholder) + `_materialize_team` + FAB
+"Montar equipe" (sugerindo 3–4 membros/grupo) + built-ins + guard-rails, testado (unit + runtime ao
+vivo), ruff limpo, CHANGELOG + bump + PR. Depois Fase B (NL→confirma→materializa).
 </content>
