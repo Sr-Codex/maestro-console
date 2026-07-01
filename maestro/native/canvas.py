@@ -1628,6 +1628,7 @@ class CanvasWindow:
             self.model.set_node_cfg(nid, "maestro", "1" if on else "")
             self._apply_node_maestro(nid)
             if on != was and self._role_targets(nid):  # nó-agente → reinicia p/ ler a skill
+                self._rebuild_agent_argv(nid)  # Fase 1: relança com/sem auto-aprovação
                 self._respawn_node(nid)
 
         applies.append(apply)
@@ -2809,6 +2810,32 @@ class CanvasWindow:
         frame = self.frames.get(nid)
         base = getattr(frame, "_base_argv", ["/bin/bash"]) if frame is not None else ["/bin/bash"]
         return self._effective_argv(nid, base)
+
+    def _node_auto_approve(self, nid: str) -> bool:
+        """O CLI deste nó roda SEM prompts de permissão? Sim se Maestro mode (Fase 1) ou o
+        toggle 'permissão total' (Fase 2) estiver ligado — o confinamento real é o bwrap (ADR-6)."""
+        return bool(self.model.node_cfg(nid, "maestro") or self.model.node_cfg(nid, "autoapprove"))
+
+    def _agent_base(self, nid: str) -> str | None:
+        """Base do agente (claude/codex) do nó, a partir do roster persistido."""
+        for spec in self.model.node_roster():
+            if spec.get("nid") == nid:
+                return spec.get("base") or nid
+        return None
+
+    def _rebuild_agent_argv(self, nid: str) -> None:
+        """Recomputa o argv bwrap do agente (ex.: mudou o auto_approve) e atualiza _base_argv,
+        p/ o próximo respawn lançar o CLI com/sem as flags de auto-aprovação."""
+        frame = self.frames.get(nid)
+        base = self._agent_base(nid)
+        if frame is None or base is None or not self._ask_bus_dir:
+            return
+        prof = installed_agents().get(base)
+        if prof is None:
+            return
+        frame._base_argv = agent_argv(prof, str(self._node_ws(nid)), node=nid,
+                                      ask_bus_dir=self._ask_bus_dir,
+                                      auto_approve=self._node_auto_approve(nid))
 
     def _node_envv(self, nid: str) -> list[str] | None:
         """env custom (linhas KEY=VALUE em node_cfg 'env') mesclado ao ambiente; None = herda."""
@@ -4535,7 +4562,8 @@ class CanvasWindow:
         wsp = Workspace(str(base_home / "workspaces")).create(nid)
         install_ask_skill(wsp, nid)  # ensina o maestro-ask ao novo agente
         # (role recém-criado é vazio; a injeção do role acontece em _add_node → _apply_node_role)
-        argv = agent_argv(profiles[base], str(wsp), node=nid, ask_bus_dir=self._ask_bus_dir)
+        argv = agent_argv(profiles[base], str(wsp), node=nid, ask_bus_dir=self._ask_bus_dir,
+                          auto_approve=self._node_auto_approve(nid))
         self._add_node(nid, nid, argv, default=default or self._next_node_default())
         self.model.add_to_roster(nid, "agent", base)  # persiste -> volta ao reabrir
         self._resize_plane()
@@ -5755,7 +5783,9 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
                     controller.add_agent_instance(nid, base)
                 except Exception:
                     controller.agents[nid] = prof  # já no registry: garante só o profile
-            argv = agent_argv(prof, str(wsp), node=nid, ask_bus_dir=ask_bus_dir)
+            # restaura o auto-aprovar persistido (Maestro mode / toggle permissão total)
+            auto = bool(model.node_cfg(nid, "maestro") or model.node_cfg(nid, "autoapprove"))
+            argv = agent_argv(prof, str(wsp), node=nid, ask_bus_dir=ask_bus_dir, auto_approve=auto)
             nodes.append((nid, model.node_name(nid, nid), argv))
         if not nodes:  # tudo removido / nada instalado -> um shell de exemplo
             nodes = [("shell-1", "shell", ["/bin/bash"])]

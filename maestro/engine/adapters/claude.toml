@@ -19,3 +19,11 @@ resume = ["--resume", "{id}"]
 [headless.permissions]
 args = ["--permission-mode", "acceptEdits", "--add-dir", "{workspace}"]
 allowed_tools = ["--allowedTools", "Read", "Write", "Edit"]
+
+# Auto-aprovação do INTERATIVO (Fase auto-approve): sem prompt a cada comando.
+# Só é aplicada quando o nó pede (Maestro mode / toggle "permissão total"); o
+# confinamento real é o bwrap (ADR-6) — a flag só remove os prompts, não confina.
+# Verificado no binário claude 2.1.197 (2026-07-01): bypassPermissions = bypass total
+# (circuit breakers p/ rm -rf / e ~ permanecem).
+[interactive]
+auto_approve = ["--permission-mode", "bypassPermissions"]

@@ -53,12 +53,16 @@ class AgentProfile:
     #   "captured" -> o agente gera; capturamos da saída (codex) via session_capture.
     session_assign: str = "caller"
     session_capture: str = ""  # regex com 1 grupo p/ extrair o id (modo captured)
+    # Flags que fazem o CLI INTERATIVO auto-aprovar comandos (sem prompt). Aplicadas só
+    # quando o nó pede (Maestro mode / toggle) — o confinamento real é o bwrap (ADR-6).
+    interactive_auto_approve: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict) -> AgentProfile:
         h = data.get("headless", {})
         sess = h.get("session", {})
         perms = h.get("permissions", {})
+        interactive = data.get("interactive", {})
         return cls(
             name=data["name"],
             cmd=list(h["cmd"]),
@@ -74,6 +78,7 @@ class AgentProfile:
             prompt_position=h.get("prompt_position", "last"),
             session_assign=sess.get("assign", "caller"),
             session_capture=sess.get("capture", ""),
+            interactive_auto_approve=list(interactive.get("auto_approve", [])),
         )
 
     def extract_session_id(self, text: str) -> str | None:
