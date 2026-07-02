@@ -299,3 +299,27 @@ soltos reportando pra fora individualmente.
 retrocompatível com grupos sem líder; validação de `leader` inválido; testado (unit + runtime); ruff
 limpo; CHANGELOG + bump + PR.
 
+## 13. Montar equipe também vira clique-pra-posicionar (generaliza AGENTS.md §5)
+
+Depois de validar clique-pra-posicionar em terminal/agente/nota/grupo/árvore (ver AGENTS.md §
+"Cápsulas de UI do canvas", item 5), o usuário pediu que o MESMO padrão valesse pra "Montar
+equipe" — removendo a exceção que existia até aqui. `do_montar` (`_confirm_materialize_team`)
+agora chama `_start_placing({"kind": "team", "spec": rendered, "manager": manager})` em vez de
+materializar direto; `_commit_placing` despacha pra `_do_materialize_team(..., origin=(bx, by))`.
+
+- `_team_group_footprint(group)` — extrai o cálculo de grid (cols/rows/gw/gh) que já existia
+  dentro do loop de `_materialize_team`, agora reusado também pela prévia.
+- `_team_layout_size(spec)` — soma a largura de todos os grupos lado a lado (+ gap) pra dar o
+  tamanho TOTAL do bloco; usado por `_placing_size()` (dinâmico, diferente dos outros kinds que
+  têm tamanho fixo em `_PLACING_SIZES`).
+- `_materialize_team(spec, *, manager=None, origin=None)` — com `origin` dado (clique humano),
+  usa exatamente essa posição; sem `origin` (Fase B, `maestri team`, sem clique possível), cai no
+  `_free_region_origin()` de sempre — **inalterado** pra esse fluxo.
+
+**Único fluxo que continua com posicionamento automático:** recrutar/montar via agente (Fase B),
+que não tem ponto de clique no canvas por definição (confirmação é humana, mas o gatilho é uma
+mensagem, não um clique).
+
+Testes: `tests/test_team_materialize.py` (footprint/layout-size/origin explícito vs. automático)
+e `tests/test_click_to_place.py` (kind "team" em `_commit_placing`/`_placing_size`).
+

@@ -1,8 +1,8 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-01 · v0.49.0**.
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-02 · v0.50.0**.
 > **Fontes de verdade canônicas:** [`CHANGELOG.md`](../CHANGELOG.md) (histórico completo
-> v0.1.0→v0.49.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..20). Este arquivo resume o
+> v0.1.0→v0.50.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..20). Este arquivo resume o
 > estado; em caso de divergência, o CHANGELOG/ADR mandam. Os artefatos em `_bmad-output/`
 > são o **planejamento do MVP** (histórico, congelado) — ver [`docs/index.md`](index.md).
 
@@ -50,7 +50,7 @@
 - **Auto-aprovação** (ADR-19): Maestro mode / toggle "Permissão total" por nó → o CLI roda sem prompts
   (o bwrap é o confinamento). **Cabo por headless** por padrão (ADR-20): resposta completa + contexto.
 
-### Orquestração de equipe — Fases A+B+C (v0.47.0/v0.48.0/v0.49.0), ver [`docs/14-plano-orquestracao-equipe.md`](14-plano-orquestracao-equipe.md)
+### Orquestração de equipe — Fases A+B+C (v0.47.0/v0.48.0/v0.50.0), ver [`docs/14-plano-orquestracao-equipe.md`](14-plano-orquestracao-equipe.md)
 - **Team Templates** (`engine/team_templates.py`): `TeamTemplate`→`GroupSpec`(+`leader` schema)→
   `AgentSpec`(=`Role`), placeholders (`{projeto}`), persistência atômica, built-ins.
 - **`_materialize_team()`**: monta Grupos do canvas + recruta os membros DENTRO de cada um (grid,
@@ -60,8 +60,12 @@
 - **`maestri team '<json>'`** (Fase B, agente): manager descreve a equipe em JSON; **confirmação
   humana obrigatória** antes de materializar (`_hitl_team`→`_confirm_team_from_agent`→
   `_apply_team_decision`); autoridade sempre pelo canal (`frm`), nunca por campo do JSON.
-- **Editor visual de template** (Fase C): `_team_edit_dialog`/`_team_group_edit_dialog` — criar/
-  editar/duplicar/excluir grupos+membros pela UI (`_save_team_from_staging` valida antes de
+- **"Montar equipe" (FAB) segue clique-pra-posicionar** (v0.49.0, generaliza AGENTS.md §5): o
+  bloco inteiro da equipe nasce onde o humano clica, com prévia fantasma dimensionada
+  dinamicamente (`_team_layout_size`/`_team_group_footprint`) — única exceção que resta é o
+  fluxo Fase B (`maestri team`, sem clique humano possível).
+- **Editor visual de template** (Fase C, v0.50.0): `_team_edit_dialog`/`_team_group_edit_dialog` —
+  criar/editar/duplicar/excluir grupos+membros pela UI (`_save_team_from_staging` valida antes de
   persistir); FAB ganhou "+ Novo template"/"Editar"/"Duplicar".
 
 ## O que NÃO está feito (lacunas conhecidas)

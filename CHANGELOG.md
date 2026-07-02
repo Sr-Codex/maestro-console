@@ -3,7 +3,10 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
-## [0.49.0] — Orquestração de equipe (Fase C): editor visual de templates
+## [0.50.0] — Orquestração de equipe (Fase C): editor visual de templates
+> Branch aberta direto de `main` (v0.48.0), em paralelo ao PR #51 (que mergeou primeiro como
+> v0.49.0) — como sinalizado lá, rebaseando a versão pra v0.50.0 aqui.
+
 Fecha o gap conhecido desde a Fase A: criar/editar/duplicar/excluir um `TeamTemplate` (grupos +
 membros) inteiro pela UI, sem tocar no JSON manualmente.
 - **`_team_edit_dialog`** (template) + **`_team_group_edit_dialog`** (grupo, aninhado): nome/
@@ -15,6 +18,19 @@ membros) inteiro pela UI, sem tocar no JSON manualmente.
 - FAB "🧩 Montar equipe": botão **"+ Novo template"**; linhas custom ganham **"Editar"**;
   linhas built-in ganham **"Duplicar"** (clona pra editar uma cópia, já que built-in é
   só-leitura).
+- `_color_picker_row` extraído (reusado por `_role_edit_dialog`/`_team_group_edit_dialog`) —
+  elimina bloco duplicado flagrado pelo SonarCloud.
+
+## [0.49.0] — Montar equipe também vira clique-pra-posicionar
+Generaliza o padrão de clique-pra-posicionar (AGENTS.md § "Cápsulas de UI do canvas", item 5) pro
+fluxo "Montar equipe" do FAB — removendo a exceção que existia até aqui (docs/14 §13).
+- `do_montar` agora entra em modo de posicionamento (`_start_placing`) em vez de materializar
+  direto; o clique no canvas decide onde o BLOCO inteiro da equipe nasce.
+- Prévia fantasma com tamanho DINÂMICO: `_team_layout_size`/`_team_group_footprint` calculam a
+  largura/altura real do template (todos os grupos lado a lado) — não um tamanho fixo.
+- `_materialize_team(spec, *, manager=None, origin=None)`: com `origin` (clique humano), usa essa
+  posição; sem `origin` (Fase B, `maestri team`, sem clique possível), continua no cálculo
+  automático de área livre de sempre — **única exceção que resta** ao padrão de clique.
 
 ## [0.48.0] — Orquestração de equipe (Fase B): montar equipe por linguagem natural
 Um manager em Maestro mode agora monta uma equipe inteira **descrevendo em linguagem natural**, sem

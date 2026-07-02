@@ -15,6 +15,20 @@ deste repositório. O fluxo completo está em `CONTRIBUTING.md` — siga-o.
   `main` é decisão do usuário — proponha; ele autoriza/roda (a trava de merge é dele).
 - **Release:** tag `vX.Y.Z` (SemVer) só no merge de release, não a cada commit.
 
+## Ideias que surgem no meio de outra tarefa (obrigatório — não interromper o fluxo)
+- **Ideia nova durante uma tarefa em andamento → NÃO implementar na hora.** Fluxo: (1) discutir
+  rápido (2-3 frases: o que é, por quê, trade-off principal); (2) registrar **1 entrada** em
+  `docs/15-ideias-backlog.md` (data + 1-2 linhas, status 🧊); (3) **continuar a tarefa atual sem
+  desviar**.
+- Só vira código quando o usuário puxar a ideia da fila explicitamente — aí sim: promover pra um
+  doc de plano próprio (mesmo formato do `docs/14`) e seguir o protocolo normal (analisar→
+  pesquisar→validar→codar).
+- *Por quê:* ideias vão surgir o tempo todo numa sessão longa; implementar cada uma na hora quebra
+  o foco da tarefa atual e gera trabalho não pedido. Capturar é rápido e não perde a ideia.
+- **Sugerir** (nunca decidir sozinho) revisar a fila em pontos naturais: fim de fase/feature
+  (todos os PRs de um plano fecharam), marco de release, ou quando o usuário perguntar "o que
+  vem depois" sem ter algo específico em mente.
+
 ## Persistência de UI (obrigatório — "abre igual fechou")
 - **Toda configuração de janela/UI feita pelo usuário DEVE persistir após fechar o app.** Reabrir =
   igual fechou. Vale para qualquer estado/preferência: modo, toggle, layout, escolha visual, tamanho,
@@ -42,9 +56,13 @@ Padrão de toolbar do canvas nativo, decidido pelo usuário:
    posicionamento automático ad-hoc por feature. *Motivo:* tentar corrigir sobreposição com
    algoritmo (viewport-aware, força posição/tamanho contra id órfão) precisou de 4 rodadas de
    correção e ainda colidia na prática — deixar o humano apontar é simples e sempre certo.
-   **Exceção (decisão do usuário):** fluxos SEM clique humano possível (recrutar por agente via
-   `maestri recruit`, `_materialize_team`/Montar Equipe que cria vários de uma vez) continuam
-   com o posicionamento automático — só corrigido pra não herdar posição/tamanho de um id
+   **Generalizado pra "Montar equipe":** o bloco inteiro da equipe (todos os grupos+membros)
+   nasce onde o humano clica — prévia fantasma dimensionada dinamicamente pelo layout do
+   template (`_team_layout_size`/`_team_group_footprint`), `origin` propagado até
+   `_materialize_team`. **Única exceção que resta (decisão do usuário):** fluxo SEM clique
+   humano possível — recrutar por agente via `maestri recruit`/`maestri team` (Fase B,
+   confirmação humana mas sem ponto de clique no canvas) — continua com o posicionamento
+   automático (`_free_region_origin`), só corrigido pra não herdar posição/tamanho de um id
    reciclado/órfão, sem garantia de zero sobreposição.
 
 ## Como rodar/testar
