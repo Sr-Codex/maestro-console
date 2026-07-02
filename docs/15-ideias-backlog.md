@@ -45,3 +45,35 @@ rodar um passo de "recap" no início — reaproveitar `bmad-help` e/ou ler os do
 confiar só na memória automática. Trade-off principal: um checklist manual exige o usuário (ou o
 assistente) notar os sinais e agir; não tem gatilho automático de "contexto grande" hoje. Status:
 🧊 icebox.
+
+### 2026-07-02 — F1 (medidor de custo/tokens + budget) NÃO é só feature pausada: é controle de segurança do ADR-17 sem implementação
+Achado da revisão adversarial do Fable 5 (2026-07-02) sobre `docs/16`. O F1 (parser/ledger já
+existem no PR #9, pausado em ~26/06 por "não vi valor") ganhou um argumento novo que a pausa não
+considerava: o **ADR-17 (Etapa 3) lista "budget por CUSTO REAL de tokens" como controle de
+segurança OBRIGATÓRIO do Maestro mode**, mas o `STATUS.md` lista a feature como "reservada/não
+entregue" → um controle declarado no modelo de segurança está como promessa sem implementação.
+E a pausa (~26/06) é **anterior** ao ADR-17 (30/06) e ao Maestro mode virar real — com agentes
+recrutando agentes, custo às cegas deixou de ser dashboard e virou guardrail. Nuance: provável que
+exista teto-proxy por contagem de agentes (fleet-cap); falta o budget por custo real (o próprio
+ADR-17 chama contagem de agente de "teatro parcial"). Também é a dor #1 da categoria (`docs/08`),
+ausente no Maestri. Trade-off: reabrir contradiz a decisão de pausa do usuário — por isso fica no
+backlog, não promovido. Status: 🧊 icebox (candidato forte a retomar o PR #9).
+
+### 2026-07-02 — Revisar docs/10 (roadmap): sobreposição Floors↔Fase 7-A4 + kanban (Fase 5-A2) como cargo-cult
+Achado do Fable 5 (2026-07-02). (a) A **Fase 7 "A4 — worktree por nó"** parece **já parcialmente
+entregue**: o `STATUS.md` lista *Floors = git worktree por agente + merge preview* como feito, mas
+o `docs/10` só marca as Fases 1-3 como defasadas e não sinaliza essa sobreposição → re-escopar ou
+riscar o A4. (b) O **kanban de sessões (Fase 5-A2)** é provável cargo-cult de SaaS/time grande
+(Nimbalyst/Windsurf) — dev solo com meia dúzia de nós numa 1280×720 já vê os estados no canvas;
+candidato a cortar. Contraste: a **Fase 4 (steering + timeline) o Fable endossou** como
+prioridade certa (casa com "controlar sessão longa + nudge", `docs/08`). Status: 🧊 icebox
+(revisão de doc, não feature).
+
+### 2026-07-02 — Antes de aprofundar o líder-de-grupo (delegate-mode/"ondas"), testar via PROMPT primeiro
+Achado do Fable 5 (2026-07-02), reforça o que a pesquisa (`docs/16`) já apontava: o datapoint mais
+forte (compilador Anthropic, confirmado 3-0) **não tinha manager central** — agentes escolhiam a
+própria tarefa via lock de arquivo; e `docs/02` diz que codificação acoplada não ganha com
+multi-agente + o padrão manager hierárquico falha no CrewAI. Logo, aprofundar o líder (ex.: "ondas"
+do Kiro, delegate-mode com mailbox) **dobraria a aposta no padrão que a própria pesquisa desafia**.
+Saída barata antes de escrever orquestração nova (lição Beast Mode, `docs/16` §5, 3-0): ajustar o
+comportamento do líder **só via prompt** e medir. Status: 🧊 icebox (regra de cautela, não tarefa).

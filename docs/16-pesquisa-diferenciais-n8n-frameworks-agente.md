@@ -16,12 +16,16 @@
 A pesquisa cobriu 8 alvos em duas fases (fonte oficial → comunidade). O achado mais valioso
 não foi uma feature isolada, mas uma **confirmação estrutural**: o bug de escalada de
 privilégio que corrigimos hoje no líder de grupo (PR #52 — `_recruited_by` do líder virava
-autoridade de fato) é a **mesma classe de bug**, já documentada publicamente, que atinge o
-CrewAI em produção (issue #4783, fechada como "not planned") — autoridade de delegação
-decidida pelo próprio agente-gerente, em vez de por estado externo controlado pelo host. Isso
-reforça que a regra já aplicada no projeto (autoridade nunca deriva de fiação/decisão do
-agente, sempre de estado controlado pelo canvas) é o diferencial certo a **generalizar**, não
-só a manter.
+autoridade de fato) tem **parentesco** com um bug documentado publicamente no CrewAI (issue
+#4783, fechada como "not planned"). **Correção pós-revisão adversarial (Fable 5, 2026-07-02) —
+alinha com o ADR-21:** os dois **não são a mesma classe** — o nosso é *over-grant/derivação de
+autoridade* (o líder ganha poder que não devia); o do CrewAI é *under-provision/visibilidade*
+(o manager hierárquico não enxerga os colegas e faz tudo sozinho). O eixo comum, mais abstrato,
+é "comportamento emergindo de um detalhe incidental de construção em vez de um contrato
+explícito" — registrar como **analogia direcional**, não como "mesma classe validada em
+produção". Isso reforça que a regra já aplicada no projeto (autoridade nunca deriva de
+fiação/decisão do agente, sempre de estado controlado pelo canvas) é o diferencial certo a
+**generalizar** — mas ela se sustenta pelo **nosso próprio** bug, não pelo paralelo externo.
 
 As ideias mais transplantáveis, por afinidade arquitetural: (1) o par Error Trigger +
 payload estruturado do n8n vira um handler de falha por grupo; (2) os atalhos de teclado do
@@ -272,10 +276,12 @@ execução-autônoma, mas falha em aplicá-la de forma coerente no modo hierárq
 
 1. 🥇 **Generalizar a regra "autoridade nunca deriva de fiação/decisão do agente" como
    princípio de arquitetura explícito (ADR)**, não só como o fix pontual do líder de grupo.
-   *Por quê no topo:* é a única ideia desta pesquisa **validada por uma falha real e pública**
-   em produção (CrewAI #4783) na mesma classe de bug que acabamos de corrigir — não é
-   especulação, é prevenção comprada com o incidente alheio. Esforço: baixo (documentação +
-   checklist de review pra qualquer feature nova que toque autoridade/delegação).
+   *Por quê no topo:* esforço quase-zero e fecha uma classe de bug que já mordeu o projeto
+   duas vezes (confused-deputy no `wire`/`dismiss` + PR #52). **Status pós-Fable (2026-07-02):
+   JÁ FEITO — virou o ADR-21;** é higiene concluída, não "o que construir a seguir". O paralelo
+   com o CrewAI #4783 vale como **reforço direcional** (ferramentas maduras erram no mesmo eixo
+   control-plane vs execução), **não** como "mesma classe validada em produção" — a regra se
+   sustenta pelo nosso próprio bug (ver correção no Resumo executivo e o ADR-21).
 
 2. 🥈 **Lock de arquivo por claim de tarefa + "Mailbox" assíncrono** (Claude Code Agent Teams +
    caso do compilador da Anthropic). Extensão natural do Maestro mode já existente; evita
