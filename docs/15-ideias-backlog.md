@@ -17,6 +17,13 @@
 
 **Status:** 🧊 icebox · 🔬 em pesquisa · 📋 planejada (virou doc próprio) · ✅ entregue (link do PR).
 
+## Quando revisar a fila (proativo, não só quando pedido)
+O assistente deve **sugerir** (não decidir sozinho) revisar a fila nestes momentos naturais:
+- **Fim de fase/feature** — quando todos os PRs de um plano (estilo `docs/14`) fecham/mergeiam.
+- **Marco de release** — ao publicar uma versão (bump + tag).
+- Quando o usuário perguntar "o que vem depois?"/"o que fazer agora?" sem ideia específica.
+Fora esses pontos, a fila fica parada — não interromper uma tarefa em andamento pra revisá-la.
+
 ## Fila
 
 ### 2026-07-02 — Paralelizar implementação de features independentes com sub-agentes

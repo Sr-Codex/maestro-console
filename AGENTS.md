@@ -25,6 +25,9 @@ deste repositório. O fluxo completo está em `CONTRIBUTING.md` — siga-o.
   pesquisar→validar→codar).
 - *Por quê:* ideias vão surgir o tempo todo numa sessão longa; implementar cada uma na hora quebra
   o foco da tarefa atual e gera trabalho não pedido. Capturar é rápido e não perde a ideia.
+- **Sugerir** (nunca decidir sozinho) revisar a fila em pontos naturais: fim de fase/feature
+  (todos os PRs de um plano fecharam), marco de release, ou quando o usuário perguntar "o que
+  vem depois" sem ter algo específico em mente.
 
 ## Persistência de UI (obrigatório — "abre igual fechou")
 - **Toda configuração de janela/UI feita pelo usuário DEVE persistir após fechar o app.** Reabrir =
