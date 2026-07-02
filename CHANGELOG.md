@@ -3,6 +3,19 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.49.0] — Orquestração de equipe (Fase C): editor visual de templates
+Fecha o gap conhecido desde a Fase A: criar/editar/duplicar/excluir um `TeamTemplate` (grupos +
+membros) inteiro pela UI, sem tocar no JSON manualmente.
+- **`_team_edit_dialog`** (template) + **`_team_group_edit_dialog`** (grupo, aninhado): nome/
+  descrição/grupos do template; nome/cor/líder/membros do grupo; membro = papel + agente
+  (claude/codex) + instrução.
+- **`_save_team_from_staging`**: lógica extraída (build via `to_dict`/`from_dict` do rascunho
+  editável + `validate_team_template` + persiste) — testável sem GTK, espelha
+  `_apply_team_decision` da Fase B. Erro de validação aparece na tela, não crasha.
+- FAB "🧩 Montar equipe": botão **"+ Novo template"**; linhas custom ganham **"Editar"**;
+  linhas built-in ganham **"Duplicar"** (clona pra editar uma cópia, já que built-in é
+  só-leitura).
+
 ## [0.48.0] — Orquestração de equipe (Fase B): montar equipe por linguagem natural
 Um manager em Maestro mode agora monta uma equipe inteira **descrevendo em linguagem natural**, sem
 precisar recrutar um por um — mas a materialização nunca acontece sem confirmação humana explícita

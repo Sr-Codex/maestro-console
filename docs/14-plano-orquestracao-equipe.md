@@ -2,10 +2,10 @@
 
 > **Plano de implementação** para retomar em SESSÃO NOVA (a sessão de origem ficou grande).
 > Autossuficiente: um agente com acesso ao repo + memória consegue executar daqui.
-> Data: 2026-07-01 (atualizado 2026-07-02 com Fase B implementada + Fases C/D planejadas) · PT-BR
+> Data: 2026-07-01 (atualizado 2026-07-02: Fases B e C implementadas, Fase D planejada) · PT-BR
 > · Precede o código (protocolo: analisar→pesquisar→**validar/plano**→codar).
 > Feature aprovada pelo usuário; fases: **A** (determinística, ✅) → **B** (NL, ✅) → **C** (editor
-> visual, planejada) → **D** (comportamento de líder de grupo, planejada).
+> visual, ✅) → **D** (comportamento de líder de grupo, planejada).
 
 ## 0. Como retomar (faça primeiro)
 1. Confirmar que o **PR #44** (auto-approve + fixes) foi mergeado; senão, alinhar com o usuário.
@@ -210,7 +210,7 @@ limpo, CHANGELOG + bump + PR #45 mergeado (v0.47.0).
 **Fase B** ✅: comando `team` (NL→JSON→confirma→materializa) + skill do manager ensinando o schema +
 guard-rails reaplicados + testes (gates, roteamento, decisão, anti-confused-deputy no `manager`).
 
-## 11. Plano cirúrgico — FASE C (editor visual de templates)
+## 11. Plano cirúrgico — FASE C (editor visual de templates) ✅ IMPLEMENTADO (2026-07-02)
 
 **Objetivo:** hoje um template custom só se cria/edita mexendo direto no JSON em
 `~/.config/maestro-console/team_templates.json` — gap conhecido desde a Fase A. A Fase C fecha isso:
@@ -242,9 +242,17 @@ criar/editar/duplicar/excluir um `TeamTemplate` inteiro (grupos + membros) pela 
 - Runtime: criar um template do zero pela UI, montar ele (Fase A), fechar/reabrir o app e confirmar que
   o template persistiu (regra "abre igual fechou").
 
-### 11.3 — Definition of done (Fase C)
-Criar/editar/duplicar/excluir template pela UI sem tocar no JSON manualmente; validação antes de salvar;
-testado (unit + runtime); ruff limpo; CHANGELOG + bump + PR.
+### 11.3 — Definition of done (Fase C) ✅
+Criado/editar/duplicar/excluir template pela UI sem tocar no JSON manualmente — `_team_edit_dialog`
+(template) + `_team_group_edit_dialog` (grupo, aninhado) + `_save_team_from_staging` (lógica
+extraída, testável sem GTK: build via `to_dict/from_dict` + `validate_team_template` + persiste).
+FAB "Montar equipe" ganhou "+ Novo template", "Editar" (custom) e "Duplicar" (built-in). Diferenças
+do plano original: sem `dataclasses.replace` (o rascunho editável é um `dict` no shape de
+`to_dict()`, convertido pra dataclass só no Salvar final — mais simples que mutar dataclasses
+frozen); sem validação estrutural de `{placeholder}` (ficou só texto livre, como já previsto).
+Testado (10 testes unit da lógica de save/validação/rename/duplicar — sanity-check por reversão
+confirmou que os testes de rejeição pegam a falta de `validate_team_template`; boot smoke real).
+ruff limpo; CHANGELOG + bump pendentes nesta mesma sessão.
 
 ## 12. Plano cirúrgico — FASE D (comportamento de líder de grupo / delegate mode)
 

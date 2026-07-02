@@ -5569,6 +5569,24 @@ class CanvasWindow:
         custom = [t for t in templates if t.name not in BUILTIN_TEAM_TEMPLATES]
         save_team_templates(self._team_templates_path(), custom)
 
+    def _save_team_from_staging(
+        self, staging: dict, original_name: str | None
+    ) -> tuple[bool, str]:
+        """Constrói um `TeamTemplate` a partir do rascunho editável (mesmo shape de
+        `to_dict()`), valida e persiste (Fase C, docs/14 §11). `original_name` = nome
+        anterior do template (edição, inclusive com rename) ou `None` (novo/duplicado).
+        Devolve (ok, mensagem-de-erro) — nunca levanta, pra UI mostrar inline."""
+        try:
+            tpl = TeamTemplate.from_dict(staging)
+            validate_team_template(tpl)
+        except (TeamTemplateValidationError, KeyError, TypeError, ValueError) as exc:
+            return False, str(exc)
+        skip = {n for n in (original_name, tpl.name) if n}
+        updated = [t for t in self._team_templates() if t.name not in skip]
+        updated.append(tpl)
+        self._save_team_templates(updated)
+        return True, ""
+
     def _free_region_origin(self) -> tuple[float, float]:
         """Origem livre pra nascer uma leva de itens SEM sobrepor nada — abaixo do que está
         VISÍVEL agora (não "abaixo de tudo que existe no canvas inteiro": um canvas com
@@ -5765,13 +5783,266 @@ class CanvasWindow:
         box.append(foot)
         win.present()
 
+    def _team_group_edit_dialog(self, group_state: dict, on_group_saved) -> None:
+        """Editor de UM grupo (nome/cor/líder/membros) — Fase C, docs/14 §11. Chamado de
+        dentro de `_team_edit_dialog`; ao Salvar, devolve o grupo atualizado via callback
+        (não toca o disco — só o template inteiro persiste, no Salvar de fora)."""
+        win, box = self._dialog(f"Grupo — {group_state.get('name') or 'novo'}")
+        win.set_default_size(460, -1)
+
+        box.append(Gtk.Label(label="Nome do grupo", xalign=0))
+        name_e = Gtk.Entry()
+        name_e.set_text(group_state.get("name", ""))
+        box.append(name_e)
+
+        crow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        crow.append(Gtk.Label(label="Cor:"))
+        color = {"hex": group_state.get("color") or "#3b82f6"}
+        sw = Gtk.DrawingArea()
+        sw.set_size_request(28, 20)
+        sw.set_draw_func(lambda _a, cr, w, h: self._fill_rect(cr, w, h, color["hex"]))
+        pick = Gtk.Button(label="Escolher…")
+
+        def pickc(_b):
+            dlg = Gtk.ColorDialog()
+            init = Gdk.RGBA()
+            init.parse(color["hex"])
+
+            def done(d, res):
+                try:
+                    rgba = d.choose_rgba_finish(res)
+                except GLib.Error:
+                    return
+                color["hex"] = (f"#{round(rgba.red * 255):02x}{round(rgba.green * 255):02x}"
+                                f"{round(rgba.blue * 255):02x}")
+                sw.queue_draw()
+
+            dlg.choose_rgba(win, init, None, done)
+
+        pick.connect("clicked", pickc)
+        crow.append(sw)
+        crow.append(pick)
+        box.append(crow)
+
+        box.append(Gtk.Label(label="Líder (opcional)", xalign=0))
+        leader_combo = Gtk.ComboBoxText()
+        box.append(leader_combo)
+
+        box.append(Gtk.Label(label="Membros", xalign=0))
+        members_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.append(members_box)
+
+        member_widgets: list[tuple] = []  # (name_entry, agent_combo, instr_textview, color)
+
+        def refresh_leader_combo():
+            leader_combo.remove_all()
+            leader_combo.append_text("(nenhum)")
+            names = [w[0].get_text().strip() for w in member_widgets]
+            for n in names:
+                if n:
+                    leader_combo.append_text(n)
+            cur = group_state.get("leader")
+            idx = names.index(cur) + 1 if cur and cur in names else 0
+            leader_combo.set_active(idx)
+
+        def add_member_row(m: dict | None = None):
+            m = m or {"name": "", "agent": "claude", "instruction": "", "color": ""}
+            row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            name_ent = Gtk.Entry()
+            name_ent.set_placeholder_text("papel (ex.: coder)")
+            name_ent.set_text(m["name"])
+            name_ent.set_hexpand(True)
+            top.append(name_ent)
+            agent_combo = Gtk.ComboBoxText()
+            for a in ("claude", "codex"):
+                agent_combo.append_text(a)
+            agent_combo.set_active(1 if m.get("agent") == "codex" else 0)
+            top.append(agent_combo)
+            remb = Gtk.Button(label="✕")
+            top.append(remb)
+            row.append(top)
+            instr_tv = Gtk.TextView()
+            instr_tv.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+            instr_tv.get_buffer().set_text(m.get("instruction", ""))
+            instr_sc = Gtk.ScrolledWindow()
+            instr_sc.set_min_content_height(50)
+            instr_sc.set_child(instr_tv)
+            row.append(instr_sc)
+            members_box.append(row)
+            entry = (name_ent, agent_combo, instr_tv, m.get("color", ""))
+            member_widgets.append(entry)
+            name_ent.connect("changed", lambda _e: refresh_leader_combo())
+
+            def do_remove(_b):
+                member_widgets.remove(entry)
+                members_box.remove(row)
+                refresh_leader_combo()
+
+            remb.connect("clicked", do_remove)
+
+        for m in group_state.get("members", []):
+            add_member_row(m)
+        refresh_leader_combo()
+
+        addm = Gtk.Button(label="+ Membro")
+        addm.connect("clicked", lambda _b: (add_member_row(), refresh_leader_combo()))
+        box.append(addm)
+
+        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        foot.set_halign(Gtk.Align.END)
+        cancel = Gtk.Button(label="Cancelar")
+        cancel.connect("clicked", lambda _b: win.destroy())
+        save = Gtk.Button(label="Salvar")
+        save.add_css_class("suggested-action")
+
+        def do_save(_b):
+            members = []
+            for name_ent, agent_combo, instr_tv, mcolor in member_widgets:
+                buf = instr_tv.get_buffer()
+                instruction = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+                members.append({
+                    "name": name_ent.get_text().strip(),
+                    "agent": agent_combo.get_active_text() or "claude",
+                    "instruction": instruction,
+                    "color": mcolor,
+                })
+            leader_text = leader_combo.get_active_text()
+            leader = leader_text if leader_text and leader_text != "(nenhum)" else None
+            updated = {
+                "name": name_e.get_text().strip(),
+                "color": color["hex"],
+                "leader": leader,
+                "members": members,
+            }
+            win.destroy()
+            on_group_saved(updated)
+
+        save.connect("clicked", do_save)
+        foot.append(cancel)
+        foot.append(save)
+        box.append(foot)
+        win.present()
+        name_e.grab_focus()
+
+    def _team_edit_dialog(self, staging: dict, original_name: str | None, on_saved) -> None:
+        """Cria/edita um `TeamTemplate` inteiro (Fase C, docs/14 §11). `staging` é um dict
+        no shape de `TeamTemplate.to_dict()` (rascunho editável); `original_name` = nome
+        anterior (edição/rename) ou `None` (novo/duplicado de um built-in)."""
+        win, box = self._dialog("Editar equipe" if original_name else "Nova equipe (template)")
+        win.set_default_size(460, -1)
+
+        box.append(Gtk.Label(label="Nome", xalign=0))
+        name_e = Gtk.Entry()
+        name_e.set_text(staging.get("name", ""))
+        box.append(name_e)
+
+        box.append(Gtk.Label(label="Descrição", xalign=0))
+        desc_e = Gtk.Entry()
+        desc_e.set_text(staging.get("description", ""))
+        box.append(desc_e)
+
+        box.append(Gtk.Label(label="Grupos", xalign=0))
+        groups_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.append(groups_box)
+
+        err_lbl = Gtk.Label(label="", xalign=0)
+        err_lbl.set_wrap(True)
+
+        def refresh_groups():
+            child = groups_box.get_first_child()
+            while child is not None:
+                nxt = child.get_next_sibling()
+                groups_box.remove(child)
+                child = nxt
+            for i, g in enumerate(staging.get("groups", [])):
+                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                lbl = Gtk.Label(
+                    label=f"{g.get('name') or '(sem nome)'} ({len(g.get('members', []))} "
+                          "membro(s))",
+                    xalign=0,
+                )
+                lbl.set_hexpand(True)
+                row.append(lbl)
+                editb = Gtk.Button(label="Editar")
+                editb.connect("clicked", lambda _b, idx=i: open_group_editor(idx))
+                row.append(editb)
+                remg = Gtk.Button(label="Remover")
+
+                def do_remove_group(_b, idx=i):
+                    staging["groups"].pop(idx)
+                    refresh_groups()
+
+                remg.connect("clicked", do_remove_group)
+                row.append(remg)
+                groups_box.append(row)
+
+        def open_group_editor(idx: int):
+            def on_group_saved(updated_group):
+                staging["groups"][idx] = updated_group
+                refresh_groups()
+
+            self._team_group_edit_dialog(staging["groups"][idx], on_group_saved)
+
+        def add_group(_b):
+            staging.setdefault("groups", []).append(
+                {"name": "Grupo", "color": "", "leader": None, "members": []}
+            )
+            refresh_groups()
+            open_group_editor(len(staging["groups"]) - 1)
+
+        refresh_groups()
+        addg = Gtk.Button(label="+ Grupo")
+        addg.connect("clicked", add_group)
+        box.append(addg)
+        box.append(err_lbl)
+
+        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        foot.set_halign(Gtk.Align.END)
+        cancel = Gtk.Button(label="Cancelar")
+        cancel.connect("clicked", lambda _b: win.destroy())
+        save = Gtk.Button(label="Salvar")
+        save.add_css_class("suggested-action")
+
+        def do_save(_b):
+            staging["name"] = name_e.get_text().strip()
+            staging["description"] = desc_e.get_text().strip()
+            ok, msg = self._save_team_from_staging(staging, original_name)
+            if not ok:
+                err_lbl.set_text(f"⚠ {msg}")
+                return
+            win.destroy()
+            on_saved()
+
+        save.connect("clicked", do_save)
+        foot.append(cancel)
+        foot.append(save)
+        box.append(foot)
+        win.present()
+        name_e.grab_focus()
+
     def _open_team_dialog(self) -> None:
         """FAB '🧩 Montar equipe' (docs/14 §5.A3): lista TeamTemplates (built-in + salvos),
-        preview de grupos/papéis, botão Montar. Criar/editar template visualmente fica pra
-        depois — por ora, template custom = editar o JSON em `_team_templates_path()` (ou
-        duplicar um built-in) e reabrir o dialog."""
+        preview de grupos/papéis, botão Montar. Criar/editar/duplicar pela UI (Fase C, §11)."""
         win, box = self._dialog("🧩 Montar equipe")
         win.set_default_size(480, -1)
+
+        def reabrir():
+            win.destroy()
+            self._open_team_dialog()
+
+        novo = Gtk.Button(label="+ Novo template")
+        novo.connect(
+            "clicked",
+            lambda _b: self._team_edit_dialog(
+                {"name": "", "description": "", "manager": None, "groups": []},
+                None,
+                reabrir,
+            ),
+        )
+        box.append(novo)
+        box.append(Gtk.Separator())
+
         templates = self._team_templates()
         if not templates:
             box.append(Gtk.Label(label="(nenhum template disponível)"))
@@ -5798,6 +6069,12 @@ class CanvasWindow:
             montar.connect("clicked", lambda _b, t=tpl: self._confirm_materialize_team(win, t))
             actions.append(montar)
             if tpl.name not in BUILTIN_TEAM_TEMPLATES:
+                editar = Gtk.Button(label="Editar")
+                editar.connect(
+                    "clicked",
+                    lambda _b, t=tpl: self._team_edit_dialog(t.to_dict(), t.name, reabrir),
+                )
+                actions.append(editar)
                 excluir = Gtk.Button(label="Excluir")
 
                 def do_excluir(_b, name=tpl.name):
@@ -5808,6 +6085,16 @@ class CanvasWindow:
 
                 excluir.connect("clicked", do_excluir)
                 actions.append(excluir)
+            else:
+                duplicar = Gtk.Button(label="Duplicar")
+
+                def do_duplicar(_b, t=tpl):
+                    staging = t.to_dict()
+                    staging["name"] = f"{t.name}-copia"
+                    self._team_edit_dialog(staging, None, reabrir)
+
+                duplicar.connect("clicked", do_duplicar)
+                actions.append(duplicar)
             row.append(actions)
             box.append(row)
             box.append(Gtk.Separator())
