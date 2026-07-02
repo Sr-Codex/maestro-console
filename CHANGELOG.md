@@ -3,6 +3,24 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.51.1] — fix(canvas): líder de grupo não ganha autoridade de comando sobre os colegas
+Achado por revisão adversarial pós-merge da Fase D (v0.51.0): `_materialize_team` fazia
+`_recruited_by[colega] = líder`, e como a autoridade de `dismiss`/`reassign`/`wire` no sistema
+(`_own_recruit`, ADR-18) é decidida por essa MESMA linhagem, o líder virava, sem querer,
+recrutador-de-fato dos colegas de grupo — podendo dispensá-los ou reatribuí-los, algo que a
+Fase D dizia explicitamente que não daria. Confirmado empiricamente (`_own_recruit(líder,
+colega)` retornava `True`) antes de corrigir.
+- **Fix:** a fiação visual (`edges`, exibição/UI) continua ligando o colega no líder — é o que
+  dá a caixa-preta do grupo. Mas a **autoridade** (`_recruited_by`) permanece com quem já a tinha
+  antes da Fase D: o `manager` (se houver) ou ninguém (materialização top-level via FAB/humano).
+  Autoridade nunca deriva da fiação, reafirmando ADR-17/18.
+- **Testes:** 2 testes existentes corrigidos (autoridade esperada era `líder`, virou `manager`/
+  nenhuma) + 1 teste novo de regressão (`_own_recruit(líder, colega)` deve ser `False`).
+- **ADR-21:** o princípio virou decisão arquitetural registrada — `_recruited_by` (linhagem de
+  autoridade) só se ESCREVE em recrutamento real, nunca como efeito colateral de fiação visual;
+  fecha o lado da escrita do invariante que o ADR-17/18 cobriam na leitura.
+- 596 testes (system) + 6 live opt-in, ruff limpo, boot smoke real sem traceback.
+
 ## [0.51.0] — Orquestração de equipe (Fase D): comportamento de líder de grupo
 `GroupSpec.leader` existia no schema desde a Fase A, mas sem comportamento. Agora um grupo COM
 líder vira uma caixa-preta coordenada por ele — não mais um bando de membros soltos reportando

@@ -307,6 +307,20 @@ Testado (2 testes engine + 4 testes canvas — sanity-check por reversão confir
 de comportamento com líder falham sem a fiação, e o teste de regressão sem líder passa igual);
 ruff limpo; CHANGELOG + bump pendentes nesta mesma sessão.
 
+### 12.5 — Correção pós-merge (v0.51.1, 2026-07-02): líder ganhava autoridade de comando de graça
+Revisão adversarial pós-merge achou que `_recruited_by[colega] = líder` (linha 300 acima) tinha
+um efeito colateral não intencional: a autoridade de `dismiss`/`reassign`/`wire` no sistema
+inteiro é decidida pela MESMA linhagem `_recruited_by` (`_own_recruit`, ADR-18 — "autoridade =
+linhagem, nunca cabo"). Ou seja, marcar o líder como `_recruited_by` do colega **também** o
+tornava, sem querer, autorizado a dispensar/reatribuir esse colega — exatamente o poder de
+comando extra que este documento (linha 303-304) dizia que o líder não teria. Confirmado
+empiricamente (`_own_recruit(líder, colega)` retornava `True`) antes de corrigir.
+**Fix:** separar fiação de autoridade — `edges` (visual/UI) continua ligando o colega no líder;
+`_recruited_by` (autoridade) permanece com quem já a tinha ANTES da Fase D (o `manager`, se
+houver; ninguém, se materialização top-level via FAB). Teste de regressão adicionado
+(`_own_recruit(líder, colega)` deve ser `False`). Mesmo padrão de bug do ADR-18 (autoridade
+vazando por um mecanismo que não deveria concedê-la), agora na materialização de equipe.
+
 ## 13. Montar equipe também vira clique-pra-posicionar (generaliza AGENTS.md §5)
 
 Depois de validar clique-pra-posicionar em terminal/agente/nota/grupo/árvore (ver AGENTS.md §
