@@ -31,6 +31,7 @@
 | [`05-pesquisa-cabos-interativos.md`](05-pesquisa-cabos-interativos.md) | Research pré-cabos (ADR-11/13). |
 | [`11-pesquisa-canvas-infinito-gpu.md`](11-pesquisa-canvas-infinito-gpu.md) | Já **auto-corrigido** (nota no topo): resolvido no CM4 (v0.24). |
 | [`12-pesquisa-cabo-fisica.md`](12-pesquisa-cabo-fisica.md) | **Atual** — casa com v0.34/ADR-14. |
+| [`16-pesquisa-diferenciais-n8n-frameworks-agente.md`](16-pesquisa-diferenciais-n8n-frameworks-agente.md) | Research (2026-07-02): n8n + BMAD/GSD/Beast Mode/Claude Code Agent Teams/gstack/CrewAI — diferenciais pro painel visual estilo n8n. |
 
 ## ⚠️ Roadmaps & auditorias com DEFASAGEM (ler com a nota datada no topo)
 | Doc | Cuidado |
