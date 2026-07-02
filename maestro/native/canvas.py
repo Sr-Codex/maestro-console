@@ -69,6 +69,17 @@ from ..engine.roles import (  # noqa: E402
     write_role_sidecar,
 )
 from ..engine.state.store import Store  # noqa: E402
+from ..engine.team_templates import (  # noqa: E402
+    BUILTIN_TEAM_TEMPLATES,
+    TeamTemplate,
+    TeamTemplateValidationError,
+    default_team_templates_path,
+    load_team_templates,
+    placeholder_names,
+    render_team_template,
+    save_team_templates,
+    validate_team_template,
+)
 from ..engine.teams import Role  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from ..engine.workspace_registry import WorkspaceRegistry  # noqa: E402
@@ -782,6 +793,7 @@ class CanvasWindow:
             "floors": self._open_floors_dialog,
             "routines": self._open_routines_dialog,
             "group": self._create_group,
+            "team": self._open_team_dialog,
         }
         return spec, cbmap
 
@@ -861,6 +873,7 @@ class CanvasWindow:
         add("utilities-terminal-symbolic", "🖥", "Novo terminal", "newterm")
         add("text-x-generic-symbolic", "📝", "Nova nota", "note")
         add("list-add-symbolic", "⬚", "Novo grupo", "group")
+        add("system-run-symbolic", "🧩", "Montar equipe (Team Templates)", "team")
         add("mail-forward-symbolic", "⇄", "Disparar handoff", "handoff")
         # — conectar (toggle) —
         if self.edges is not None:
@@ -3179,10 +3192,12 @@ class CanvasWindow:
                 return [str(wsp)]
         return []
 
-    def _apply_node_role(self, nid: str) -> None:
-        """Materializa o role: bloco MARCADO (append seguro) no CLAUDE.md/AGENTS.md do cwd e do
-        workspace + sidecar `.maestri/role.json` no cwd + accent = badge. role None = desatribui."""
-        role = self._node_role(nid)
+    def _apply_role_spec(self, nid: str, role) -> None:
+        """Materializa um Role JÁ RESOLVIDO (bloco marcado + sidecar + accent). `role=None`
+        desatribui. Extraído de `_apply_node_role` pra quem já tem o Role em mãos e NÃO deve
+        perder a instrução na resolução por nome/biblioteca (ex.: `_materialize_team`, cujo
+        `AgentSpec.instruction` já vem com placeholders interpolados — resolver por
+        `_node_role`/nome perderia esse texto e escreveria só o NOME como instrução)."""
         targets = self._role_targets(nid)
         if role is None:  # desatribui: tira o bloco marcado (preserva o resto)
             for t in targets:
@@ -3205,6 +3220,10 @@ class CanvasWindow:
         if not self.model.node_cfg(nid, "color"):  # M2: não sobrescreve o accent que o usuário pôs
             self.model.set_node_cfg(nid, "color", role.badge())
             self._apply_node_color(nid, role.badge())
+
+    def _apply_node_role(self, nid: str) -> None:
+        """Materializa o role ATRIBUÍDO por nome (`node_cfg('role')` + biblioteca/ad-hoc)."""
+        self._apply_role_spec(nid, self._node_role(nid))
 
     def _apply_node_maestro(self, nid: str) -> None:
         """Maestro mode (Fase 6): injeta a manager-skill no workspace do agente quando o toggle
@@ -5260,6 +5279,268 @@ class CanvasWindow:
         self._resize_plane()
         self.plane.queue_draw()
         self._mm_refresh()
+
+    # -- Orquestração de equipe (Fase A, docs/14): materializa um TeamTemplate inteiro --
+    MAESTRO_TEAM_GROUP_HARD_CAP = 8  # anti "agentes demais" por grupo (§8, mesmo teto do HITL)
+    MAESTRO_TEAM_GROUP_WARN = 5  # acima disso, avisar (não bloquear) — recomendado é 3-4
+    # tamanho do card no grid da equipe — maior que o BASE_W×BASE_H genérico (420×220):
+    # nesse tamanho dava pra ver o card, mas não pra ler o conteúdo do terminal (achado ao
+    # vivo). Calibrado no tamanho que o usuário validou (terminal nº8 da sessão de teste).
+    MAESTRO_TEAM_CARD_W = 500.0
+    MAESTRO_TEAM_CARD_H = 520.0
+
+    @staticmethod
+    def _team_templates_path() -> Path:
+        return default_team_templates_path()
+
+    def _team_templates(self) -> list[TeamTemplate]:
+        """Built-ins + salvos (salvo de mesmo nome sobrepõe o built-in) — sempre os dois
+        juntos na lista, nunca só um OU outro (diferente do fallback-semente do roles.py)."""
+        by_name = dict(BUILTIN_TEAM_TEMPLATES)
+        for t in load_team_templates(self._team_templates_path()):
+            by_name[t.name] = t
+        return list(by_name.values())
+
+    def _save_team_templates(self, templates: list[TeamTemplate]) -> None:
+        # só persiste os CUSTOM (built-in não precisa virar arquivo do usuário)
+        custom = [t for t in templates if t.name not in BUILTIN_TEAM_TEMPLATES]
+        save_team_templates(self._team_templates_path(), custom)
+
+    def _free_region_origin(self) -> tuple[float, float]:
+        """Origem livre pra nascer uma leva de itens SEM sobrepor nada que já existe no
+        canvas (nós, notas, grupos) — abaixo de tudo que já está lá. `_next_node_default()`
+        é uma cascata modular (bom pra 1 item por vez); materializar vários itens de uma vez
+        precisa de uma área genuinamente livre, não um ponto que pode repetir (mod 6)."""
+        xs: list[float] = []
+        bottoms: list[float] = []
+        for nid, (x, y) in self._base_pos.items():
+            w, h = self._item_size("node", nid)
+            xs.append(x)
+            bottoms.append(y + h)
+        for nid, (x, y) in self._note_base.items():
+            w, h = self._item_size("note", nid)
+            xs.append(x)
+            bottoms.append(y + h)
+        for gid, (x, y) in self._group_base.items():
+            w, h = self._group_size.get(gid, (0.0, 0.0))
+            xs.append(x)
+            bottoms.append(y + h)
+        if not bottoms:
+            ox, oy = self._next_node_default()
+            return (float(ox), float(oy))
+        return (min(xs), max(bottoms) + GROUP_PAD * 2)
+
+    def _force_node_rect(self, nid: str, x: float, y: float, w: float, h: float) -> None:
+        """Aplica a posição+tamanho CALCULADOS no nó recém-criado, sobrescrevendo qualquer
+        posição/tamanho persistido antigo. `model.position()`/`node_size()` preferem o que já
+        está salvo pro id — um id reciclado/órfão (ex.: um nó fechado antes, redimensionado
+        manualmente, cujo id voltou a ser usado) faria o card "nascer" longe do grid E/OU MUITO
+        maior que o nominal, estourando o grupo e sobrepondo os vizinhos (achado ao vivo:
+        `nodesize_*` órfão bem maior que `BASE_W×BASE_H`). Reusa a mecânica REAL do resize
+        manual (`_item_resize_apply`/`_item_resize_persist`) em vez de duplicar a lógica."""
+        self._item_resize_apply("node", nid, x, y, w, h)
+        self._item_resize_persist("node", nid, x, y, w, h)
+
+    def _materialize_team(self, spec: TeamTemplate, *, manager: str | None = None) -> dict:
+        """Cria os Grupos do canvas + recruta os membros DENTRO de cada grupo, com papéis e
+        cabos (docs/14 §5.A2). Ação do HUMANO via FAB (ou já confirmada pelo humano na Fase B)
+        -> NÃO passa pelo rate-limit de agente. Devolve um resultado compacto (nunca levanta)."""
+        empty = {"ok": False, "groups": 0, "agents": 0, "warnings": []}
+        if self.groups is None or self.controller is None or not self._ask_bus_dir:
+            return {**empty, "error": "orquestrador/grupos indisponíveis"}
+        try:
+            validate_team_template(spec)
+        except TeamTemplateValidationError as exc:
+            return {**empty, "error": str(exc)}
+        need = spec.total_members
+        room = self.MAESTRO_FLEET_CAP - self._fleet_count()
+        if need > room:
+            self._audit("team_materialize_blocked", template=spec.name, reason="fleet_cap",
+                        need=need, room=room)
+            return {**empty, "error": f"time precisa de {need} agentes, só cabem {room} "
+                                       f"(teto global {self.MAESTRO_FLEET_CAP})"}
+        hard_cap = self.MAESTRO_TEAM_GROUP_HARD_CAP
+        oversized = [g.name for g in spec.groups if len(g.members) > hard_cap]
+        if oversized:
+            self._audit("team_materialize_blocked", template=spec.name, reason="group_too_big",
+                        groups=oversized)
+            return {**empty, "error": f"grupo(s) {', '.join(oversized)} passam de "
+                                       f"{hard_cap} agentes (máx. por grupo)"}
+        warnings = [
+            f"grupo {g.name!r} tem {len(g.members)} agentes (recomendado: 3-4)"
+            for g in spec.groups
+            if len(g.members) > self.MAESTRO_TEAM_GROUP_WARN
+        ]
+
+        ox, oy = self._free_region_origin()
+        gx, gy = float(ox), float(oy)
+        gap = GROUP_PAD * 2
+        groups_created = agents_created = 0
+        card_w, card_h = self.MAESTRO_TEAM_CARD_W, self.MAESTRO_TEAM_CARD_H
+        for group in spec.groups:
+            cols = min(3, max(1, len(group.members)))
+            rows = -(-len(group.members) // cols)  # ceil sem importar math
+            gw = max(GROUP_MIN_W, GROUP_PAD * 2 + cols * card_w + (cols - 1) * GROUP_PAD)
+            gh_content = (
+                GROUP_PAD + GROUP_TITLE_H + rows * card_h
+                + (rows - 1) * GROUP_PAD + GROUP_PAD_BOTTOM
+            )
+            gh = max(GROUP_MIN_H, gh_content)
+            g = self.groups.create(title=group.name, color=group.color or "blue",
+                                    x=gx, y=gy, w=float(gw), h=float(gh))
+            self._load_group(g)
+            groups_created += 1
+            for i, member in enumerate(group.members):
+                col, row = i % cols, i // cols
+                px = gx + GROUP_PAD + col * (card_w + GROUP_PAD)
+                py = gy + GROUP_PAD + GROUP_TITLE_H + row * (card_h + GROUP_PAD)
+                nid = self._new_agent_terminal(member.agent, default=(px, py))
+                if nid is None:
+                    self._audit("team_materialize_partial", template=spec.name, group=group.name,
+                                member=member.name, reason=getattr(self, "_last_recruit_error", ""))
+                    continue
+                agents_created += 1
+                # nunca herda posição/tamanho persistido antigo (id reciclado/órfão)
+                self._force_node_rect(nid, px, py, card_w, card_h)
+                self.model.set_node_cfg(nid, "role", member.name)  # nome p/ display/badge/HUD
+                self._apply_role_spec(nid, member)  # instrução REAL do template (não a lib)
+                if manager:
+                    self._recruited_by[nid] = manager
+                    self.edges.add(manager, nid)
+                self._respawn_node(nid)
+            self._autofit_group(g.id)
+            self._persist_group(g.id)  # WYSIWYG: reabre igual fechou
+            gx += gw + gap
+        self._resize_plane()
+        self.plane.queue_draw()
+        self._refresh_fleet_hud()
+        self._mm_refresh()
+        self._audit("team_materialize", template=spec.name, groups=groups_created,
+                    agents=agents_created, manager=manager or "")
+        return {"ok": True, "groups": groups_created, "agents": agents_created,
+                "warnings": warnings, "error": None}
+
+    def _team_result_dialog(self, message: str) -> None:
+        dlg, box = self._dialog("🧩 Montar equipe")
+        lbl = Gtk.Label(label=message, xalign=0)
+        lbl.set_wrap(True)
+        box.append(lbl)
+        ok = Gtk.Button(label="OK")
+        ok.connect("clicked", lambda _b: dlg.destroy())
+        box.append(ok)
+        dlg.present()
+
+    def _do_materialize_team(self, spec: TeamTemplate, *, manager: str | None = None) -> None:
+        result = self._materialize_team(spec, manager=manager)
+        if not result["ok"]:
+            self._team_result_dialog(f"Não deu pra montar: {result['error']}")
+            return
+        msg = (f"Equipe '{spec.name}' montada: {result['groups']} grupo(s), "
+               f"{result['agents']} agente(s).")
+        if manager:
+            msg += f"\nConectada ao orquestrador '{manager}'."
+        if result["warnings"]:
+            msg += "\n⚠ " + "; ".join(result["warnings"])
+        self._team_result_dialog(msg)
+
+    def _agent_node_choices(self) -> list[tuple[str, str]]:
+        """(nid, nome de exibição) dos nós-AGENTE vivos no canvas — candidatos a orquestrador
+        pra ligar a equipe recém-montada (opção "criar equipe com orquestrador")."""
+        kind_by_nid = {s.get("nid"): s.get("kind") for s in self.model.node_roster()}
+        return [
+            (nid, self.model.node_name(nid, nid))
+            for nid in self.order
+            if nid in self.frames and kind_by_nid.get(nid) == "agent"
+        ]
+
+    def _confirm_materialize_team(self, parent_win, tpl: TeamTemplate) -> None:
+        """Pede valores de placeholder (se houver) + deixa escolher um orquestrador
+        (agente já no canvas) pra ligar a equipe — ou nível principal (nenhum), o default."""
+        win, box = self._dialog(f"Montar — {tpl.name}")
+        names = placeholder_names(tpl)
+        entries = {}
+        for n in names:
+            box.append(Gtk.Label(label=f"{{{n}}}", xalign=0))
+            entry = Gtk.Entry()
+            entries[n] = entry
+            box.append(entry)
+        box.append(Gtk.Label(label="Conectar ao orquestrador (opcional)", xalign=0))
+        mgr_combo = Gtk.ComboBoxText()
+        mgr_combo.append_text("(nenhum — nível principal)")
+        choices = self._agent_node_choices()
+        for nid, label in choices:
+            mgr_combo.append_text(f"{label} ({nid})")
+        mgr_combo.set_active(0)
+        box.append(mgr_combo)
+        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        foot.set_halign(Gtk.Align.END)
+        cancel = Gtk.Button(label="Cancelar")
+        cancel.connect("clicked", lambda _b: win.destroy())
+        montar = Gtk.Button(label="Montar")
+        montar.add_css_class("suggested-action")
+
+        def do_montar(_b):
+            values = {n: e.get_text().strip() for n, e in entries.items()}
+            rendered = render_team_template(tpl, **values) if names else tpl
+            idx = mgr_combo.get_active()
+            manager = choices[idx - 1][0] if idx > 0 else None
+            win.destroy()
+            parent_win.destroy()
+            self._do_materialize_team(rendered, manager=manager)
+
+        montar.connect("clicked", do_montar)
+        foot.append(cancel)
+        foot.append(montar)
+        box.append(foot)
+        win.present()
+
+    def _open_team_dialog(self) -> None:
+        """FAB '🧩 Montar equipe' (docs/14 §5.A3): lista TeamTemplates (built-in + salvos),
+        preview de grupos/papéis, botão Montar. Criar/editar template visualmente fica pra
+        depois — por ora, template custom = editar o JSON em `_team_templates_path()` (ou
+        duplicar um built-in) e reabrir o dialog."""
+        win, box = self._dialog("🧩 Montar equipe")
+        win.set_default_size(480, -1)
+        templates = self._team_templates()
+        if not templates:
+            box.append(Gtk.Label(label="(nenhum template disponível)"))
+        for tpl in templates:
+            row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            head = Gtk.Label(label=tpl.name, xalign=0)
+            head.add_css_class("team-template-name")
+            row.append(head)
+            if tpl.description:
+                desc = Gtk.Label(label=tpl.description, xalign=0)
+                desc.set_wrap(True)
+                desc.add_css_class("dim-label")
+                row.append(desc)
+            preview = " · ".join(
+                f"{g.name}: {', '.join(m.name for m in g.members)}" for g in tpl.groups
+            )
+            prev_lbl = Gtk.Label(label=preview, xalign=0)
+            prev_lbl.set_wrap(True)
+            prev_lbl.add_css_class("dim-label")
+            row.append(prev_lbl)
+            actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            montar = Gtk.Button(label="Montar")
+            montar.add_css_class("suggested-action")
+            montar.connect("clicked", lambda _b, t=tpl: self._confirm_materialize_team(win, t))
+            actions.append(montar)
+            if tpl.name not in BUILTIN_TEAM_TEMPLATES:
+                excluir = Gtk.Button(label="Excluir")
+
+                def do_excluir(_b, name=tpl.name):
+                    restantes = [t for t in self._team_templates() if t.name != name]
+                    self._save_team_templates(restantes)
+                    win.destroy()
+                    self._open_team_dialog()
+
+                excluir.connect("clicked", do_excluir)
+                actions.append(excluir)
+            row.append(actions)
+            box.append(row)
+            box.append(Gtk.Separator())
+        win.present()
 
     def _autofit_group(self, gid) -> None:
         """Tamanho EXIBIDO: ABRAÇA o conteúdo justinho, com margem (GROUP_PAD) em todos os
