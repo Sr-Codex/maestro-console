@@ -73,8 +73,12 @@
   validação semântica plena e **egress allow-list de rede** — adiados, com controles
   compensatórios (caps + kill-switch + HITL + auditoria).
 - **SSH remoto (Fase 7 do Editar Terminal)** — ainda não iniciado.
-- **Editor visual de Team Templates** (criar/editar grupo+membro pela UI) — ainda não iniciado;
-  hoje é built-ins + edição manual do JSON, ou o manager gerar via `maestri team` (Fase B).
+- **Orquestração de equipe — Fase C** (editor visual de template: criar/editar grupo+membro pela
+  UI) — planejada em `docs/14` §11; hoje é built-ins + edição manual do JSON, ou o manager gerar
+  via `maestri team` (Fase B).
+- **Orquestração de equipe — Fase D** (comportamento de líder de grupo/delegate mode) — planejada
+  em `docs/14` §12; o campo `GroupSpec.leader` existe no schema desde a Fase A, mas sem
+  comportamento ainda (todos os membros conectam direto no orquestrador, líder ou não).
 
 ## Stack / device
 - **Linux aarch64** (Kali) no **ClockworkPi uConsole / CM4**; **Python ≥3.11**.
