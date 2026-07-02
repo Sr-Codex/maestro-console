@@ -411,14 +411,17 @@ def test_materialize_grupo_com_leader_lider_conecta_no_manager_outros_no_lider(t
     assert ("mgr", leader_nid) in w.edges.list()
     for role in ("reviewer", "qe"):
         nid = nid_by_role[role]
-        assert w._recruited_by[nid] == leader_nid
+        # fiação: conecta no líder (visual) — mas AUTORIDADE continua com o manager, nunca
+        # com o líder (fix 2026-07-02: líder não deve ganhar dismiss/reassign de graça).
+        assert w._recruited_by[nid] == "mgr"
         assert (leader_nid, nid) in w.edges.list()
         assert ("mgr", nid) not in w.edges.list()  # NÃO conecta direto no orquestrador
 
 
 def test_materialize_grupo_com_leader_sem_manager_lider_fica_solto_como_t1(tmp_path):
     """Sem orquestrador (FAB/humano): o líder não conecta em ninguém externo — ele É o
-    T1 do grupo; os outros membros ainda conectam nele."""
+    T1 do grupo; os outros membros ainda conectam nele (fiação), mas ninguém tem
+    autoridade de comando sobre ninguém (igual T1 humano, sem manager de verdade)."""
     w, created = _make_win(tmp_path)
     spec = TeamTemplate(name="t", groups=[GroupSpec(
         name="G", leader="coder",
@@ -429,8 +432,27 @@ def test_materialize_grupo_com_leader_sem_manager_lider_fica_solto_como_t1(tmp_p
     nid_by_role = {w.model.node_cfg(nid, "role"): nid for nid, _d in created}
     leader_nid = nid_by_role["coder"]
     assert leader_nid not in w._recruited_by
-    assert w._recruited_by[nid_by_role["reviewer"]] == leader_nid
-    assert (leader_nid, nid_by_role["reviewer"]) in w.edges.list()
+    assert nid_by_role["reviewer"] not in w._recruited_by  # sem manager, sem autoridade rastreada
+    assert (leader_nid, nid_by_role["reviewer"]) in w.edges.list()  # fiação continua correta
+
+
+def test_materialize_grupo_com_leader_lider_nao_ganha_autoridade_sobre_colegas(tmp_path):
+    """Regressão de segurança (achado por revisão adversarial pós-merge, 2026-07-02): o
+    líder recebe o CABO dos colegas (fiação/UI), mas NÃO deve virar `_own_recruit` deles —
+    senão ganharia dismiss/reassign sobre o próprio grupo de graça, poder que a Fase D
+    (docs/14 §12) explicitamente disse que não daria."""
+    w, created = _make_win(tmp_path)
+    spec = TeamTemplate(name="t", groups=[GroupSpec(
+        name="G", leader="coder",
+        members=[Role("coder", "claude", "implemente"), Role("reviewer", "codex", "revise")],
+    )])
+    result = CanvasWindow._materialize_team(w, spec, manager="mgr")
+    assert result["ok"]
+    nid_by_role = {w.model.node_cfg(nid, "role"): nid for nid, _d in created}
+    leader_nid = nid_by_role["coder"]
+    reviewer_nid = nid_by_role["reviewer"]
+    assert CanvasWindow._own_recruit(w, leader_nid, reviewer_nid) is False
+    assert CanvasWindow._own_recruit(w, "mgr", reviewer_nid) is True  # autoridade real: manager
 
 
 def test_materialize_grupo_sem_leader_mantem_comportamento_anterior(tmp_path):

@@ -1,8 +1,8 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-02 · v0.51.0**.
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-02 · v0.51.1**.
 > **Fontes de verdade canônicas:** [`CHANGELOG.md`](../CHANGELOG.md) (histórico completo
-> v0.1.0→v0.51.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..20). Este arquivo resume o
+> v0.1.0→v0.51.1) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..20). Este arquivo resume o
 > estado; em caso de divergência, o CHANGELOG/ADR mandam. Os artefatos em `_bmad-output/`
 > são o **planejamento do MVP** (histórico, congelado) — ver [`docs/index.md`](index.md).
 
@@ -50,7 +50,7 @@
 - **Auto-aprovação** (ADR-19): Maestro mode / toggle "Permissão total" por nó → o CLI roda sem prompts
   (o bwrap é o confinamento). **Cabo por headless** por padrão (ADR-20): resposta completa + contexto.
 
-### Orquestração de equipe — Fases A+B+C+D (v0.47.0→v0.51.0), ver [`docs/14-plano-orquestracao-equipe.md`](14-plano-orquestracao-equipe.md)
+### Orquestração de equipe — Fases A+B+C+D (v0.47.0→v0.51.1), ver [`docs/14-plano-orquestracao-equipe.md`](14-plano-orquestracao-equipe.md)
 - **Team Templates** (`engine/team_templates.py`): `TeamTemplate`→`GroupSpec`(+`leader` schema)→
   `AgentSpec`(=`Role`), placeholders (`{projeto}`), persistência atômica, built-ins.
 - **`_materialize_team()`**: monta Grupos do canvas + recruta os membros DENTRO de cada um (grid,
@@ -69,7 +69,10 @@
   persistir); FAB ganhou "+ Novo template"/"Editar"/"Duplicar".
 - **Líder de grupo** (Fase D, v0.51.0): grupo com `leader` vira caixa-preta coordenada por ele
   (orquestrador/T1 ↔ líder ↔ demais membros); sem líder, comportamento anterior inalterado.
-  Líder não ganha poder de comando extra nem Maestro mode automático.
+  Líder não ganha poder de comando extra nem Maestro mode automático — **corrigido em v0.51.1**
+  (revisão adversarial pós-merge achou que a fiação visual (`edges`) para o líder também virava
+  autoridade (`_recruited_by`) de fato, dando dismiss/reassign de graça; agora fiação e
+  autoridade são separadas — autoridade continua com quem já a tinha antes da Fase D).
 
 ## O que NÃO está feito (lacunas conhecidas)
 - **Medidor de custo/tokens + teto de orçamento** — diferencial-âncora de `docs/08`; parser/ledger
