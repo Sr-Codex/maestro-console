@@ -20,7 +20,13 @@ from maestro.engine.state.store import Store
 from maestro.engine.team_templates import GroupSpec, TeamTemplate
 from maestro.engine.teams import Role
 from maestro.engine.workspace import Workspace
-from maestro.native.canvas import BASE_H, BASE_W, GROUP_PAD, CanvasWindow  # noqa: E402
+from maestro.native.canvas import (  # noqa: E402
+    BASE_H,
+    BASE_W,
+    GROUP_PAD,
+    GROUP_TITLE_H,
+    CanvasWindow,
+)
 
 
 class _FakeModel:
@@ -324,6 +330,65 @@ def test_materialize_conecta_ao_manager_quando_fase_b(tmp_path):
     nid = created[0][0]
     assert w._recruited_by[nid] == "mgr"
     assert ("mgr", nid) in w.edges.list()
+
+
+def test_materialize_usa_origin_explicito_em_vez_de_free_region_origin(tmp_path):
+    """Clique-pra-posicionar (AGENTS.md § Cápsulas de UI, item 5): quando `origin` é dado
+    (posição clicada pelo humano), `_materialize_team` NÃO chama `_free_region_origin` —
+    usa exatamente o que foi passado."""
+    w, created = _make_win(tmp_path)
+    w._free_region_origin = lambda: (9999.0, 9999.0)  # se for chamado, o teste falha
+    spec = _template([["coder"]])
+    result = CanvasWindow._materialize_team(w, spec, origin=(500.0, 300.0))
+    assert result["ok"]
+    gid = w.groups.list()[0].id
+    assert w._group_base[gid] == (500.0, 300.0)
+    nid = created[0][0]
+    px, py = w._base_pos[nid]
+    assert px == 500.0 + GROUP_PAD  # dentro do grupo, ancorado no origin dado
+    assert py == 300.0 + GROUP_PAD + GROUP_TITLE_H
+
+
+def test_materialize_sem_origin_usa_free_region_origin(tmp_path):
+    """Regressão: sem `origin` (ex.: Fase B, sem clique humano), continua caindo no
+    cálculo automático de área livre — comportamento anterior inalterado."""
+    w, created = _make_win(tmp_path)
+    calls = []
+    real = CanvasWindow._free_region_origin
+
+    def spy():
+        calls.append(1)
+        return real(w)
+
+    w._free_region_origin = spy
+    result = CanvasWindow._materialize_team(w, _template([["coder"]]))
+    assert result["ok"]
+    assert calls == [1]
+
+
+def test_team_group_footprint_calcula_grid():
+    w = CanvasWindow.__new__(CanvasWindow)
+    group = GroupSpec(name="G", members=[
+        Role("a", "claude", "x"), Role("b", "claude", "x"), Role("c", "claude", "x"),
+        Role("d", "claude", "x"),
+    ])
+    gw, gh, cols, rows = CanvasWindow._team_group_footprint(w, group)
+    assert cols == 3  # teto de 3 colunas
+    assert rows == 2  # 4 membros / 3 colunas -> 2 linhas
+    assert gw > 0 and gh > 0
+
+
+def test_team_layout_size_soma_grupos_lado_a_lado():
+    w = CanvasWindow.__new__(CanvasWindow)
+    spec = TeamTemplate(name="t", groups=[
+        GroupSpec(name="G1", members=[Role("a", "claude", "x")]),
+        GroupSpec(name="G2", members=[Role("b", "claude", "x"), Role("c", "claude", "x")]),
+    ])
+    tw, th = CanvasWindow._team_layout_size(w, spec)
+    g1w, g1h, _c1, _r1 = CanvasWindow._team_group_footprint(w, spec.groups[0])
+    g2w, g2h, _c2, _r2 = CanvasWindow._team_group_footprint(w, spec.groups[1])
+    assert tw == g1w + GROUP_PAD * 2 + g2w  # 2 grupos lado a lado + 1 gap entre eles
+    assert th == max(g1h, g2h)
 
 
 def test_materialize_sem_groups_recusa(tmp_path):

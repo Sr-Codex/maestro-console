@@ -3,6 +3,20 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.49.0] — Montar equipe também vira clique-pra-posicionar
+> Branch aberta direto de `main` (v0.48.0), em paralelo a PR #48 (Fase C) e #49 (Fase D) que também
+> bumpam pra 0.49.0 — quem mergear por último precisa rebasear pra 0.50.0 (já sinalizado nesses PRs).
+
+Generaliza o padrão de clique-pra-posicionar (AGENTS.md § "Cápsulas de UI do canvas", item 5) pro
+fluxo "Montar equipe" do FAB — removendo a exceção que existia até aqui (docs/14 §13).
+- `do_montar` agora entra em modo de posicionamento (`_start_placing`) em vez de materializar
+  direto; o clique no canvas decide onde o BLOCO inteiro da equipe nasce.
+- Prévia fantasma com tamanho DINÂMICO: `_team_layout_size`/`_team_group_footprint` calculam a
+  largura/altura real do template (todos os grupos lado a lado) — não um tamanho fixo.
+- `_materialize_team(spec, *, manager=None, origin=None)`: com `origin` (clique humano), usa essa
+  posição; sem `origin` (Fase B, `maestri team`, sem clique possível), continua no cálculo
+  automático de área livre de sempre — **única exceção que resta** ao padrão de clique.
+
 ## [0.48.0] — Orquestração de equipe (Fase B): montar equipe por linguagem natural
 Um manager em Maestro mode agora monta uma equipe inteira **descrevendo em linguagem natural**, sem
 precisar recrutar um por um — mas a materialização nunca acontece sem confirmação humana explícita
