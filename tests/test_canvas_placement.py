@@ -32,6 +32,9 @@ def _make_win():
     w._group_base = {}
     w._group_size = {}
     w._maestro_connected = lambda nid: []  # sem recrutas por padrão
+    w.model = SimpleNamespace(zoom=lambda: 1.0)
+    w._cam = (0.0, 0.0)
+    w.scrolled = SimpleNamespace(get_width=lambda: 1280, get_height=lambda: 720)
     return w
 
 
@@ -212,3 +215,24 @@ def test_place_below_usa_pilha_normal_quando_livre():
     w._node_size["mgr"] = (BASE_W, BASE_H)
     px, py = CanvasWindow._place_below(w, "mgr")
     assert (px, py) == (100, int(100 + BASE_H + 40))
+
+
+def test_next_node_default_acompanha_a_camera_quando_panorama():
+    """Regressão ao vivo: "está aparecendo muito longe da vista" — se o usuário deu pan
+    (câmera != (0,0)), o próximo item nasce perto de ONDE ELE ESTÁ OLHANDO, não no
+    canto (0,0) absoluto do canvas infinito."""
+    w = _make_win()
+    w._cam = (-3000.0, -2000.0)  # câmera deslocada -> viewport atual está em (3000,2000)
+    cx, cy = CanvasWindow._next_node_default(w)
+    assert 2900 < cx < 3200
+    assert 1900 < cy < 2200
+
+
+def test_next_node_default_com_zoom_acompanha_a_camera():
+    w = _make_win()
+    w._cam = (-1500.0, -1000.0)
+    w.model = SimpleNamespace(zoom=lambda: 2.0)
+    cx, cy = CanvasWindow._next_node_default(w)
+    # viewport base = -cam/z = (750, 500) no canto
+    assert 700 < cx < 950
+    assert 450 < cy < 700

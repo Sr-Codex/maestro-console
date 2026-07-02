@@ -4705,16 +4705,28 @@ class CanvasWindow:
                 return True
         return False
 
+    def _viewport_rect_base(self) -> tuple[float, float, float, float]:
+        """Retângulo (x,y,w,h) da área VISÍVEL agora, em coords-base (mesma fórmula do
+        minimap: canto = -cam/z, tamanho = tela/z). Item novo nasce perto disso, não em
+        algum canto absoluto do canvas infinito (achado ao vivo: "está aparecendo muito
+        longe da vista")."""
+        z = self.model.zoom() or 1.0
+        camx, camy = self._cam
+        vw = self.scrolled.get_width() or 1
+        vh = self.scrolled.get_height() or 1
+        return (-camx / z, -camy / z, vw / z, vh / z)
+
     def _next_node_default(self) -> tuple[int, int]:
-        """Próxima posição livre pra UM item novo — NUNCA sobrepõe o que já existe (nó,
-        nota, grupo). Tenta a cascata clássica primeiro (canto superior esquerdo, visual
-        variado); só cai pra "abaixo de tudo" (`_free_region_origin`) se a cascata colidir
-        com algo — achado ao vivo: a cascata modular (mod 6) repete e cedo ou tarde
-        sobrepõe um item que já está lá."""
+        """Próxima posição livre pra UM item novo, PERTO DA CÂMERA atual — NUNCA sobrepõe
+        o que já existe (nó, nota, grupo). Tenta a cascata clássica primeiro (canto
+        superior esquerdo da VIEWPORT, visual variado); só cai pra "abaixo do que está
+        visível" (`_free_region_origin`) se a cascata colidir com algo — achado ao vivo:
+        a cascata modular (mod 6) repete e cedo ou tarde sobrepõe um item que já está lá."""
+        vx, vy, _vw, _vh = self._viewport_rect_base()
         n = len(self.order) + len(self.note_frames)
-        cx, cy = 60 + (n % 6) * 80, 60 + (n % 6) * 70
+        cx, cy = vx + 60 + (n % 6) * 80, vy + 60 + (n % 6) * 70
         if not self._rect_overlaps_any(cx, cy, BASE_W, BASE_H):
-            return (cx, cy)
+            return (int(cx), int(cy))
         ox, oy = self._free_region_origin()
         return (int(ox), int(oy))
 
@@ -5461,27 +5473,35 @@ class CanvasWindow:
         save_team_templates(self._team_templates_path(), custom)
 
     def _free_region_origin(self) -> tuple[float, float]:
-        """Origem livre pra nascer uma leva de itens SEM sobrepor nada que já existe no
-        canvas (nós, notas, grupos) — abaixo de tudo que já está lá. Usada por
-        `_materialize_team` (leva inteira) e como FALLBACK de `_next_node_default`/
+        """Origem livre pra nascer uma leva de itens SEM sobrepor nada — abaixo do que está
+        VISÍVEL agora (não "abaixo de tudo que existe no canvas inteiro": um canvas com
+        conteúdo espalhado longe faria o item novo nascer longe da câmera — achado ao vivo,
+        "está aparecendo muito longe da vista"). Só conta itens que se sobrepõem à viewport
+        atual; canvas vazio (ou nada visível) começa no topo-esquerdo da própria viewport.
+        Usada por `_materialize_team` (leva inteira) e como FALLBACK de `_next_node_default`/
         `_place_below` quando a posição preferida (cascata/pilha) colidiria com algo."""
-        xs: list[float] = []
-        bottoms: list[float] = []
+        vx, vy, vw, vh = self._viewport_rect_base()
+
+        def _in_view(bx: float, by: float, bw: float, bh: float) -> bool:
+            return bx < vx + vw and bx + bw > vx and by < vy + vh and by + bh > vy
+
+        xs: list[float] = [vx]
+        bottoms: list[float] = [vy]
         for nid, (x, y) in self._base_pos.items():
             w, h = self._item_size("node", nid)
-            xs.append(x)
-            bottoms.append(y + h)
+            if _in_view(x, y, w, h):
+                xs.append(x)
+                bottoms.append(y + h)
         for nid, (x, y) in self._note_base.items():
             w, h = self._item_size("note", nid)
-            xs.append(x)
-            bottoms.append(y + h)
+            if _in_view(x, y, w, h):
+                xs.append(x)
+                bottoms.append(y + h)
         for gid, (x, y) in self._group_base.items():
             w, h = self._group_size.get(gid, (0.0, 0.0))
-            xs.append(x)
-            bottoms.append(y + h)
-        if not bottoms:
-            ox, oy = self._next_node_default()
-            return (float(ox), float(oy))
+            if _in_view(x, y, w, h):
+                xs.append(x)
+                bottoms.append(y + h)
         return (min(xs), max(bottoms) + GROUP_PAD * 2)
 
     def _force_node_rect(self, nid: str, x: float, y: float, w: float, h: float) -> None:

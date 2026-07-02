@@ -94,6 +94,8 @@ def _make_win(tmp_path, fail_indices=frozenset()):
     w._group_user_sized = set()
     w._group_excluded = set()
     w._loading = False
+    w._cam = (0.0, 0.0)
+    w.scrolled = SimpleNamespace(get_width=lambda: 1280, get_height=lambda: 720)
     w.plane = SimpleNamespace(queue_draw=lambda: None)
     w._agent_nids = set()
     w._recruited_by = {}
@@ -166,20 +168,33 @@ def test_materialize_posiciona_membros_dentro_do_grupo_geometricamente(tmp_path)
     assert len(members) == 3
 
 
-def test_free_region_origin_canvas_vazio_usa_cascata_padrao(tmp_path):
+def test_free_region_origin_canvas_vazio_comeca_na_viewport(tmp_path):
+    """Canvas vazio começa no topo-esquerdo da VIEWPORT atual (câmera em (0,0) na
+    fixture) — não num canto absoluto arbitrário do canvas infinito."""
     w, _created = _make_win(tmp_path)
-    assert CanvasWindow._free_region_origin(w) == (60.0, 60.0)
+    assert CanvasWindow._free_region_origin(w) == (0.0, GROUP_PAD * 2)
 
 
-def test_free_region_origin_evita_conteudo_existente(tmp_path):
+def test_free_region_origin_evita_conteudo_visivel(tmp_path):
     w, _created = _make_win(tmp_path)
     w._base_pos["existing-node"] = (100.0, 100.0)
-    w._node_size["existing-node"] = (400.0, 300.0)  # ocupa até y=400
-    w._group_base["g1"] = (0.0, 900.0)
-    w._group_size["g1"] = (600.0, 50.0)  # ocupa até y=950
+    w._node_size["existing-node"] = (400.0, 300.0)  # ocupa até y=400, dentro da viewport
+    w._group_base["g1"] = (0.0, 500.0)
+    w._group_size["g1"] = (600.0, 50.0)  # ocupa até y=550, ainda dentro da viewport (0-720)
     ox, oy = CanvasWindow._free_region_origin(w)
-    assert oy == 950.0 + GROUP_PAD * 2  # abaixo de TUDO que já existe
-    assert ox == 0.0  # alinhado ao mais à esquerda que já existe
+    assert oy == 550.0 + GROUP_PAD * 2  # abaixo do que está VISÍVEL
+    assert ox == 0.0  # alinhado ao mais à esquerda visível
+
+
+def test_free_region_origin_ignora_conteudo_fora_da_vista(tmp_path):
+    """Regressão ao vivo: "está aparecendo muito longe da vista" — conteúdo espalhado
+    longe (fora da viewport atual) NÃO pode empurrar o item novo pra longe da câmera."""
+    w, _created = _make_win(tmp_path)
+    w._base_pos["longe"] = (5000.0, 5000.0)  # bem fora da viewport (0,0)-(1280,720)
+    w._node_size["longe"] = (BASE_W, BASE_H)
+    ox, oy = CanvasWindow._free_region_origin(w)
+    assert oy < 1000.0  # continua perto da câmera, não em y~5000+
+    assert ox < 1000.0
 
 
 def test_materialize_nao_sobrepoe_conteudo_existente(tmp_path):
