@@ -13,6 +13,7 @@
 | [`13-maestro-mode.md`](13-maestro-mode.md) | **Feature (atual):** Maestro mode seguro + auto-aprovação + cabo headless (ADR-16..20). |
 | [`14-plano-orquestracao-equipe.md`](14-plano-orquestracao-equipe.md) | **Plano cirúrgico:** orquestração de equipe — **Fases A+B entregues** (v0.47.0/v0.48.0): Team Templates + materializador (FAB) e `maestri team` por linguagem natural (confirmação humana obrigatória). **Fase C** (editor visual) e **Fase D** (líder de grupo/delegate mode) planejadas, ainda não implementadas. |
 | [`uconsole.md`](uconsole.md) | Contexto do hardware (CM4) — atual. |
+| [`15-ideias-backlog.md`](15-ideias-backlog.md) | **Doc vivo:** fila de ideias capturadas durante outras tarefas — não implementadas até serem puxadas explicitamente. |
 | [`../AGENTS.md`](../AGENTS.md) · [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Regras de processo (atemporais). |
 
 ## 📐 Planejamento (versionado em docs/ — espelha o `_bmad-output/` do MVP)
