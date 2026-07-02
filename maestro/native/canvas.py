@@ -5744,6 +5744,14 @@ class CanvasWindow:
             # líder é o único ponto de conexão pra fora (orquestrador/T1 ↔ líder ↔ os demais
             # membros do grupo). Grupo SEM líder: comportamento anterior inalterado (todos
             # conectam direto no orquestrador/T1) — retrocompatível.
+            #
+            # `_recruited_by` é AUTORIDADE (ADR-17/18: dismiss/reassign/wire via `_own_recruit`),
+            # NÃO fiação visual — `edges` é só exibição/UI (`_maestro_connected`). O líder recebe
+            # o cabo dos colegas (fiação), mas a autoridade sobre eles continua com quem já a
+            # tinha antes da Fase D (o `manager`, se houver; ninguém, se for materialização
+            # top-level via FAB). Sem isso, `_own_recruit(líder, colega)` viraria True e o líder
+            # ganharia dismiss/reassign sobre o grupo de graça — poder de comando que a Fase D
+            # nunca pretendeu dar (achado por revisão adversarial pós-merge, 2026-07-02).
             leader_nid = member_nids.get(group.leader) if group.leader else None
             if leader_nid is not None:
                 if manager:
@@ -5752,8 +5760,9 @@ class CanvasWindow:
                 for nid in member_nids.values():
                     if nid == leader_nid:
                         continue
-                    self._recruited_by[nid] = leader_nid
-                    self.edges.add(leader_nid, nid)
+                    if manager:
+                        self._recruited_by[nid] = manager  # autoridade: manager, nunca o líder
+                    self.edges.add(leader_nid, nid)  # fiação: conecta no líder (só visual)
             elif manager:
                 for nid in member_nids.values():
                     self._recruited_by[nid] = manager
