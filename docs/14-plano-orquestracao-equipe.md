@@ -153,17 +153,23 @@ Ordem (tudo na main thread; é ação do HUMANO via FAB → NÃO passa pelo rate
   (recusa quando estoura). Mockar `groups.create`, `_new_agent_terminal`, `_apply_node_role`.
 - Runtime: boot smoke + materializar um template pequeno ao vivo (você) e ver os grupos+agentes.
 
-## 6. Plano cirúrgico — FASE B (linguagem natural)
-- **Skill do manager** (estender `maestro_skill_text` em `ask_bus.py`): ensina o schema do `TeamTemplate`
-  (JSON) e o comando `maestri team --spec '<json>'` (ou `maestri team "<descrição>"` → o host pede ao
-  próprio manager gerar o JSON).
-- **Comando `team`** no `_maestro_dispatch`: recebe o spec JSON do agente → **NÃO materializa direto** →
-  `GLib.idle_add` abre um **dialog de confirmação** mostrando o spec (grupos/papéis) → no OK do HUMANO →
-  `_materialize_team(spec, manager=frm)`. (NL desenha, humano confirma, determinístico executa.)
-- Como é iniciado por agente, o `team` é comando MUTADOR: entra em `MUTATING_CMDS` (rate-limit) e nos gates;
-  mas a materialização em si roda após confirmação humana (trusted).
-- **Guard-rails no schema:** o skill instrui 2–5 por grupo, máx profundidade 2, papéis com objetivo+saída.
-- **Testes:** parse do spec NL→JSON (mock), rota `team`→confirm→materialize, rejeição de spec inválido/grande.
+## 6. Plano cirúrgico — FASE B (linguagem natural) ✅ IMPLEMENTADO (2026-07-02)
+- **Skill do manager** (`maestro_skill_text` em `ask_bus.py`): ensina o schema do `TeamTemplate` (JSON) e o
+  comando `maestri team '<json>'`. Diferença do plano original: **sem** `--spec`/descrição livre — o
+  próprio manager já é o LLM que interpreta o pedido em linguagem natural e gera o JSON diretamente (não
+  precisa de um segundo turno "host pede pro manager gerar"); o skill deixa isso explícito.
+- **Comando `team`**: roteado ANTES do `_maestro_dispatch` genérico (mesmo padrão do HITL de recruit
+  acima do soft-cap) — `_hitl_team` reaplica os MESMOS gates (Maestro mode, controller/edges, rate-limit)
+  e faz parse+validação estrutural (`TeamTemplate.from_dict`+`validate_team_template`, com teto de bytes
+  reusando `ASK_MAX_PROMPT_BYTES`) → **NÃO materializa direto** → `_confirm_team_from_agent` abre um
+  dialog (grupos/papéis) → no OK do HUMANO, `_apply_team_decision` chama `_materialize_team(spec,
+  manager=frm)`. `frm` vem do CANAL (socket), nunca de um campo `manager` no JSON (ADR-17/18) — a lógica
+  de decisão foi extraída em `_apply_team_decision` (testável sem GTK, espelha `_apply_recruit_decision`).
+- `team` entrou em `MUTATING_CMDS` (rate-limit); a materialização em si (pós-confirmação humana) reusa o
+  `_materialize_team` da Fase A, com os MESMOS guard-rails (fleet-cap, >8/grupo bloqueia).
+- **Testes:** gates (fora do Maestro mode, sem args, JSON inválido/não-objeto, spec grande demais,
+  rate-limit), roteamento (`_maestro_exec` não despacha direto), decisão (aprovar materializa com
+  `manager=frm` mesmo que o JSON tente forjar outro `manager`; negar audita `team_denied` e não cria nada).
 
 ## 7. Decisões abertas (resolver no início da implementação)
 1. **Manager-agente vs humano-T1:** no FAB (humano) os agentes conectam a quê? Opções: (a) top-level
@@ -193,8 +199,13 @@ Ordem (tudo na main thread; é ação do HUMANO via FAB → NÃO passa pelo rate
 - **Layout** dentro do grupo (posições/grid) — testar visualmente; `_autofit_group` ajuda.
 - **Contenção**: materializar N agentes cria N spawns bwrap ~simultâneos; observar o respawn state-machine.
 
-## 10. Definition of done (Fase A)
-Template persistido (com `leader` no schema + interpolação de placeholder) + `_materialize_team` + FAB
-"Montar equipe" (sugerindo 3–4 membros/grupo) + built-ins + guard-rails, testado (unit + runtime ao
-vivo), ruff limpo, CHANGELOG + bump + PR. Depois Fase B (NL→confirma→materializa).
+## 10. Definition of done
+**Fase A** ✅: Template persistido (com `leader` no schema + interpolação de placeholder) +
+`_materialize_team` + FAB "Montar equipe" (sugerindo 3–4 membros/grupo) + built-ins + guard-rails,
+testado (unit + runtime ao vivo no uConsole — 3 bugs achados e corrigidos: instrução perdida na
+resolução por nome, sobreposição com conteúdo existente, posição/tamanho herdado de id órfão), ruff
+limpo, CHANGELOG + bump + PR #45 mergeado (v0.47.0).
+
+**Fase B** ✅: comando `team` (NL→JSON→confirma→materializa) + skill do manager ensinando o schema +
+guard-rails reaplicados + testes (gates, roteamento, decisão, anti-confused-deputy no `manager`).
 </content>

@@ -3,6 +3,23 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.48.0] — Orquestração de equipe (Fase B): montar equipe por linguagem natural
+Um manager em Maestro mode agora monta uma equipe inteira **descrevendo em linguagem natural**, sem
+precisar recrutar um por um — mas a materialização nunca acontece sem confirmação humana explícita
+(docs/14 §6).
+- **`maestri team '<json>'`**: o manager (que já é o LLM interpretando o pedido) gera o `TeamTemplate`
+  em JSON direto e chama o comando; o skill (`maestro_skill_text`) ensina o schema e as regras
+  (2–5 por grupo, `instruction` com objetivo claro, sem inventar campo `manager`).
+- **Confirmação humana obrigatória:** o host NUNCA materializa a partir de um pedido de agente sem
+  humano decidir — `_hitl_team` valida a spec (JSON/estrutura/tamanho) e abre um diálogo mostrando
+  grupos/papéis; só no "Montar" do humano a equipe é criada (reusa `_materialize_team` da Fase A,
+  com os mesmos guard-rails de fleet-cap/tamanho de grupo).
+- **Autoridade por canal, não por payload (ADR-17/18):** o manager que liga a equipe é sempre o `frm`
+  derivado do socket que enviou o comando — um campo `manager` forjado no JSON é ignorado.
+- `team` entra em `MUTATING_CMDS` (rate-limit) e é roteado antes do dispatch genérico (mesmo padrão do
+  HITL de recrutamento acima do soft-cap), com a lógica de decisão extraída (`_apply_team_decision`)
+  pra ser testável sem GTK.
+
 ## [0.47.0] — Orquestração de equipe (Fase A): Team Templates + materializador
 Mandar UMA instrução e o maestro montar uma **organização inteira** — grupos do canvas +
 terminais recrutados dentro deles, com papéis, de uma vez (docs/14, plano cirúrgico validado

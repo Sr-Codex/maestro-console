@@ -12,6 +12,7 @@ Uso (o agente-manager chama via Bash):
     maestri reassign <nó> <papel>
     maestri wire <a> [b]
     maestri dismiss <nó>
+    maestri team '<json do TeamTemplate>'  # Fase B: pede confirmação humana antes de montar
 
 Lê do ambiente: MAESTRO_NODE (rótulo de debug) e MAESTRO_ASK_BUS (a box do agente).
 """
@@ -74,7 +75,7 @@ def run_cmd(
         return {"id": rid, "ok": False, "error": f"sem resposta do host: {e}"}
 
 
-_USAGE = "uso: maestri <recruit|list|reassign|wire|dismiss> [args...]"
+_USAGE = "uso: maestri <recruit|list|reassign|wire|dismiss|team> [args...]"
 
 
 def main(argv: list[str] | None = None, env: dict | None = None) -> int:

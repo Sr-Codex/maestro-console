@@ -34,6 +34,7 @@ gi.require_version("Pango", "1.0")
 from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Pango, Vte  # noqa: E402
 
 from ..engine.ask_bus import (  # noqa: E402
+    ASK_MAX_PROMPT_BYTES,
     AskBusError,
     AskRequest,
     AskResponse,
@@ -444,6 +445,9 @@ class CanvasWindow:
         self._connect_src: tuple[str, str] | None = None  # (kind, id) da origem do cabo
         self._connect_cursor: tuple[float, float] | None = None  # cursor p/ o cabo-fantasma
         self._connect_oneshot = False  # conexão iniciada por cápsula = 1 cabo, depois sai do modo
+        # -- posicionar por clique (o usuário escolhe onde nasce, não algoritmo) --
+        self._placing_spec: dict | None = None  # {"kind": "shell"} ou {"kind": "agent","base":...}
+        self._placing_cursor: tuple[float, float] | None = None  # cursor p/ a prévia fantasma
         self._note_file_mtime: dict[tuple[str, str], float] = {}  # (nid,note_id)->mtime gravada
         self._pan = None  # estado do pan da vista (fundo)
         self._drag = None  # estado do arrasto de nó (via gesto do plano, estável)
@@ -785,14 +789,14 @@ class CanvasWindow:
         )
         cbmap = {
             "newterm": self._open_new_terminal_dialog,
-            "filetree": self._create_file_tree,
+            "filetree": lambda: self._start_placing({"kind": "filetree"}),
             "workspaces": self._open_workspaces_dialog,
             "run_team": self._run_team,
             "handoff": self._open_handoff_dialog,
-            "note": self._create_note,
+            "note": lambda: self._start_placing({"kind": "note"}),
             "floors": self._open_floors_dialog,
             "routines": self._open_routines_dialog,
-            "group": self._create_group,
+            "group": lambda: self._start_placing({"kind": "group"}),
             "team": self._open_team_dialog,
         }
         return spec, cbmap
@@ -2468,6 +2472,9 @@ class CanvasWindow:
         if self._connect_mode and self._connect_src is not None:  # cabo-fantasma segue o cursor
             self._connect_cursor = (x, y)
             self.plane.queue_draw()
+        if self._placing_spec is not None:  # prévia fantasma do item a posicionar
+            self._placing_cursor = (x, y)
+            self.plane.queue_draw()
 
     def _on_canvas_click(self, _g, n_press, x, y):
         if n_press < 2:  # só duplo-clique
@@ -2482,6 +2489,12 @@ class CanvasWindow:
 
     def _pan_begin(self, gesture, x, y):
         # x,y vêm em coords do scrolled (que NÃO rola) = coords de TELA -> estável.
+        if self._placing_spec is not None:  # modo "clique pra posicionar" tem prioridade
+            camx, camy = self._cam
+            z = self.model.zoom() or 1.0
+            self._commit_placing((x - camx) / z, (y - camy) / z)
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            return
         self._item_resize = None
         picked = self.plane.pick(x, y, Gtk.PickFlags.DEFAULT)
         _el = self._elem_at(picked)
@@ -3650,7 +3663,7 @@ class CanvasWindow:
                 break
         return depth
 
-    MUTATING_CMDS = ("recruit", "dismiss", "wire", "reassign")  # consomem token de rate-limit
+    MUTATING_CMDS = ("recruit", "dismiss", "wire", "reassign", "team")  # consomem rate-limit
 
     def _mutate_rate_ok(self, frm: str) -> bool:
         """Token-bucket POR-MANAGER para TODOS os comandos mutadores (5d): poda a janela,
@@ -3805,11 +3818,16 @@ class CanvasWindow:
         return out
 
     def _place_below(self, nid: str) -> tuple[int, int]:
-        """Posição (base) ABAIXO do nó `nid`, empilhando por nº de recrutas."""
+        """Posição (base) ABAIXO do nó `nid`, empilhando por nº de recrutas — NUNCA sobrepõe
+        o que já existe (se a pilha colidir com algo, cai pra uma área genuinamente livre)."""
         x, y = self._base_pos.get(nid, (60.0, 60.0))
         _w, h = self._node_size.get(nid, (BASE_W, BASE_H))
         n = len(self._maestro_connected(nid))
-        return (int(x), int(y + h + 40 + n * (h + 24)))
+        cy = y + h + 40 + n * (h + 24)
+        if not self._rect_overlaps_any(x, cy, BASE_W, BASE_H):
+            return (int(x), int(cy))
+        ox, oy = self._free_region_origin()
+        return (int(ox), int(oy))
 
     def _maestro_exec(self, req, result: dict, done) -> bool:
         try:
@@ -3817,6 +3835,12 @@ class CanvasWindow:
             # diálogo é assíncrono → `done` é setado no callback da decisão, não aqui.
             if req.cmd == "recruit" and self._recruit_needs_hitl(req.frm):
                 self._hitl_recruit(req, result, done)
+                return False
+            # Fase B (docs/14 §6): `team` SEMPRE pede confirmação humana — NL desenha,
+            # humano confirma, determinístico executa. Nunca materializa direto por
+            # decisão do agente, então também não passa pelo `_maestro_dispatch` genérico.
+            if req.cmd == "team":
+                self._hitl_team(req, result, done)
                 return False
             self._maestro_dispatch(req, result)
         except Exception as exc:
@@ -3868,6 +3892,104 @@ class CanvasWindow:
         box.append(row)
         # se o humano não decidir a tempo, nega (o agente não fica preso) + fecha o diálogo
         GLib.timeout_add_seconds(40, lambda: decide(False))
+        dlg.present()
+
+    def _hitl_team(self, req, result: dict, done) -> None:
+        """`team` (Fase B, docs/14 §6): o manager manda um `TeamTemplate` em JSON; o host
+        NUNCA materializa direto — só parseia/valida e abre uma confirmação humana. Os
+        MESMOS gates do `_maestro_dispatch` genérico (este comando não passa por ele, já
+        que a decisão é sempre assíncrona)."""
+        frm, args = req.frm, req.args
+        if not self.model.node_cfg(frm, "maestro"):
+            result.update(ok=False, error="este terminal não está em Maestro mode")
+            done.set()
+            return
+        if self.controller is None or not self._ask_bus_dir or self.edges is None:
+            result.update(ok=False, error="orquestrador/cabos indisponíveis")
+            done.set()
+            return
+        if not self._mutate_rate_ok(frm):
+            self._audit("rate_blocked", manager=frm, cmd="team")
+            result.update(ok=False, error="muitos comandos em pouco tempo; aguarde")
+            done.set()
+            return
+        if not args or not args[0].strip():
+            result.update(ok=False, error="uso: team '<json do TeamTemplate>'")
+            done.set()
+            return
+        spec_text = args[0]
+        if len(spec_text.encode("utf-8")) > ASK_MAX_PROMPT_BYTES:  # entrada não-confiável
+            result.update(ok=False, error=f"spec grande demais (máx {ASK_MAX_PROMPT_BYTES} bytes)")
+            done.set()
+            return
+        try:
+            data = json.loads(spec_text)
+            if not isinstance(data, dict):
+                raise TypeError("spec precisa ser um objeto JSON")
+            spec = TeamTemplate.from_dict(data)
+            validate_team_template(spec)
+        except Exception as exc:  # noqa: BLE001 — parse de entrada NÃO-CONFIÁVEL, nunca derruba
+            result.update(ok=False, error=f"spec inválido: {exc}")
+            done.set()
+            return
+        self._confirm_team_from_agent(frm, spec, result, done)
+
+    def _apply_team_decision(self, approve: bool, frm: str, spec: TeamTemplate,
+                              result: dict, done) -> None:
+        """Aplica a decisão humana do `team` (separado do GTK p/ ser testável, espelha
+        `_apply_recruit_decision`). Aprovar → `_materialize_team(spec, manager=frm)` — o
+        manager é SEMPRE o `frm` derivado do canal (ADR-17/18: autoridade nunca vem de
+        campo que o agente preenche; `spec.manager`, se vier no JSON, é ignorado)."""
+        if approve:
+            mat = self._materialize_team(spec, manager=frm)
+            if mat["ok"]:
+                msg = (f"Equipe '{spec.name}' montada: {mat['groups']} grupo(s), "
+                       f"{mat['agents']} agente(s).")
+                if mat["warnings"]:
+                    msg += " ⚠ " + "; ".join(mat["warnings"])
+                result.update(ok=True, answer=msg)
+            else:
+                result.update(ok=False, error=mat["error"])
+        else:
+            self._audit("team_denied", manager=frm, template=spec.name)
+            result.update(ok=False, error="montagem da equipe negada pelo humano")
+        done.set()
+
+    def _confirm_team_from_agent(self, frm: str, spec: TeamTemplate, result: dict, done) -> None:
+        """Diálogo de confirmação do `team` (assíncrono; `done` setado na decisão via
+        `_apply_team_decision`)."""
+        decided = {"v": False}
+        dlg, box = self._dialog(f"🧩 Confirmar equipe — '{spec.name}'")
+        preview = "\n".join(
+            f"• {g.name}: " + ", ".join(m.name for m in g.members) for g in spec.groups
+        )
+        msg = Gtk.Label(
+            label=f"O agente '{frm}' quer montar a equipe '{spec.name}' "
+                  f"({spec.total_members} agente(s)):\n\n{preview}\n\nMontar?")
+        msg.set_wrap(True)
+        msg.set_xalign(0.0)
+        box.append(msg)
+
+        def decide(approve: bool):
+            if decided["v"]:
+                return False
+            decided["v"] = True
+            dlg.destroy()  # destrói em TODOS os caminhos (inclui timeout)
+            self._apply_team_decision(approve, frm, spec, result, done)
+            return False
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.set_halign(Gtk.Align.END)
+        deny = Gtk.Button(label="Negar")
+        deny.connect("clicked", lambda _b: decide(False))
+        appr = Gtk.Button(label="Montar")
+        appr.add_css_class("suggested-action")
+        appr.connect("clicked", lambda _b: decide(True))
+        row.append(deny)
+        row.append(appr)
+        box.append(row)
+        # decisão maior que um recrutamento simples -> mais tempo antes de negar sozinho
+        GLib.timeout_add_seconds(90, lambda: decide(False))
         dlg.present()
 
     def _maestro_dispatch(self, req, result: dict) -> None:
@@ -4144,6 +4266,9 @@ class CanvasWindow:
         if keyval == Gdk.KEY_Escape and self._connect_mode and has_connect:
             self._connect_btn.set_active(False)  # untoggle -> cancela
             return True
+        if keyval == Gdk.KEY_Escape and self._placing_spec is not None:
+            self._cancel_placing()
+            return True
         if keyval in (Gdk.KEY_p, Gdk.KEY_P) and ctrl and shift:
             order = ["verlet", "catenary", "spring"]  # cicla a física do cabo (gosto do usuário)
             i = order.index(self._cable_phys) if self._cable_phys in order else 0
@@ -4177,6 +4302,11 @@ class CanvasWindow:
         for gid in self._group_base:
             gx, gy, gw, gh = self._group_disp_rect(gid)
             rects.append((gx, gy, gx + gw, gy + gh))
+        if self._placing_spec is not None and self._placing_cursor is not None:
+            camx, camy = self._cam  # prévia fantasma também precisa de superfície pra desenhar
+            px, py = self._placing_cursor[0] - camx, self._placing_cursor[1] - camy
+            pw, ph = self._placing_size()
+            rects.append((px, py, px + pw * z, py + ph * z))
         if not rects:
             return None
         x0 = min(r[0] for r in rects)
@@ -4250,8 +4380,26 @@ class CanvasWindow:
                     cr.stroke()
             cr.set_dash([])  # reset p/ não vazar tracejado em outros desenhos do cr
         self._draw_connect_preview_cr(cr, z)  # cabo-fantasma seguindo o cursor (modo conectar)
+        self._draw_placing_preview_cr(cr, z)  # prévia do item a posicionar (clique-pra-criar)
         if self._phys_label_frames > 0:  # flash do modo ao trocar (Ctrl+Shift+P); some sozinho
             self._draw_phys_label(cr)
+
+    def _draw_placing_preview_cr(self, cr, z) -> None:
+        """Contorno tracejado do item a nascer, seguindo o cursor no modo "clique pra
+        posicionar" (`_start_placing`) — some ao clicar (cria ali) ou Esc (cancela)."""
+        if self._placing_spec is None or self._placing_cursor is None:
+            return
+        camx, camy = self._cam
+        x, y = self._placing_cursor[0] - camx, self._placing_cursor[1] - camy
+        pw, ph = self._placing_size()
+        w, h = pw * z, ph * z
+        cr.save()
+        cr.set_source_rgba(0.55, 0.75, 1.0, 0.6)
+        cr.set_line_width(2.0)
+        cr.set_dash([6.0, 4.0])
+        cr.rectangle(x, y, w, h)
+        cr.stroke()
+        cr.restore()
 
     def _preview_anchors(self, z):
         """(p0, cursor) do cabo-fantasma no espaço de desenho (tela − câmera), ou None.
@@ -4575,14 +4723,58 @@ class CanvasWindow:
             i += 1
         return f"{prefix}-{i}"
 
+    def _rect_overlaps_any(self, x: float, y: float, w: float, h: float) -> bool:
+        """True se o retângulo (x,y,w,h) se sobrepõe a QUALQUER nó/nota/grupo já existente
+        no canvas — usado pra nenhum item novo nascer em cima de um já existente."""
+        def _hits(bx: float, by: float, bw: float, bh: float) -> bool:
+            return x < bx + bw and x + w > bx and y < by + bh and y + h > by
+
+        for nid, (bx, by) in self._base_pos.items():
+            bw, bh = self._item_size("node", nid)
+            if _hits(bx, by, bw, bh):
+                return True
+        for nid, (bx, by) in self._note_base.items():
+            bw, bh = self._item_size("note", nid)
+            if _hits(bx, by, bw, bh):
+                return True
+        for gid, (bx, by) in self._group_base.items():
+            bw, bh = self._group_size.get(gid, (0.0, 0.0))
+            if _hits(bx, by, bw, bh):
+                return True
+        return False
+
+    def _viewport_rect_base(self) -> tuple[float, float, float, float]:
+        """Retângulo (x,y,w,h) da área VISÍVEL agora, em coords-base (mesma fórmula do
+        minimap: canto = -cam/z, tamanho = tela/z). Item novo nasce perto disso, não em
+        algum canto absoluto do canvas infinito (achado ao vivo: "está aparecendo muito
+        longe da vista")."""
+        z = self.model.zoom() or 1.0
+        camx, camy = self._cam
+        vw = self.scrolled.get_width() or 1
+        vh = self.scrolled.get_height() or 1
+        return (-camx / z, -camy / z, vw / z, vh / z)
+
     def _next_node_default(self) -> tuple[int, int]:
+        """Próxima posição livre pra UM item novo, PERTO DA CÂMERA atual — NUNCA sobrepõe
+        o que já existe (nó, nota, grupo). Tenta a cascata clássica primeiro (canto
+        superior esquerdo da VIEWPORT, visual variado); só cai pra "abaixo do que está
+        visível" (`_free_region_origin`) se a cascata colidir com algo — achado ao vivo:
+        a cascata modular (mod 6) repete e cedo ou tarde sobrepõe um item que já está lá."""
+        vx, vy, _vw, _vh = self._viewport_rect_base()
         n = len(self.order) + len(self.note_frames)
-        return (60 + (n % 6) * 80, 60 + (n % 6) * 70)  # cascata p/ não empilhar exato
+        cx, cy = vx + 60 + (n % 6) * 80, vy + 60 + (n % 6) * 70
+        if not self._rect_overlaps_any(cx, cy, BASE_W, BASE_H):
+            return (int(cx), int(cy))
+        ox, oy = self._free_region_origin()
+        return (int(ox), int(oy))
 
     def _open_new_terminal_dialog(self):
         dlg, box = self._dialog("➕ novo terminal")
+        box.append(Gtk.Label(label="Escolha o tipo, depois clique no canvas pra posicionar."))
         bsh = Gtk.Button(label="🐚 terminal shell (/bin/bash)")
-        bsh.connect("clicked", lambda _b: (self._new_shell_terminal(), dlg.destroy()))
+        bsh.connect(
+            "clicked", lambda _b: (self._start_placing({"kind": "shell"}), dlg.destroy())
+        )
         box.append(bsh)
         agents = list(installed_agents().keys())
         if self.controller is not None and self._ask_bus_dir and agents:
@@ -4593,16 +4785,76 @@ class CanvasWindow:
             combo.set_active(0)
             box.append(combo)
             bag = Gtk.Button(label="🤖 criar agente (participa de cabos)")
-            bag.connect(
-                "clicked",
-                lambda _b: (self._new_agent_terminal(combo.get_active_text()), dlg.destroy()),
-            )
+
+            def do_agent(_b):
+                self._start_placing({"kind": "agent", "base": combo.get_active_text()})
+                dlg.destroy()
+
+            bag.connect("clicked", do_agent)
             box.append(bag)
         dlg.present()
 
-    def _new_shell_terminal(self) -> str | None:
+    def _start_placing(self, spec: dict) -> None:
+        """Entra no modo "clique pra posicionar": em vez de um algoritmo escolher onde o
+        item nasce, o PRÓXIMO CLIQUE no canvas escolhe (prévia fantasma segue o cursor;
+        Esc cancela). Achado ao vivo: tentar adivinhar uma posição livre "boa" ficou
+        frágil — deixar o humano apontar é mais simples e sempre certo."""
+        self._placing_spec = spec
+        self._placing_cursor = None
+        self.plane.queue_draw()
+
+    def _cancel_placing(self) -> None:
+        if self._placing_spec is not None:
+            self._placing_spec = None
+            self._placing_cursor = None
+            self.plane.queue_draw()
+
+    def _commit_placing(self, bx: float, by: float) -> None:
+        """Cria o item pendente na posição CLICADA (coords base) — sem algoritmo de
+        posicionamento; o humano escolheu."""
+        spec = self._placing_spec
+        self._placing_spec = None
+        self._placing_cursor = None
+        if spec is None:
+            return
+        if spec["kind"] == "shell":
+            self._new_shell_terminal(default=(bx, by))
+        elif spec["kind"] == "agent":
+            self._new_agent_terminal(spec["base"], default=(bx, by))
+        elif spec["kind"] == "note":
+            self._create_note(default=(bx, by))
+        elif spec["kind"] == "group":
+            self._create_group(default=(bx, by))
+        elif spec["kind"] == "filetree":
+            self._create_file_tree(default=(bx, by))
+        self.plane.queue_draw()
+
+    # Regra de arquitetura do canvas (AGENTS.md): TODO elemento criado pela cápsula
+    # principal nasce por clique-pra-posicionar — nunca por algoritmo adivinhando uma
+    # posição livre. Tamanho da prévia fantasma por tipo de item.
+    _PLACING_SIZES = {
+        "shell": (BASE_W, BASE_H),
+        "agent": (BASE_W, BASE_H),
+        "note": (NOTE_W_DEFAULT, NOTE_H_DEFAULT),
+        "group": (600.0, 360.0),  # espelha o default de Groups.create
+        "filetree": (300.0, 360.0),  # espelha o fallback de _cairo_bounds/_item_size p/ "ft"
+    }
+
+    def _placing_size(self) -> tuple[float, float]:
+        kind = self._placing_spec["kind"] if self._placing_spec else "shell"
+        return self._PLACING_SIZES.get(kind, (BASE_W, BASE_H))
+
+    def _new_shell_terminal(self, default: tuple[float, float] | None = None) -> str | None:
         nid = self._unique_nid("shell")
-        self._add_node(nid, "shell", ["/bin/bash"], default=self._next_node_default())
+        default = default or self._next_node_default()
+        self._add_node(nid, "shell", ["/bin/bash"], default=default)
+        # nid é NOVO pra este uso, mas `model.position()/node_size()` preferem um valor
+        # persistido antigo se o número foi reciclado (id órfão de um nó fechado antes,
+        # possivelmente redimensionado) — força a posição/tamanho calculados de verdade
+        # (achado ao vivo: "novo terminal" nascendo em local antigo, sobrepondo o que
+        # já existe agora).
+        self._force_node_rect(nid, float(default[0]), float(default[1]),
+                               float(BASE_W), float(BASE_H))
         self.model.add_to_roster(nid, "shell", None)  # persiste -> volta ao reabrir
         self._resize_plane()
         self.plane.queue_draw()
@@ -4630,7 +4882,14 @@ class CanvasWindow:
         # (role recém-criado é vazio; a injeção do role acontece em _add_node → _apply_node_role)
         argv = agent_argv(profiles[base], str(wsp), node=nid, ask_bus_dir=self._ask_bus_dir,
                           auto_approve=self._node_auto_approve(nid))
-        self._add_node(nid, nid, argv, default=default or self._next_node_default())
+        pos = default or self._next_node_default()
+        self._add_node(nid, nid, argv, default=pos)
+        # nid pode coincidir com um id reciclado/órfão (nó fechado antes, possivelmente
+        # redimensionado) — `model.position()/node_size()` preferem esse valor velho ao
+        # `default` calculado. Força a posição/tamanho de verdade (achado ao vivo: terminal
+        # "novo" nascendo em local antigo, sobrepondo o que já existe agora). Quem chama com
+        # um tamanho próprio (ex.: `_materialize_team`) refaz o force depois com o valor certo.
+        self._force_node_rect(nid, float(pos[0]), float(pos[1]), float(BASE_W), float(BASE_H))
         self.model.add_to_roster(nid, "agent", base)  # persiste -> volta ao reabrir
         self._resize_plane()
         self.plane.queue_draw()
@@ -4693,7 +4952,7 @@ class CanvasWindow:
     def _ft_root(self) -> str:
         return self._project_dir or (str(self.repo) if self.repo else str(Path.home()))
 
-    def _create_file_tree(self):
+    def _create_file_tree(self, default: tuple[float, float] | None = None):
         root = self._ft_root()
         n = 1
         while f"ft-{n}" in self._ft_frames:
@@ -4722,7 +4981,7 @@ class CanvasWindow:
         box.append(head)
         box.append(scroller)
         frame.set_child(box)
-        default = self._next_node_default()
+        default = default or self._next_node_default()
         self._ft_base[fid] = default
         self.plane.put(frame, 0, 0)
         self._place(frame, default, self.model.zoom())
@@ -4770,11 +5029,15 @@ class CanvasWindow:
         self.plane.queue_draw()
         self._mm_refresh()
 
-    def _create_note(self):
+    def _create_note(self, default: tuple[float, float] | None = None):
         if self.notes is None:
             return
-        n = len(self.note_frames)
-        note = self.notes.create("Nota", "", x=120 + n * 40, y=320 + n * 40)
+        if default is not None:
+            x, y = default
+        else:
+            n = len(self.note_frames)
+            x, y = 120 + n * 40, 320 + n * 40
+        note = self.notes.create("Nota", "", x=x, y=y)
         self._add_note_widget(note)
 
     def _add_note_widget(self, note):
@@ -5270,10 +5533,10 @@ class CanvasWindow:
         self._group_user_sized.add(g.id)
         self._autofit_group(g.id)
 
-    def _create_group(self) -> None:
+    def _create_group(self, default: tuple[float, float] | None = None) -> None:
         if self.groups is None:
             return
-        x, y = self._next_node_default()
+        x, y = default if default is not None else self._next_node_default()
         g = self.groups.create(x=float(x), y=float(y))
         self._load_group(g)
         self._resize_plane()
@@ -5307,27 +5570,35 @@ class CanvasWindow:
         save_team_templates(self._team_templates_path(), custom)
 
     def _free_region_origin(self) -> tuple[float, float]:
-        """Origem livre pra nascer uma leva de itens SEM sobrepor nada que já existe no
-        canvas (nós, notas, grupos) — abaixo de tudo que já está lá. `_next_node_default()`
-        é uma cascata modular (bom pra 1 item por vez); materializar vários itens de uma vez
-        precisa de uma área genuinamente livre, não um ponto que pode repetir (mod 6)."""
-        xs: list[float] = []
-        bottoms: list[float] = []
+        """Origem livre pra nascer uma leva de itens SEM sobrepor nada — abaixo do que está
+        VISÍVEL agora (não "abaixo de tudo que existe no canvas inteiro": um canvas com
+        conteúdo espalhado longe faria o item novo nascer longe da câmera — achado ao vivo,
+        "está aparecendo muito longe da vista"). Só conta itens que se sobrepõem à viewport
+        atual; canvas vazio (ou nada visível) começa no topo-esquerdo da própria viewport.
+        Usada por `_materialize_team` (leva inteira) e como FALLBACK de `_next_node_default`/
+        `_place_below` quando a posição preferida (cascata/pilha) colidiria com algo."""
+        vx, vy, vw, vh = self._viewport_rect_base()
+
+        def _in_view(bx: float, by: float, bw: float, bh: float) -> bool:
+            return bx < vx + vw and bx + bw > vx and by < vy + vh and by + bh > vy
+
+        xs: list[float] = [vx]
+        bottoms: list[float] = [vy]
         for nid, (x, y) in self._base_pos.items():
             w, h = self._item_size("node", nid)
-            xs.append(x)
-            bottoms.append(y + h)
+            if _in_view(x, y, w, h):
+                xs.append(x)
+                bottoms.append(y + h)
         for nid, (x, y) in self._note_base.items():
             w, h = self._item_size("note", nid)
-            xs.append(x)
-            bottoms.append(y + h)
+            if _in_view(x, y, w, h):
+                xs.append(x)
+                bottoms.append(y + h)
         for gid, (x, y) in self._group_base.items():
             w, h = self._group_size.get(gid, (0.0, 0.0))
-            xs.append(x)
-            bottoms.append(y + h)
-        if not bottoms:
-            ox, oy = self._next_node_default()
-            return (float(ox), float(oy))
+            if _in_view(x, y, w, h):
+                xs.append(x)
+                bottoms.append(y + h)
         return (min(xs), max(bottoms) + GROUP_PAD * 2)
 
     def _force_node_rect(self, nid: str, x: float, y: float, w: float, h: float) -> None:
