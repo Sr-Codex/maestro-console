@@ -4741,7 +4741,15 @@ class CanvasWindow:
 
     def _new_shell_terminal(self) -> str | None:
         nid = self._unique_nid("shell")
-        self._add_node(nid, "shell", ["/bin/bash"], default=self._next_node_default())
+        default = self._next_node_default()
+        self._add_node(nid, "shell", ["/bin/bash"], default=default)
+        # nid é NOVO pra este uso, mas `model.position()/node_size()` preferem um valor
+        # persistido antigo se o número foi reciclado (id órfão de um nó fechado antes,
+        # possivelmente redimensionado) — força a posição/tamanho calculados de verdade
+        # (achado ao vivo: "novo terminal" nascendo em local antigo, sobrepondo o que
+        # já existe agora).
+        self._force_node_rect(nid, float(default[0]), float(default[1]),
+                               float(BASE_W), float(BASE_H))
         self.model.add_to_roster(nid, "shell", None)  # persiste -> volta ao reabrir
         self._resize_plane()
         self.plane.queue_draw()
@@ -4769,7 +4777,14 @@ class CanvasWindow:
         # (role recém-criado é vazio; a injeção do role acontece em _add_node → _apply_node_role)
         argv = agent_argv(profiles[base], str(wsp), node=nid, ask_bus_dir=self._ask_bus_dir,
                           auto_approve=self._node_auto_approve(nid))
-        self._add_node(nid, nid, argv, default=default or self._next_node_default())
+        pos = default or self._next_node_default()
+        self._add_node(nid, nid, argv, default=pos)
+        # nid pode coincidir com um id reciclado/órfão (nó fechado antes, possivelmente
+        # redimensionado) — `model.position()/node_size()` preferem esse valor velho ao
+        # `default` calculado. Força a posição/tamanho de verdade (achado ao vivo: terminal
+        # "novo" nascendo em local antigo, sobrepondo o que já existe agora). Quem chama com
+        # um tamanho próprio (ex.: `_materialize_team`) refaz o force depois com o valor certo.
+        self._force_node_rect(nid, float(pos[0]), float(pos[1]), float(BASE_W), float(BASE_H))
         self.model.add_to_roster(nid, "agent", base)  # persiste -> volta ao reabrir
         self._resize_plane()
         self.plane.queue_draw()

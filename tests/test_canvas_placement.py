@@ -35,6 +35,113 @@ def _make_win():
     return w
 
 
+class _FakeModelWithPersistence:
+    """Model fake que PREFERE valor persistido antigo (mesmo contrato do real
+    `CanvasModel.position`/`node_size`) — pra reproduzir o id órfão/reciclado."""
+
+    def __init__(self):
+        self.positions = {}
+        self.sizes = {}
+        self.cfg = {}
+
+    def position(self, nid, default):
+        return self.positions.get(nid, default)
+
+    def set_position(self, nid, x, y):
+        self.positions[nid] = (x, y)
+
+    def node_size(self, nid, default):
+        return self.sizes.get(nid, default)
+
+    def set_node_size(self, nid, w, h):
+        self.sizes[nid] = (w, h)
+
+    def node_cfg(self, nid, key, default=""):
+        return self.cfg.get((nid, key), default)
+
+    def set_node_cfg(self, nid, key, val):
+        self.cfg[(nid, key)] = val
+
+    def zoom(self):
+        return 1.0
+
+    def node_name(self, nid, default):
+        return default
+
+    def node_roster(self):
+        return []
+
+    def add_to_roster(self, nid, kind, base):
+        pass
+
+
+def _make_win_com_add_node_falso():
+    """`_add_node` REAL cria widgets GTK de verdade (Gtk.Frame + VTE) — fronteira legítima
+    pra mockar. O fake abaixo reproduz só o contrato observável que importa aqui: resolve
+    posição/tamanho via `model.position`/`model.node_size` (onde mora o bug do id órfão) e
+    registra em `frames`/`_base_pos`/`_node_size`/`order`, sem construir GTK de verdade."""
+    w = _make_win()
+    w.model = _FakeModelWithPersistence()
+    w.plane = SimpleNamespace(
+        queue_draw=lambda: None, put=lambda *a, **k: None,
+        set_child_transform=lambda *a, **k: None,
+    )
+    w._cam = (0.0, 0.0)
+
+    def fake_add_node(nid, _title, _argv, default):
+        bx, by = w.model.position(nid, default)
+        w._base_pos[nid] = (bx, by)
+        sz = w.model.node_size(nid, (BASE_W, BASE_H))
+        w._node_size[nid] = sz
+        w.frames[nid] = _fake_frame()
+        w.order.append(nid)
+
+    w._add_node = fake_add_node
+    w._resize_plane = lambda: None
+    return w
+
+
+def test_new_shell_terminal_nao_herda_posicao_e_tamanho_orfaos():
+    """Regressão ao vivo: clicar '+ novo terminal' pela cápsula nascia em local antigo
+    (id reciclado com posição/tamanho de um resize de sessão anterior), sobrepondo o
+    que já existe agora — `model.position()/node_size()` preferem o valor persistido."""
+    w = _make_win_com_add_node_falso()
+    w.controller = object()
+    orphan_nid = "shell-2"
+    w.model.positions[orphan_nid] = (9999.0, 9999.0)
+    w.model.sizes[orphan_nid] = (999.0, 999.0)
+    # `_unique_nid` vai gerar exatamente "shell-2" (roster/frames/controller vazios)
+    nid = CanvasWindow._new_shell_terminal(w)
+    assert nid == orphan_nid
+    assert w._base_pos[nid] != (9999.0, 9999.0)
+    assert w._node_size[nid] == (BASE_W, BASE_H)
+    assert w.model.positions[nid] == w._base_pos[nid]  # persistido sobrescrito
+    assert w.model.sizes[nid] == (BASE_W, BASE_H)
+
+
+def test_new_agent_terminal_nao_herda_posicao_e_tamanho_orfaos(tmp_path, monkeypatch):
+    import maestro.native.canvas as canvas_mod
+
+    w = _make_win_com_add_node_falso()
+    w.controller = SimpleNamespace(add_agent_instance=lambda nid, base: None, agents={})
+    w._ask_bus_dir = str(tmp_path / "bus")
+    w._node_auto_approve = lambda nid: False
+
+    monkeypatch.setattr(canvas_mod, "installed_agents", lambda: {"claude": {}})
+    monkeypatch.setattr(canvas_mod, "agent_argv", lambda *a, **k: ["claude"])
+    monkeypatch.setattr(canvas_mod, "install_ask_skill", lambda *a, **k: None)
+
+    orphan_nid = "claude-2"
+    w.model.positions[orphan_nid] = (9999.0, 9999.0)
+    w.model.sizes[orphan_nid] = (999.0, 999.0)
+    nid = CanvasWindow._new_agent_terminal(w, "claude")
+    assert nid == orphan_nid
+    assert w._base_pos[nid] != (9999.0, 9999.0)
+    assert w._node_size[nid] == (BASE_W, BASE_H)
+    assert w.model.positions[nid] == w._base_pos[nid]
+    assert w.model.sizes[nid] == (BASE_W, BASE_H)
+
+
 def test_rect_overlaps_any_detecta_no_existente():
     w = _make_win()
     w.frames["a"] = _fake_frame()
