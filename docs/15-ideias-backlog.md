@@ -33,3 +33,15 @@ VÁRIAS features/fases independentes ao mesmo tempo — cada uma vira seu própr
 sequencial (como fizemos com as Fases C e D da orquestração de equipe). Só funciona bem se as
 tarefas forem **genuinamente independentes** (sem PR encadeado); se uma depender da outra, o
 paralelismo vira ilusão e o certo continua sendo sequencial. Status: 🧊 icebox.
+
+### 2026-07-02 — Checklist de "hora certa" pra encerrar a sessão + recap via BMad na sessão nova
+Formalizar um checklist prático de QUANDO fechar a sessão atual (evitar contexto grande demais) em
+vez de tentar medir tokens diretamente (o assistente não tem esse número exato) — usar sinais
+indiretos: (a) feature/PR atual fechou (checkpoint natural, já usado pra sugerir revisão da fila
+— ver seção acima), (b) a conversa já sofreu 1 auto-compactação (sinal de que já está grande),
+(c) troca de tema grande (ex.: terminar uma fase e começar outra não-relacionada). Na sessão NOVA,
+rodar um passo de "recap" no início — reaproveitar `bmad-help` e/ou ler os doc-âncora
+(`docs/STATUS.md`, `CHANGELOG.md`, o `docs/NN-plano-*.md` da feature em andamento) — em vez de
+confiar só na memória automática. Trade-off principal: um checklist manual exige o usuário (ou o
+assistente) notar os sinais e agir; não tem gatilho automático de "contexto grande" hoje. Status:
+🧊 icebox.
