@@ -3806,11 +3806,16 @@ class CanvasWindow:
         return out
 
     def _place_below(self, nid: str) -> tuple[int, int]:
-        """Posição (base) ABAIXO do nó `nid`, empilhando por nº de recrutas."""
+        """Posição (base) ABAIXO do nó `nid`, empilhando por nº de recrutas — NUNCA sobrepõe
+        o que já existe (se a pilha colidir com algo, cai pra uma área genuinamente livre)."""
         x, y = self._base_pos.get(nid, (60.0, 60.0))
         _w, h = self._node_size.get(nid, (BASE_W, BASE_H))
         n = len(self._maestro_connected(nid))
-        return (int(x), int(y + h + 40 + n * (h + 24)))
+        cy = y + h + 40 + n * (h + 24)
+        if not self._rect_overlaps_any(x, cy, BASE_W, BASE_H):
+            return (int(x), int(cy))
+        ox, oy = self._free_region_origin()
+        return (int(ox), int(oy))
 
     def _maestro_exec(self, req, result: dict, done) -> bool:
         try:
@@ -4680,9 +4685,38 @@ class CanvasWindow:
             i += 1
         return f"{prefix}-{i}"
 
+    def _rect_overlaps_any(self, x: float, y: float, w: float, h: float) -> bool:
+        """True se o retângulo (x,y,w,h) se sobrepõe a QUALQUER nó/nota/grupo já existente
+        no canvas — usado pra nenhum item novo nascer em cima de um já existente."""
+        def _hits(bx: float, by: float, bw: float, bh: float) -> bool:
+            return x < bx + bw and x + w > bx and y < by + bh and y + h > by
+
+        for nid, (bx, by) in self._base_pos.items():
+            bw, bh = self._item_size("node", nid)
+            if _hits(bx, by, bw, bh):
+                return True
+        for nid, (bx, by) in self._note_base.items():
+            bw, bh = self._item_size("note", nid)
+            if _hits(bx, by, bw, bh):
+                return True
+        for gid, (bx, by) in self._group_base.items():
+            bw, bh = self._group_size.get(gid, (0.0, 0.0))
+            if _hits(bx, by, bw, bh):
+                return True
+        return False
+
     def _next_node_default(self) -> tuple[int, int]:
+        """Próxima posição livre pra UM item novo — NUNCA sobrepõe o que já existe (nó,
+        nota, grupo). Tenta a cascata clássica primeiro (canto superior esquerdo, visual
+        variado); só cai pra "abaixo de tudo" (`_free_region_origin`) se a cascata colidir
+        com algo — achado ao vivo: a cascata modular (mod 6) repete e cedo ou tarde
+        sobrepõe um item que já está lá."""
         n = len(self.order) + len(self.note_frames)
-        return (60 + (n % 6) * 80, 60 + (n % 6) * 70)  # cascata p/ não empilhar exato
+        cx, cy = 60 + (n % 6) * 80, 60 + (n % 6) * 70
+        if not self._rect_overlaps_any(cx, cy, BASE_W, BASE_H):
+            return (cx, cy)
+        ox, oy = self._free_region_origin()
+        return (int(ox), int(oy))
 
     def _open_new_terminal_dialog(self):
         dlg, box = self._dialog("➕ novo terminal")
@@ -5413,9 +5447,9 @@ class CanvasWindow:
 
     def _free_region_origin(self) -> tuple[float, float]:
         """Origem livre pra nascer uma leva de itens SEM sobrepor nada que já existe no
-        canvas (nós, notas, grupos) — abaixo de tudo que já está lá. `_next_node_default()`
-        é uma cascata modular (bom pra 1 item por vez); materializar vários itens de uma vez
-        precisa de uma área genuinamente livre, não um ponto que pode repetir (mod 6)."""
+        canvas (nós, notas, grupos) — abaixo de tudo que já está lá. Usada por
+        `_materialize_team` (leva inteira) e como FALLBACK de `_next_node_default`/
+        `_place_below` quando a posição preferida (cascata/pilha) colidiria com algo."""
         xs: list[float] = []
         bottoms: list[float] = []
         for nid, (x, y) in self._base_pos.items():

@@ -51,15 +51,26 @@ class _FakeEdges:
         return list(self._e)
 
 
+def _fake_frame():
+    """Frame-widget falso com get_width/get_height=0 (widget ainda não alocado) — `_item_size`
+    cai pro tamanho nominal (`_node_size`/default) em vez de tentar ler um `object()` puro."""
+    return SimpleNamespace(get_width=lambda: 0, get_height=lambda: 0)
+
+
 def _make_win():
     w = CanvasWindow.__new__(CanvasWindow)  # sem __init__ → não cria GTK
     w.model = _FakeModel()
     w.controller = object()
     w._ask_bus_dir = tempfile.mkdtemp(prefix="maestro-test-")  # dir seguro (não /tmp hardcoded)
     w.edges = _FakeEdges()
-    w.frames = {"mgr": object()}
+    w.frames = {"mgr": _fake_frame()}
+    w.note_frames = {}
+    w._ft_frames = {}
     w._base_pos = {"mgr": (100.0, 100.0)}
+    w._note_base = {}
     w._node_size = {"mgr": (420, 220)}
+    w._group_base = {}
+    w._group_size = {}
     w.plane = SimpleNamespace(queue_draw=lambda: None)
     w._agent_nids = set()  # fleet (cap global + kill-switch)
     w._recruited_by = {}  # linhagem (profundidade)
@@ -78,7 +89,7 @@ def _make_win():
     def fake_new_agent(base, default=None):
         nid = f"{base}-{len(created) + 1}"
         created.append((nid, default))
-        w.frames[nid] = object()
+        w.frames[nid] = _fake_frame()
         return nid
 
     w._new_agent_terminal = fake_new_agent
