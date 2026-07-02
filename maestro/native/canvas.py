@@ -1690,19 +1690,13 @@ class CanvasWindow:
         cr.rectangle(0, 0, w, h)
         cr.fill()
 
-    def _role_edit_dialog(self, role, on_saved) -> None:
-        """Cria/edita um role (name, cor, prompt) na biblioteca. role=None → novo."""
-        win, box = self._dialog("Editar role" if role else "Novo role")
-        win.set_default_size(440, -1)
-        box.append(Gtk.Label(label="Nome", xalign=0))
-        name = Gtk.Entry()
-        name.set_placeholder_text("ex.: backend, reviewer…")
-        if role:
-            name.set_text(role.name)
-        box.append(name)
+    def _color_picker_row(self, win, initial_hex: str) -> tuple[Gtk.Box, dict]:
+        """Linha 'Cor:' com swatch + botão 'Escolher…' (`Gtk.ColorDialog`) — reusada por
+        `_role_edit_dialog` e `_team_group_edit_dialog`. Devolve (row, color); `color["hex"]`
+        é atualizado ao vivo pelo picker — ler no Salvar do chamador."""
         crow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         crow.append(Gtk.Label(label="Cor:"))
-        color = {"hex": role.badge() if role else "#3b82f6"}
+        color = {"hex": initial_hex}
         sw = Gtk.DrawingArea()
         sw.set_size_request(28, 20)
         sw.set_draw_func(lambda _a, cr, w, h: self._fill_rect(cr, w, h, color["hex"]))
@@ -1727,6 +1721,19 @@ class CanvasWindow:
         pick.connect("clicked", pickc)
         crow.append(sw)
         crow.append(pick)
+        return crow, color
+
+    def _role_edit_dialog(self, role, on_saved) -> None:
+        """Cria/edita um role (name, cor, prompt) na biblioteca. role=None → novo."""
+        win, box = self._dialog("Editar role" if role else "Novo role")
+        win.set_default_size(440, -1)
+        box.append(Gtk.Label(label="Nome", xalign=0))
+        name = Gtk.Entry()
+        name.set_placeholder_text("ex.: backend, reviewer…")
+        if role:
+            name.set_text(role.name)
+        box.append(name)
+        crow, color = self._color_picker_row(win, role.badge() if role else "#3b82f6")
         box.append(crow)
         box.append(Gtk.Label(label="Instruções (prompt)", xalign=0))
         psc = Gtk.ScrolledWindow()
@@ -5796,33 +5803,7 @@ class CanvasWindow:
         name_e.set_text(group_state.get("name", ""))
         box.append(name_e)
 
-        crow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        crow.append(Gtk.Label(label="Cor:"))
-        color = {"hex": group_state.get("color") or "#3b82f6"}
-        sw = Gtk.DrawingArea()
-        sw.set_size_request(28, 20)
-        sw.set_draw_func(lambda _a, cr, w, h: self._fill_rect(cr, w, h, color["hex"]))
-        pick = Gtk.Button(label="Escolher…")
-
-        def pickc(_b):
-            dlg = Gtk.ColorDialog()
-            init = Gdk.RGBA()
-            init.parse(color["hex"])
-
-            def done(d, res):
-                try:
-                    rgba = d.choose_rgba_finish(res)
-                except GLib.Error:
-                    return
-                color["hex"] = (f"#{round(rgba.red * 255):02x}{round(rgba.green * 255):02x}"
-                                f"{round(rgba.blue * 255):02x}")
-                sw.queue_draw()
-
-            dlg.choose_rgba(win, init, None, done)
-
-        pick.connect("clicked", pickc)
-        crow.append(sw)
-        crow.append(pick)
+        crow, color = self._color_picker_row(win, group_state.get("color") or "#3b82f6")
         box.append(crow)
 
         box.append(Gtk.Label(label="Líder (opcional)", xalign=0))
