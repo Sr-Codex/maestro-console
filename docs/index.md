@@ -1,17 +1,17 @@
 # Índice de documentação — maestro console
 
-> Mapa de TODOS os docs, com o estado de cada um. **Atualizado: 2026-07-02 (v0.50.0).**
+> Mapa de TODOS os docs, com o estado de cada um. **Atualizado: 2026-07-02 (v0.51.0).**
 > Regra: **research/auditoria são point-in-time** (legítimo serem antigos — registram a decisão
 > da época); o que descreve "estado/roadmap" e ficou congelado no MVP recebeu **nota de defasagem**.
 
 ## 🟢 Canônicos (fontes de verdade — sempre atuais)
 | Doc | O que é |
 |---|---|
-| [`../CHANGELOG.md`](../CHANGELOG.md) | Histórico real de versões (v0.1.0→v0.50.0). |
+| [`../CHANGELOG.md`](../CHANGELOG.md) | Histórico real de versões (v0.1.0→v0.51.0). |
 | [`ADR.md`](ADR.md) | Decisões arquiteturais (ADR-1..20), versionado, imutável. |
 | [`STATUS.md`](STATUS.md) | Estado atual / o que foi entregue (resumo + ponteiros). |
 | [`13-maestro-mode.md`](13-maestro-mode.md) | **Feature (atual):** Maestro mode seguro + auto-aprovação + cabo headless (ADR-16..20). |
-| [`14-plano-orquestracao-equipe.md`](14-plano-orquestracao-equipe.md) | **Plano cirúrgico:** orquestração de equipe — **Fases A+B+C entregues** (v0.47.0/v0.48.0/v0.50.0): Team Templates + materializador (FAB), `maestri team` por linguagem natural (confirmação humana obrigatória) e editor visual de templates. "Montar equipe" segue clique-pra-posicionar (v0.49.0, §13). **Fase D** (líder de grupo/delegate mode) planejada, ainda não implementada. |
+| [`14-plano-orquestracao-equipe.md`](14-plano-orquestracao-equipe.md) | **Plano cirúrgico:** orquestração de equipe — **Fases A+B+C+D entregues** (v0.47.0→v0.51.0): Team Templates + materializador (FAB), `maestri team` por linguagem natural (confirmação humana obrigatória), editor visual de templates e comportamento de líder de grupo. "Montar equipe" segue clique-pra-posicionar (v0.49.0, §13). |
 | [`uconsole.md`](uconsole.md) | Contexto do hardware (CM4) — atual. |
 | [`15-ideias-backlog.md`](15-ideias-backlog.md) | **Doc vivo:** fila de ideias capturadas durante outras tarefas — não implementadas até serem puxadas explicitamente. |
 | [`../AGENTS.md`](../AGENTS.md) · [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Regras de processo (atemporais). |

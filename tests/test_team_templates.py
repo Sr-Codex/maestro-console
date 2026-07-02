@@ -69,11 +69,23 @@ def test_validate_team_template_ok():
         TeamTemplate(name="t", groups=[GroupSpec(name="G", members=[Role("", "claude", "x")])]),
         TeamTemplate(name="t", groups=[GroupSpec(name="G", members=[Role("c", "", "x")])]),
         TeamTemplate(name="t", groups=[GroupSpec(name="G", members=[Role("c", "claude", "")])]),
+        TeamTemplate(name="t", groups=[GroupSpec(
+            name="G", leader="nao-existe", members=[Role("c", "claude", "x")]
+        )]),
     ],
 )
 def test_validate_team_template_rejeita_invalido(template):
     with pytest.raises(TeamTemplateValidationError):
         validate_team_template(template)
+
+
+def test_validate_team_template_aceita_leader_que_e_membro_real():
+    # Fase D (docs/14 §12): líder é só schema até aqui — validar só que aponta pra um
+    # membro REAL do próprio grupo, sem exigir comportamento nenhum ainda.
+    tpl = TeamTemplate(name="t", groups=[GroupSpec(
+        name="G", leader="c", members=[Role("c", "claude", "x"), Role("r", "codex", "y")]
+    )])
+    validate_team_template(tpl)  # não levanta
 
 
 def test_builtins_validos():

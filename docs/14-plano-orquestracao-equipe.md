@@ -2,10 +2,10 @@
 
 > **Plano de implementação** para retomar em SESSÃO NOVA (a sessão de origem ficou grande).
 > Autossuficiente: um agente com acesso ao repo + memória consegue executar daqui.
-> Data: 2026-07-01 (atualizado 2026-07-02: Fases B e C implementadas, Fase D planejada) · PT-BR
-> · Precede o código (protocolo: analisar→pesquisar→**validar/plano**→codar).
+> Data: 2026-07-01 (atualizado 2026-07-02: Fases B, C e D implementadas) · PT-BR · Precede o
+> código (protocolo: analisar→pesquisar→**validar/plano**→codar).
 > Feature aprovada pelo usuário; fases: **A** (determinística, ✅) → **B** (NL, ✅) → **C** (editor
-> visual, ✅) → **D** (comportamento de líder de grupo, planejada).
+> visual, ✅ PR #48) → **D** (comportamento de líder de grupo, ✅ PR #49).
 
 ## 0. Como retomar (faça primeiro)
 1. Confirmar que o **PR #44** (auto-approve + fixes) foi mergeado; senão, alinhar com o usuário.
@@ -254,7 +254,7 @@ Testado (10 testes unit da lógica de save/validação/rename/duplicar — sanit
 confirmou que os testes de rejeição pegam a falta de `validate_team_template`; boot smoke real).
 ruff limpo; CHANGELOG + bump pendentes nesta mesma sessão.
 
-## 12. Plano cirúrgico — FASE D (comportamento de líder de grupo / delegate mode)
+## 12. Plano cirúrgico — FASE D (comportamento de líder de grupo / delegate mode) ✅ IMPLEMENTADO (2026-07-02)
 
 **Objetivo:** o campo `GroupSpec.leader` já existe no schema desde a Fase A (§3), mas **sem
 comportamento** — hoje todo membro do grupo conecta direto ao orquestrador (ou fica solto, se
@@ -294,10 +294,18 @@ soltos reportando pra fora individualmente.
   que não existe no grupo) → recusa antes de criar nada.
 - Runtime: montar um template com líder ao vivo e conferir visualmente a fiação dos cabos.
 
-### 12.4 — Definition of done (Fase D)
-`GroupSpec.leader` com comportamento real de fiação (líder = ponto único de conexão do grupo);
-retrocompatível com grupos sem líder; validação de `leader` inválido; testado (unit + runtime); ruff
-limpo; CHANGELOG + bump + PR.
+### 12.4 — Definition of done (Fase D) ✅
+`GroupSpec.leader` com comportamento real de fiação: `_materialize_team` coleta `member_nids`
+(nome→nid) durante a criação do grupo e, DEPOIS de criar todos os membros, decide a fiação —
+com líder: orquestrador/T1 ↔ líder ↔ demais membros (líder é `_recruited_by` dos colegas, não o
+orquestrador); sem líder: comportamento anterior inalterado. `validate_team_template` (engine,
+compartilhado por Fases A/B/C) ganhou a checagem de `leader` real — recusa ANTES de criar
+qualquer coisa se apontar pra um nome que não é membro do grupo. Líder NÃO ganha poder de
+comando extra sobre os colegas nem Maestro mode automático (decisão tomada: só a fiação/lineage
+por ora, conforme a recomendação do plano). Retrocompatível (grupos sem líder inalterados).
+Testado (2 testes engine + 4 testes canvas — sanity-check por reversão confirmou que os testes
+de comportamento com líder falham sem a fiação, e o teste de regressão sem líder passa igual);
+ruff limpo; CHANGELOG + bump pendentes nesta mesma sessão.
 
 ## 13. Montar equipe também vira clique-pra-posicionar (generaliza AGENTS.md §5)
 
