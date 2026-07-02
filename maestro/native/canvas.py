@@ -445,6 +445,9 @@ class CanvasWindow:
         self._connect_src: tuple[str, str] | None = None  # (kind, id) da origem do cabo
         self._connect_cursor: tuple[float, float] | None = None  # cursor p/ o cabo-fantasma
         self._connect_oneshot = False  # conexão iniciada por cápsula = 1 cabo, depois sai do modo
+        # -- posicionar por clique (o usuário escolhe onde nasce, não algoritmo) --
+        self._placing_spec: dict | None = None  # {"kind": "shell"} ou {"kind": "agent","base":...}
+        self._placing_cursor: tuple[float, float] | None = None  # cursor p/ a prévia fantasma
         self._note_file_mtime: dict[tuple[str, str], float] = {}  # (nid,note_id)->mtime gravada
         self._pan = None  # estado do pan da vista (fundo)
         self._drag = None  # estado do arrasto de nó (via gesto do plano, estável)
@@ -2469,6 +2472,9 @@ class CanvasWindow:
         if self._connect_mode and self._connect_src is not None:  # cabo-fantasma segue o cursor
             self._connect_cursor = (x, y)
             self.plane.queue_draw()
+        if self._placing_spec is not None:  # prévia fantasma do item a posicionar
+            self._placing_cursor = (x, y)
+            self.plane.queue_draw()
 
     def _on_canvas_click(self, _g, n_press, x, y):
         if n_press < 2:  # só duplo-clique
@@ -2483,6 +2489,12 @@ class CanvasWindow:
 
     def _pan_begin(self, gesture, x, y):
         # x,y vêm em coords do scrolled (que NÃO rola) = coords de TELA -> estável.
+        if self._placing_spec is not None:  # modo "clique pra posicionar" tem prioridade
+            camx, camy = self._cam
+            z = self.model.zoom() or 1.0
+            self._commit_placing((x - camx) / z, (y - camy) / z)
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            return
         self._item_resize = None
         picked = self.plane.pick(x, y, Gtk.PickFlags.DEFAULT)
         _el = self._elem_at(picked)
@@ -4254,6 +4266,9 @@ class CanvasWindow:
         if keyval == Gdk.KEY_Escape and self._connect_mode and has_connect:
             self._connect_btn.set_active(False)  # untoggle -> cancela
             return True
+        if keyval == Gdk.KEY_Escape and self._placing_spec is not None:
+            self._cancel_placing()
+            return True
         if keyval in (Gdk.KEY_p, Gdk.KEY_P) and ctrl and shift:
             order = ["verlet", "catenary", "spring"]  # cicla a física do cabo (gosto do usuário)
             i = order.index(self._cable_phys) if self._cable_phys in order else 0
@@ -4287,6 +4302,10 @@ class CanvasWindow:
         for gid in self._group_base:
             gx, gy, gw, gh = self._group_disp_rect(gid)
             rects.append((gx, gy, gx + gw, gy + gh))
+        if self._placing_spec is not None and self._placing_cursor is not None:
+            camx, camy = self._cam  # prévia fantasma também precisa de superfície pra desenhar
+            px, py = self._placing_cursor[0] - camx, self._placing_cursor[1] - camy
+            rects.append((px, py, px + BASE_W * z, py + BASE_H * z))
         if not rects:
             return None
         x0 = min(r[0] for r in rects)
@@ -4360,8 +4379,25 @@ class CanvasWindow:
                     cr.stroke()
             cr.set_dash([])  # reset p/ não vazar tracejado em outros desenhos do cr
         self._draw_connect_preview_cr(cr, z)  # cabo-fantasma seguindo o cursor (modo conectar)
+        self._draw_placing_preview_cr(cr, z)  # prévia do item a posicionar (clique-pra-criar)
         if self._phys_label_frames > 0:  # flash do modo ao trocar (Ctrl+Shift+P); some sozinho
             self._draw_phys_label(cr)
+
+    def _draw_placing_preview_cr(self, cr, z) -> None:
+        """Contorno tracejado do item a nascer, seguindo o cursor no modo "clique pra
+        posicionar" (`_start_placing`) — some ao clicar (cria ali) ou Esc (cancela)."""
+        if self._placing_spec is None or self._placing_cursor is None:
+            return
+        camx, camy = self._cam
+        x, y = self._placing_cursor[0] - camx, self._placing_cursor[1] - camy
+        w, h = BASE_W * z, BASE_H * z
+        cr.save()
+        cr.set_source_rgba(0.55, 0.75, 1.0, 0.6)
+        cr.set_line_width(2.0)
+        cr.set_dash([6.0, 4.0])
+        cr.rectangle(x, y, w, h)
+        cr.stroke()
+        cr.restore()
 
     def _preview_anchors(self, z):
         """(p0, cursor) do cabo-fantasma no espaço de desenho (tela − câmera), ou None.
@@ -4732,8 +4768,11 @@ class CanvasWindow:
 
     def _open_new_terminal_dialog(self):
         dlg, box = self._dialog("➕ novo terminal")
+        box.append(Gtk.Label(label="Escolha o tipo, depois clique no canvas pra posicionar."))
         bsh = Gtk.Button(label="🐚 terminal shell (/bin/bash)")
-        bsh.connect("clicked", lambda _b: (self._new_shell_terminal(), dlg.destroy()))
+        bsh.connect(
+            "clicked", lambda _b: (self._start_placing({"kind": "shell"}), dlg.destroy())
+        )
         box.append(bsh)
         agents = list(installed_agents().keys())
         if self.controller is not None and self._ask_bus_dir and agents:
@@ -4744,16 +4783,47 @@ class CanvasWindow:
             combo.set_active(0)
             box.append(combo)
             bag = Gtk.Button(label="🤖 criar agente (participa de cabos)")
-            bag.connect(
-                "clicked",
-                lambda _b: (self._new_agent_terminal(combo.get_active_text()), dlg.destroy()),
-            )
+
+            def do_agent(_b):
+                self._start_placing({"kind": "agent", "base": combo.get_active_text()})
+                dlg.destroy()
+
+            bag.connect("clicked", do_agent)
             box.append(bag)
         dlg.present()
 
-    def _new_shell_terminal(self) -> str | None:
+    def _start_placing(self, spec: dict) -> None:
+        """Entra no modo "clique pra posicionar": em vez de um algoritmo escolher onde o
+        item nasce, o PRÓXIMO CLIQUE no canvas escolhe (prévia fantasma segue o cursor;
+        Esc cancela). Achado ao vivo: tentar adivinhar uma posição livre "boa" ficou
+        frágil — deixar o humano apontar é mais simples e sempre certo."""
+        self._placing_spec = spec
+        self._placing_cursor = None
+        self.plane.queue_draw()
+
+    def _cancel_placing(self) -> None:
+        if self._placing_spec is not None:
+            self._placing_spec = None
+            self._placing_cursor = None
+            self.plane.queue_draw()
+
+    def _commit_placing(self, bx: float, by: float) -> None:
+        """Cria o item pendente na posição CLICADA (coords base) — sem algoritmo de
+        posicionamento; o humano escolheu."""
+        spec = self._placing_spec
+        self._placing_spec = None
+        self._placing_cursor = None
+        if spec is None:
+            return
+        if spec["kind"] == "shell":
+            self._new_shell_terminal(default=(bx, by))
+        elif spec["kind"] == "agent":
+            self._new_agent_terminal(spec["base"], default=(bx, by))
+        self.plane.queue_draw()
+
+    def _new_shell_terminal(self, default: tuple[float, float] | None = None) -> str | None:
         nid = self._unique_nid("shell")
-        default = self._next_node_default()
+        default = default or self._next_node_default()
         self._add_node(nid, "shell", ["/bin/bash"], default=default)
         # nid é NOVO pra este uso, mas `model.position()/node_size()` preferem um valor
         # persistido antigo se o número foi reciclado (id órfão de um nó fechado antes,
