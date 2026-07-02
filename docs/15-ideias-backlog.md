@@ -77,3 +77,34 @@ multi-agente + o padrão manager hierárquico falha no CrewAI. Logo, aprofundar 
 do Kiro, delegate-mode com mailbox) **dobraria a aposta no padrão que a própria pesquisa desafia**.
 Saída barata antes de escrever orquestração nova (lição Beast Mode, `docs/16` §5, 3-0): ajustar o
 comportamento do líder **só via prompt** e medir. Status: 🧊 icebox (regra de cautela, não tarefa).
+
+### 2026-07-02 — Melhorias da pesquisa de comunidade (docs/17) — restante do ranking, a entender melhor
+Da pesquisa de comunidade (`docs/17`, Opus 4.8 + Codex). O **#1 (estado por nó / "precisa de você")
+foi puxado** → `docs/18`. O restante fica aqui pra o usuário entender melhor antes de puxar. Tema
+comum: *less babysitting* (menos babá). Cada um mapeia à arquitetura atual (canvas GTK4+VTE, cabos,
+Team Templates/líder, Maestro mode, bwrap):
+- **"Unload" de nó** — matar o processo VTE/PTY mantendo o nó + estado no `CanvasModel`/`ui_state`;
+  reabrir sob demanda. Ataca a dor de RAM (Maestri: 20GB → unload na v0.29), **decisiva no CM4**.
+  Alto valor no nosso hardware. 🧊
+- **Recuperação/reattach + "arquivar em vez de fechar"** — ao abrir, detectar nós/worktrees órfãos
+  (pós-crash) e oferecer reanexar / novo agente no worktree / arquivar. Casa com "abre igual fechou"
+  e com os Floors já existentes. 🧊
+- **Fila FIFO de follow-ups por nó/cabo** — empilhar instruções enquanto o agente roda, reordenar,
+  cancelar; enviar ao VTE só quando pronto. Maestro mode enfileira sem perder mensagem. 🧊
+- **Briefing persistente por grupo/template** — `brief.md` de "objetivo/decisões/contexto" injetado
+  automaticamente em cada agente novo do grupo (nota conectada + líder). Resolve "usei um dia e
+  esqueci o plano". Pode incluir um campo "objetivo atual" fixado no header do grupo. 🧊
+- **Modo compacto pro canvas lotado (1280×720)** — colapsar grupos, mini-cartões de nó, atalhos por
+  teclado; camada de visualização sobre os mesmos nós (não muda o orquestrador). Essencial p/ 8+ nós. 🧊
+- **Consciência read-only entre nós irmãos** — um agente lê status/branch/diff-resumido/notas de
+  outro nó do MESMO grupo, sem escrever; mediado pelo orquestrador, escopo por cabo/grupo (CLI/MCP
+  local). 🧊
+- **Profiles de agente (presets nomeados)** — "Claude sandbox", "Codex yolo" etc. na cápsula
+  principal ao criar nó; persistidos em `ui_state`, injetados no comando de spawn. 🧊
+- **Custo/tokens por nó (versão lean)** — um número discreto no header do nó, sem dashboard. **Já
+  está no backlog acima como F1** (triplo-confirmado: docs/16 + Fable + docs/17); é o mesmo item —
+  não duplicar, só reforça a prioridade. 🧊
+- Menores: **Nerd Font** no terminal (expor no `terminal_theme`/`ui_state`); botão "fim ao vivo" +
+  indicador de "lendo histórico enquanto o agente produz"; **diff desde o último feedback**. 🧊
+- **Já ENTREGUE (não confundir com pendência):** paleta de comandos (Ctrl-P), worktree por agente
+  (Floors), grupos, minimapa, monitorar atividade — a pesquisa pediu, o projeto já tem.
