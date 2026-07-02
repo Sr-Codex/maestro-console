@@ -342,11 +342,11 @@ def test_materialize_usa_origin_explicito_em_vez_de_free_region_origin(tmp_path)
     result = CanvasWindow._materialize_team(w, spec, origin=(500.0, 300.0))
     assert result["ok"]
     gid = w.groups.list()[0].id
-    assert w._group_base[gid] == (500.0, 300.0)
+    assert w._group_base[gid] == pytest.approx((500.0, 300.0))
     nid = created[0][0]
     px, py = w._base_pos[nid]
-    assert px == 500.0 + GROUP_PAD  # dentro do grupo, ancorado no origin dado
-    assert py == 300.0 + GROUP_PAD + GROUP_TITLE_H
+    assert px == pytest.approx(500.0 + GROUP_PAD)  # dentro do grupo, ancorado no origin dado
+    assert py == pytest.approx(300.0 + GROUP_PAD + GROUP_TITLE_H)
 
 
 def test_materialize_sem_origin_usa_free_region_origin(tmp_path):
