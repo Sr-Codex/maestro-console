@@ -89,7 +89,8 @@ MAESTRO_SKILL_END = "<!-- maestro-mode:end -->"
 
 
 def maestro_skill_text(node: str) -> str:
-    """Ensina o agente-MANAGER a orquestrar via `maestri` (Fase 6). Bloco reescrito a cada start."""
+    """Ensina o agente-MANAGER a orquestrar via `maestri` (Fase 6 + Fase B). Bloco reescrito
+    a cada start."""
     return (
         f"{MAESTRO_SKILL_BEGIN}\n"
         "## Maestro mode (você gerencia uma equipe)\n\n"
@@ -102,7 +103,22 @@ def maestro_skill_text(node: str) -> str:
         '    "$MAESTRO_BIN/maestri" wire <a> [b]              # liga um cabo (b=você)\n'
         '    "$MAESTRO_BIN/maestri" dismiss <nó>              # dispensa um recruta\n\n'
         "Cada recruta vira um terminal de agente real; fale com ele por cabo via "
-        '`"$MAESTRO_BIN/maestro-ask" <nó> "..."`. Recrute só o necessário; dispense ao fim.'
+        '`"$MAESTRO_BIN/maestro-ask" <nó> "..."`. Recrute só o necessário; dispense ao fim.\n\n'
+        "### Montar uma EQUIPE inteira de uma vez (`team`)\n"
+        "Se o pedido pede vários agentes organizados em grupos (ex.: \"monte um time pra X\"), "
+        "NÃO recrute um por um — descreva a equipe como JSON e peça UMA confirmação:\n\n"
+        "    \"$MAESTRO_BIN/maestri\" team '<json>'\n\n"
+        "Formato do `<json>` (aspas simples por fora, JSON válido por dentro):\n\n"
+        '    {"name": "nome-curto", "description": "opcional",\n'
+        '     "groups": [{"name": "Nome do grupo", "leader": null,\n'
+        '                 "members": [{"name": "papel", "agent": "claude|codex",\n'
+        '                              "instruction": "objetivo + saída + fronteira"}]}]}\n\n'
+        "Regras: 2–5 membros por grupo (3–4 é o ideal; acima de 8 é recusado), cada papel "
+        "precisa de `instruction` com objetivo claro. NÃO precisa (e não deve) incluir um campo "
+        "`manager` apontando outro nó — a autoridade é sempre VOCÊ (quem chamou), o host decide "
+        "isso pelo canal, um campo no JSON é ignorado. O HUMANO vê um resumo (grupos/papéis) e "
+        "decide Montar/Negar — só materializa depois disso; não assuma que já foi criado até "
+        "a resposta confirmar."
         f"\n{MAESTRO_SKILL_END}"
     )
 

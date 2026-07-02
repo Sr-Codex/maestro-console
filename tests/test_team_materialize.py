@@ -7,11 +7,14 @@ de verdade (Store SQLite em tmp_path), pra pegar de fato o insight geométrico d
 docs/14 §4 (pertinência ao grupo é por sobreposição, não "add_member").
 """
 
+import json
+import threading
 from types import SimpleNamespace
 
 import pytest
 
 pytest.importorskip("gi")  # canvas usa PyGObject; o .venv é gi-free → roda no python do sistema
+from maestro.engine.ask_bus import AskRequest
 from maestro.engine.groups import Groups
 from maestro.engine.state.store import Store
 from maestro.engine.team_templates import GroupSpec, TeamTemplate
@@ -96,6 +99,14 @@ def _make_win(tmp_path, fail_indices=frozenset()):
     w._recruited_by = {}
     w._sock_server = None
     w._last_recruit_error = ""
+    w._mutate_log = {}
+    _tick = [0.0]
+
+    def _clock():  # avança muito por chamada -> rate-limit não trip por acidente nos testes
+        _tick[0] += 1000.0
+        return _tick[0]
+
+    w._maestro_clock = _clock
 
     created = []
     call_count = [0]
@@ -307,3 +318,140 @@ def test_materialize_sem_groups_recusa(tmp_path):
     assert not result["ok"]
     assert "indisponíveis" in result["error"]
     assert created == []
+
+
+# -- Fase B (docs/14 §6): comando `team` — NL desenha, humano confirma, materializa --
+
+def _team_spec_json(name="t") -> str:
+    groups = [{"name": "Grupo", "members": [
+        {"name": "coder", "agent": "claude", "instruction": "implemente"},
+        {"name": "reviewer", "agent": "codex", "instruction": "revise"},
+    ]}]
+    return json.dumps({"name": name, "groups": groups})
+
+
+def _req(frm, cmd, args):
+    return AskRequest("a" * 8, frm, "", "", cmd=cmd, args=args)
+
+
+def test_hitl_team_exige_maestro_mode(tmp_path):
+    w, created = _make_win(tmp_path)
+    result, done = {}, threading.Event()
+    CanvasWindow._hitl_team(w, _req("mgr", "team", [_team_spec_json()]), result, done)
+    assert not result["ok"] and "Maestro" in result["error"]
+    assert done.is_set()
+    assert created == []
+
+
+def test_hitl_team_rejeita_sem_args(tmp_path):
+    w, _created = _make_win(tmp_path)
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    result, done = {}, threading.Event()
+    CanvasWindow._hitl_team(w, _req("mgr", "team", []), result, done)
+    assert not result["ok"] and "uso: team" in result["error"]
+    assert done.is_set()
+
+
+def test_hitl_team_rejeita_json_invalido(tmp_path):
+    w, _created = _make_win(tmp_path)
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    result, done = {}, threading.Event()
+    CanvasWindow._hitl_team(w, _req("mgr", "team", ["{ nao é json ]["]), result, done)
+    assert not result["ok"] and "spec inválido" in result["error"]
+    assert done.is_set()
+
+
+def test_hitl_team_rejeita_json_que_nao_e_objeto(tmp_path):
+    w, _created = _make_win(tmp_path)
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    result, done = {}, threading.Event()
+    CanvasWindow._hitl_team(w, _req("mgr", "team", ["[1, 2, 3]"]), result, done)
+    assert not result["ok"] and "spec inválido" in result["error"]
+
+
+def test_hitl_team_rejeita_spec_grande_demais(tmp_path):
+    w, _created = _make_win(tmp_path)
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    huge = "x" * 9000  # > ASK_MAX_PROMPT_BYTES (8192)
+    result, done = {}, threading.Event()
+    CanvasWindow._hitl_team(w, _req("mgr", "team", [huge]), result, done)
+    assert not result["ok"] and "grande demais" in result["error"]
+    assert done.is_set()
+
+
+def test_hitl_team_valido_abre_confirmacao_sem_materializar(tmp_path):
+    """`_hitl_team` com spec válido NÃO materializa direto — abre confirmação assíncrona
+    (`done` não é setado até a decisão humana)."""
+    w, created = _make_win(tmp_path)
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    calls = []
+    w._confirm_team_from_agent = lambda frm, spec, result, done: calls.append((frm, spec.name))
+    result, done = {}, threading.Event()
+    CanvasWindow._hitl_team(w, _req("mgr", "team", [_team_spec_json("dev-x")]), result, done)
+    assert calls == [("mgr", "dev-x")]
+    assert not done.is_set()
+    assert created == []
+
+
+def test_maestro_exec_roteia_team_sem_despachar_direto(tmp_path):
+    w, created = _make_win(tmp_path)
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    calls = []
+    w._hitl_team = lambda req, result, done: calls.append(req.frm)  # não seta done
+    req = _req("mgr", "team", [_team_spec_json()])
+    result, done = {}, threading.Event()
+    CanvasWindow._maestro_exec(w, req, result, done)
+    assert calls == ["mgr"] and not done.is_set()
+    assert created == []
+
+
+def test_apply_team_decision_aprovar_materializa_com_manager_igual_ao_frm(tmp_path):
+    w, created = _make_win(tmp_path)
+    spec = TeamTemplate.from_dict(json.loads(_team_spec_json("dev-y")))
+    result, done = {}, threading.Event()
+    CanvasWindow._apply_team_decision(w, True, "mgr", spec, result, done)
+    assert result["ok"]
+    assert done.is_set()
+    assert len(created) == 2
+    for nid, _default in created:
+        assert w._recruited_by[nid] == "mgr"
+        assert ("mgr", nid) in w.edges.list()
+
+
+def test_apply_team_decision_ignora_manager_do_json(tmp_path):
+    """ADR-17/18: autoridade nunca vem de campo que o agente preenche — mesmo se o JSON
+    tiver um `manager` apontando outro nó, quem liga o cabo é sempre o `frm` real (canal)."""
+    w, created = _make_win(tmp_path)
+    raw = json.loads(_team_spec_json("dev-z"))
+    raw["manager"] = "outro-no-qualquer"
+    spec = TeamTemplate.from_dict(raw)
+    result, done = {}, threading.Event()
+    CanvasWindow._apply_team_decision(w, True, "mgr-real", spec, result, done)
+    nid = created[0][0]
+    assert w._recruited_by[nid] == "mgr-real"
+    assert "outro-no-qualquer" not in w._recruited_by.values()
+
+
+def test_apply_team_decision_negar_nao_materializa_e_audita(tmp_path):
+    w, created = _make_win(tmp_path)
+    from maestro.engine.maestro_audit import read_events
+
+    spec = TeamTemplate.from_dict(json.loads(_team_spec_json()))
+    result, done = {}, threading.Event()
+    CanvasWindow._apply_team_decision(w, False, "mgr", spec, result, done)
+    assert not result["ok"] and "negad" in result["error"]
+    assert done.is_set()
+    assert created == []
+    assert any(e["event"] == "team_denied" for e in read_events(w._ask_bus_dir))
+
+
+def test_hitl_team_respeita_rate_limit(tmp_path):
+    w, _created = _make_win(tmp_path)
+    w.model.set_node_cfg("mgr", "maestro", "1")
+    w._maestro_clock = lambda: 0.0  # trava o tempo -> todo comando cai na MESMA janela
+    for _ in range(w.MAESTRO_SPAWN_RATE):
+        assert w._mutate_rate_ok("mgr")
+    result, done = {}, threading.Event()
+    CanvasWindow._hitl_team(w, _req("mgr", "team", [_team_spec_json()]), result, done)
+    assert not result["ok"] and "aguarde" in result["error"]
+    assert done.is_set()

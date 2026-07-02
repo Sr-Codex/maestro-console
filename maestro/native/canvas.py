@@ -34,6 +34,7 @@ gi.require_version("Pango", "1.0")
 from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Pango, Vte  # noqa: E402
 
 from ..engine.ask_bus import (  # noqa: E402
+    ASK_MAX_PROMPT_BYTES,
     AskBusError,
     AskRequest,
     AskResponse,
@@ -3650,7 +3651,7 @@ class CanvasWindow:
                 break
         return depth
 
-    MUTATING_CMDS = ("recruit", "dismiss", "wire", "reassign")  # consomem token de rate-limit
+    MUTATING_CMDS = ("recruit", "dismiss", "wire", "reassign", "team")  # consomem rate-limit
 
     def _mutate_rate_ok(self, frm: str) -> bool:
         """Token-bucket POR-MANAGER para TODOS os comandos mutadores (5d): poda a janela,
@@ -3818,6 +3819,12 @@ class CanvasWindow:
             if req.cmd == "recruit" and self._recruit_needs_hitl(req.frm):
                 self._hitl_recruit(req, result, done)
                 return False
+            # Fase B (docs/14 §6): `team` SEMPRE pede confirmação humana — NL desenha,
+            # humano confirma, determinístico executa. Nunca materializa direto por
+            # decisão do agente, então também não passa pelo `_maestro_dispatch` genérico.
+            if req.cmd == "team":
+                self._hitl_team(req, result, done)
+                return False
             self._maestro_dispatch(req, result)
         except Exception as exc:
             result.update(ok=False, error=str(exc))
@@ -3868,6 +3875,104 @@ class CanvasWindow:
         box.append(row)
         # se o humano não decidir a tempo, nega (o agente não fica preso) + fecha o diálogo
         GLib.timeout_add_seconds(40, lambda: decide(False))
+        dlg.present()
+
+    def _hitl_team(self, req, result: dict, done) -> None:
+        """`team` (Fase B, docs/14 §6): o manager manda um `TeamTemplate` em JSON; o host
+        NUNCA materializa direto — só parseia/valida e abre uma confirmação humana. Os
+        MESMOS gates do `_maestro_dispatch` genérico (este comando não passa por ele, já
+        que a decisão é sempre assíncrona)."""
+        frm, args = req.frm, req.args
+        if not self.model.node_cfg(frm, "maestro"):
+            result.update(ok=False, error="este terminal não está em Maestro mode")
+            done.set()
+            return
+        if self.controller is None or not self._ask_bus_dir or self.edges is None:
+            result.update(ok=False, error="orquestrador/cabos indisponíveis")
+            done.set()
+            return
+        if not self._mutate_rate_ok(frm):
+            self._audit("rate_blocked", manager=frm, cmd="team")
+            result.update(ok=False, error="muitos comandos em pouco tempo; aguarde")
+            done.set()
+            return
+        if not args or not args[0].strip():
+            result.update(ok=False, error="uso: team '<json do TeamTemplate>'")
+            done.set()
+            return
+        spec_text = args[0]
+        if len(spec_text.encode("utf-8")) > ASK_MAX_PROMPT_BYTES:  # entrada não-confiável
+            result.update(ok=False, error=f"spec grande demais (máx {ASK_MAX_PROMPT_BYTES} bytes)")
+            done.set()
+            return
+        try:
+            data = json.loads(spec_text)
+            if not isinstance(data, dict):
+                raise TypeError("spec precisa ser um objeto JSON")
+            spec = TeamTemplate.from_dict(data)
+            validate_team_template(spec)
+        except Exception as exc:  # noqa: BLE001 — parse de entrada NÃO-CONFIÁVEL, nunca derruba
+            result.update(ok=False, error=f"spec inválido: {exc}")
+            done.set()
+            return
+        self._confirm_team_from_agent(frm, spec, result, done)
+
+    def _apply_team_decision(self, approve: bool, frm: str, spec: TeamTemplate,
+                              result: dict, done) -> None:
+        """Aplica a decisão humana do `team` (separado do GTK p/ ser testável, espelha
+        `_apply_recruit_decision`). Aprovar → `_materialize_team(spec, manager=frm)` — o
+        manager é SEMPRE o `frm` derivado do canal (ADR-17/18: autoridade nunca vem de
+        campo que o agente preenche; `spec.manager`, se vier no JSON, é ignorado)."""
+        if approve:
+            mat = self._materialize_team(spec, manager=frm)
+            if mat["ok"]:
+                msg = (f"Equipe '{spec.name}' montada: {mat['groups']} grupo(s), "
+                       f"{mat['agents']} agente(s).")
+                if mat["warnings"]:
+                    msg += " ⚠ " + "; ".join(mat["warnings"])
+                result.update(ok=True, answer=msg)
+            else:
+                result.update(ok=False, error=mat["error"])
+        else:
+            self._audit("team_denied", manager=frm, template=spec.name)
+            result.update(ok=False, error="montagem da equipe negada pelo humano")
+        done.set()
+
+    def _confirm_team_from_agent(self, frm: str, spec: TeamTemplate, result: dict, done) -> None:
+        """Diálogo de confirmação do `team` (assíncrono; `done` setado na decisão via
+        `_apply_team_decision`)."""
+        decided = {"v": False}
+        dlg, box = self._dialog(f"🧩 Confirmar equipe — '{spec.name}'")
+        preview = "\n".join(
+            f"• {g.name}: " + ", ".join(m.name for m in g.members) for g in spec.groups
+        )
+        msg = Gtk.Label(
+            label=f"O agente '{frm}' quer montar a equipe '{spec.name}' "
+                  f"({spec.total_members} agente(s)):\n\n{preview}\n\nMontar?")
+        msg.set_wrap(True)
+        msg.set_xalign(0.0)
+        box.append(msg)
+
+        def decide(approve: bool):
+            if decided["v"]:
+                return False
+            decided["v"] = True
+            dlg.destroy()  # destrói em TODOS os caminhos (inclui timeout)
+            self._apply_team_decision(approve, frm, spec, result, done)
+            return False
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.set_halign(Gtk.Align.END)
+        deny = Gtk.Button(label="Negar")
+        deny.connect("clicked", lambda _b: decide(False))
+        appr = Gtk.Button(label="Montar")
+        appr.add_css_class("suggested-action")
+        appr.connect("clicked", lambda _b: decide(True))
+        row.append(deny)
+        row.append(appr)
+        box.append(row)
+        # decisão maior que um recrutamento simples -> mais tempo antes de negar sozinho
+        GLib.timeout_add_seconds(90, lambda: decide(False))
         dlg.present()
 
     def _maestro_dispatch(self, req, result: dict) -> None:
