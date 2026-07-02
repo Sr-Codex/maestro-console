@@ -33,6 +33,19 @@ Padrão de toolbar do canvas nativo, decidido pelo usuário:
    deve ter a sua cápsula contextual** — generalize o padrão da nota, não crie UI ad-hoc por nó.
 3. **Zoom** fica numa **cápsula inferior-esquerda** (rodapé).
 4. **Sem menu "☰ ações" global** — as opções se distribuem entre (1) global e (2) por-elemento.
+5. **Todo elemento novo criado pela cápsula principal nasce por CLIQUE-PRA-POSICIONAR — nunca
+   por algoritmo adivinhando uma posição livre.** Fluxo: escolher o tipo (ex.: terminal/agente/
+   nota/grupo/árvore) → prévia fantasma (contorno tracejado, tamanho real do item) segue o
+   cursor → o clique no canvas cria ali; Esc cancela. Implementado em `_start_placing`/
+   `_commit_placing`/`_draw_placing_preview_cr` (`maestro/native/canvas.py`); tamanho da prévia
+   por tipo em `_PLACING_SIZES`. Generalizar esse padrão pra qualquer elemento novo — não criar
+   posicionamento automático ad-hoc por feature. *Motivo:* tentar corrigir sobreposição com
+   algoritmo (viewport-aware, força posição/tamanho contra id órfão) precisou de 4 rodadas de
+   correção e ainda colidia na prática — deixar o humano apontar é simples e sempre certo.
+   **Exceção (decisão do usuário):** fluxos SEM clique humano possível (recrutar por agente via
+   `maestri recruit`, `_materialize_team`/Montar Equipe que cria vários de uma vez) continuam
+   com o posicionamento automático — só corrigido pra não herdar posição/tamanho de um id
+   reciclado/órfão, sem garantia de zero sobreposição.
 
 ## Como rodar/testar
 - Testes: `.venv/bin/pytest -q` · Lint: `.venv/bin/ruff check maestro tests`

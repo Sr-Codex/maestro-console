@@ -77,6 +77,51 @@ def test_commit_placing_agent_usa_a_posicao_clicada_e_o_agente_escolhido():
     assert calls == [("claude", (10.0, 20.0))]
 
 
+def test_commit_placing_note_usa_a_posicao_clicada():
+    """Regra de arquitetura (AGENTS.md): todo elemento da cápsula principal nasce por
+    clique-pra-posicionar, não só terminal/agente."""
+    w = _make_win()
+    w._placing_spec = {"kind": "note"}
+    calls = []
+    w._create_note = lambda default=None: calls.append(default)
+    CanvasWindow._commit_placing(w, 30.0, 40.0)
+    assert calls == [(30.0, 40.0)]
+
+
+def test_commit_placing_group_usa_a_posicao_clicada():
+    w = _make_win()
+    w._placing_spec = {"kind": "group"}
+    calls = []
+    w._create_group = lambda default=None: calls.append(default)
+    CanvasWindow._commit_placing(w, 50.0, 60.0)
+    assert calls == [(50.0, 60.0)]
+
+
+def test_commit_placing_filetree_usa_a_posicao_clicada():
+    w = _make_win()
+    w._placing_spec = {"kind": "filetree"}
+    calls = []
+    w._create_file_tree = lambda default=None: calls.append(default)
+    CanvasWindow._commit_placing(w, 70.0, 80.0)
+    assert calls == [(70.0, 80.0)]
+
+
+@pytest.mark.parametrize(
+    "kind,expected",
+    [
+        ("shell", (420.0, 220.0)),
+        ("agent", (420.0, 220.0)),
+        ("note", (200.0, 110.0)),
+        ("group", (600.0, 360.0)),
+        ("filetree", (300.0, 360.0)),
+    ],
+)
+def test_placing_size_por_tipo(kind, expected):
+    w = _make_win()
+    w._placing_spec = {"kind": kind}
+    assert CanvasWindow._placing_size(w) == expected
+
+
 def test_commit_placing_sem_spec_pendente_nao_cria_nada():
     w = _make_win()
     calls = []

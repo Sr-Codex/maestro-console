@@ -789,14 +789,14 @@ class CanvasWindow:
         )
         cbmap = {
             "newterm": self._open_new_terminal_dialog,
-            "filetree": self._create_file_tree,
+            "filetree": lambda: self._start_placing({"kind": "filetree"}),
             "workspaces": self._open_workspaces_dialog,
             "run_team": self._run_team,
             "handoff": self._open_handoff_dialog,
-            "note": self._create_note,
+            "note": lambda: self._start_placing({"kind": "note"}),
             "floors": self._open_floors_dialog,
             "routines": self._open_routines_dialog,
-            "group": self._create_group,
+            "group": lambda: self._start_placing({"kind": "group"}),
             "team": self._open_team_dialog,
         }
         return spec, cbmap
@@ -4305,7 +4305,8 @@ class CanvasWindow:
         if self._placing_spec is not None and self._placing_cursor is not None:
             camx, camy = self._cam  # prévia fantasma também precisa de superfície pra desenhar
             px, py = self._placing_cursor[0] - camx, self._placing_cursor[1] - camy
-            rects.append((px, py, px + BASE_W * z, py + BASE_H * z))
+            pw, ph = self._placing_size()
+            rects.append((px, py, px + pw * z, py + ph * z))
         if not rects:
             return None
         x0 = min(r[0] for r in rects)
@@ -4390,7 +4391,8 @@ class CanvasWindow:
             return
         camx, camy = self._cam
         x, y = self._placing_cursor[0] - camx, self._placing_cursor[1] - camy
-        w, h = BASE_W * z, BASE_H * z
+        pw, ph = self._placing_size()
+        w, h = pw * z, ph * z
         cr.save()
         cr.set_source_rgba(0.55, 0.75, 1.0, 0.6)
         cr.set_line_width(2.0)
@@ -4819,7 +4821,28 @@ class CanvasWindow:
             self._new_shell_terminal(default=(bx, by))
         elif spec["kind"] == "agent":
             self._new_agent_terminal(spec["base"], default=(bx, by))
+        elif spec["kind"] == "note":
+            self._create_note(default=(bx, by))
+        elif spec["kind"] == "group":
+            self._create_group(default=(bx, by))
+        elif spec["kind"] == "filetree":
+            self._create_file_tree(default=(bx, by))
         self.plane.queue_draw()
+
+    # Regra de arquitetura do canvas (AGENTS.md): TODO elemento criado pela cápsula
+    # principal nasce por clique-pra-posicionar — nunca por algoritmo adivinhando uma
+    # posição livre. Tamanho da prévia fantasma por tipo de item.
+    _PLACING_SIZES = {
+        "shell": (BASE_W, BASE_H),
+        "agent": (BASE_W, BASE_H),
+        "note": (NOTE_W_DEFAULT, NOTE_H_DEFAULT),
+        "group": (600.0, 360.0),  # espelha o default de Groups.create
+        "filetree": (300.0, 360.0),  # espelha o fallback de _cairo_bounds/_item_size p/ "ft"
+    }
+
+    def _placing_size(self) -> tuple[float, float]:
+        kind = self._placing_spec["kind"] if self._placing_spec else "shell"
+        return self._PLACING_SIZES.get(kind, (BASE_W, BASE_H))
 
     def _new_shell_terminal(self, default: tuple[float, float] | None = None) -> str | None:
         nid = self._unique_nid("shell")
@@ -4929,7 +4952,7 @@ class CanvasWindow:
     def _ft_root(self) -> str:
         return self._project_dir or (str(self.repo) if self.repo else str(Path.home()))
 
-    def _create_file_tree(self):
+    def _create_file_tree(self, default: tuple[float, float] | None = None):
         root = self._ft_root()
         n = 1
         while f"ft-{n}" in self._ft_frames:
@@ -4958,7 +4981,7 @@ class CanvasWindow:
         box.append(head)
         box.append(scroller)
         frame.set_child(box)
-        default = self._next_node_default()
+        default = default or self._next_node_default()
         self._ft_base[fid] = default
         self.plane.put(frame, 0, 0)
         self._place(frame, default, self.model.zoom())
@@ -5006,11 +5029,15 @@ class CanvasWindow:
         self.plane.queue_draw()
         self._mm_refresh()
 
-    def _create_note(self):
+    def _create_note(self, default: tuple[float, float] | None = None):
         if self.notes is None:
             return
-        n = len(self.note_frames)
-        note = self.notes.create("Nota", "", x=120 + n * 40, y=320 + n * 40)
+        if default is not None:
+            x, y = default
+        else:
+            n = len(self.note_frames)
+            x, y = 120 + n * 40, 320 + n * 40
+        note = self.notes.create("Nota", "", x=x, y=y)
         self._add_note_widget(note)
 
     def _add_note_widget(self, note):
@@ -5506,10 +5533,10 @@ class CanvasWindow:
         self._group_user_sized.add(g.id)
         self._autofit_group(g.id)
 
-    def _create_group(self) -> None:
+    def _create_group(self, default: tuple[float, float] | None = None) -> None:
         if self.groups is None:
             return
-        x, y = self._next_node_default()
+        x, y = default if default is not None else self._next_node_default()
         g = self.groups.create(x=float(x), y=float(y))
         self._load_group(g)
         self._resize_plane()
