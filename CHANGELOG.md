@@ -16,6 +16,9 @@ colega)` retornava `True`) antes de corrigir.
   Autoridade nunca deriva da fiação, reafirmando ADR-17/18.
 - **Testes:** 2 testes existentes corrigidos (autoridade esperada era `líder`, virou `manager`/
   nenhuma) + 1 teste novo de regressão (`_own_recruit(líder, colega)` deve ser `False`).
+- **ADR-21:** o princípio virou decisão arquitetural registrada — `_recruited_by` (linhagem de
+  autoridade) só se ESCREVE em recrutamento real, nunca como efeito colateral de fiação visual;
+  fecha o lado da escrita do invariante que o ADR-17/18 cobriam na leitura.
 - 596 testes (system) + 6 live opt-in, ruff limpo, boot smoke real sem traceback.
 
 ## [0.51.0] — Orquestração de equipe (Fase D): comportamento de líder de grupo
