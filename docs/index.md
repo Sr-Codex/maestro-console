@@ -11,7 +11,7 @@
 | [`ADR.md`](ADR.md) | Decisões arquiteturais (ADR-1..20), versionado, imutável. |
 | [`STATUS.md`](STATUS.md) | Estado atual / o que foi entregue (resumo + ponteiros). |
 | [`13-maestro-mode.md`](13-maestro-mode.md) | **Feature (atual):** Maestro mode seguro + auto-aprovação + cabo headless (ADR-16..20). |
-| [`14-plano-orquestracao-equipe.md`](14-plano-orquestracao-equipe.md) | **Plano cirúrgico:** orquestração de equipe — **Fases A+B entregues** (v0.47.0/v0.48.0): Team Templates + materializador (FAB) e `maestri team` por linguagem natural (confirmação humana obrigatória). Editor visual de template em aberto. |
+| [`14-plano-orquestracao-equipe.md`](14-plano-orquestracao-equipe.md) | **Plano cirúrgico:** orquestração de equipe — **Fases A+B entregues** (v0.47.0/v0.48.0): Team Templates + materializador (FAB) e `maestri team` por linguagem natural (confirmação humana obrigatória). **Fase C** (editor visual) e **Fase D** (líder de grupo/delegate mode) planejadas, ainda não implementadas. |
 | [`uconsole.md`](uconsole.md) | Contexto do hardware (CM4) — atual. |
 | [`../AGENTS.md`](../AGENTS.md) · [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Regras de processo (atemporais). |
 

@@ -2,9 +2,10 @@
 
 > **Plano de implementação** para retomar em SESSÃO NOVA (a sessão de origem ficou grande).
 > Autossuficiente: um agente com acesso ao repo + memória consegue executar daqui.
-> Data: 2026-07-01 (atualizado no mesmo dia com 2ª rodada de pesquisa, §2.1) · PT-BR · Precede o
-> código (protocolo: analisar→pesquisar→**validar/plano**→codar).
-> Feature aprovada pelo usuário; **fasear: Fase A primeiro** (determinística), depois Fase B (NL).
+> Data: 2026-07-01 (atualizado 2026-07-02 com Fase B implementada + Fases C/D planejadas) · PT-BR
+> · Precede o código (protocolo: analisar→pesquisar→**validar/plano**→codar).
+> Feature aprovada pelo usuário; fases: **A** (determinística, ✅) → **B** (NL, ✅) → **C** (editor
+> visual, planejada) → **D** (comportamento de líder de grupo, planejada).
 
 ## 0. Como retomar (faça primeiro)
 1. Confirmar que o **PR #44** (auto-approve + fixes) foi mergeado; senão, alinhar com o usuário.
@@ -208,4 +209,85 @@ limpo, CHANGELOG + bump + PR #45 mergeado (v0.47.0).
 
 **Fase B** ✅: comando `team` (NL→JSON→confirma→materializa) + skill do manager ensinando o schema +
 guard-rails reaplicados + testes (gates, roteamento, decisão, anti-confused-deputy no `manager`).
-</content>
+
+## 11. Plano cirúrgico — FASE C (editor visual de templates)
+
+**Objetivo:** hoje um template custom só se cria/edita mexendo direto no JSON em
+`~/.config/maestro-console/team_templates.json` — gap conhecido desde a Fase A. A Fase C fecha isso:
+criar/editar/duplicar/excluir um `TeamTemplate` inteiro (grupos + membros) pela UI do `_open_team_dialog`.
+
+### 11.1 — Diálogo de edição do template
+- Estender `_open_team_dialog()`: botão **"Novo template"** (ao lado de Montar/Excluir) e **"Editar"**
+  por linha (só custom — built-in é só-leitura, "Duplicar" clona pra editar uma cópia).
+- Novo `_team_edit_dialog(tpl: TeamTemplate | None, on_saved)` (espelha `_role_edit_dialog`, docs/14 §5.A3
+  já previa isso): campo nome/descrição do template; lista de **grupos** (nome, cor, líder — combo com
+  os papéis já adicionados nesse grupo); dentro de cada grupo, lista de **membros** (nome do papel,
+  agente claude/codex, instrução — `Gtk.TextView` como no `_role_edit_dialog`, cor do badge).
+- Botões "+ grupo" / "+ membro" / remover grupo / remover membro — mexem numa cópia em memória do
+  `TeamTemplate` (dataclasses são `frozen`; construir um novo objeto a cada edição via `dataclasses.replace`
+  ou reconstruir as listas, não mutar in-place).
+- **Salvar**: `validate_team_template(built)` antes de persistir (mesma validação da Fase A — rejeita
+  grupo sem membro, papel sem instrução etc., com a mensagem de erro na cara do usuário, não um traceback).
+  `self._save_team_templates([...])` (já existe, filtra built-ins automaticamente).
+- **Placeholders**: campo de texto livre — o editor NÃO precisa entender `{projeto}` estruturalmente,
+  só validar que chaves `{` `}` fecham (aviso, não bloqueio) — a substituição já é tolerante
+  (`.format_map` com `_SafeDict`, engine/team_templates.py).
+
+### 11.2 — Testes Fase C
+- Unit (engine, se alguma lógica nova entrar em `team_templates.py`): nenhuma esperada (reusa
+  `validate_team_template`/`to_dict`/`from_dict` já testados).
+- Unit (canvas, mockando GTK como em `tests/test_team_materialize.py`): construir o `TeamTemplate` a
+  partir de uma sequência de "adicionar grupo"/"adicionar membro"/"remover" e verificar o resultado final
+  bate com o esperado, e que `validate_team_template` recusa antes de chamar `_save_team_templates`.
+- Runtime: criar um template do zero pela UI, montar ele (Fase A), fechar/reabrir o app e confirmar que
+  o template persistiu (regra "abre igual fechou").
+
+### 11.3 — Definition of done (Fase C)
+Criar/editar/duplicar/excluir template pela UI sem tocar no JSON manualmente; validação antes de salvar;
+testado (unit + runtime); ruff limpo; CHANGELOG + bump + PR.
+
+## 12. Plano cirúrgico — FASE D (comportamento de líder de grupo / delegate mode)
+
+**Objetivo:** o campo `GroupSpec.leader` já existe no schema desde a Fase A (§3), mas **sem
+comportamento** — hoje todo membro do grupo conecta direto ao orquestrador (ou fica solto, se
+top-level), como se não houvesse líder. A pesquisa da Fase A (§2.1, Magentic-One/OpenAI Manager
+pattern) recomenda: **grupo é uma caixa-preta coordenada pelo próprio líder**, não um bando de membros
+soltos reportando pra fora individualmente.
+
+### 12.1 — Mudança na fiação de cabos (`_materialize_team`)
+- Se `group.leader` aponta pro nome de um membro real do grupo:
+  - **Orquestrador (se houver `manager`) ↔ LÍDER** (só 1 cabo pra fora do grupo).
+  - **LÍDER ↔ cada outro membro do grupo** (cabos internos) — não mais orquestrador↔todos.
+  - Sem `manager` (nível principal, FAB): líder vira o "T1" do grupo — outros membros conectam nele, o
+    líder não conecta em ninguém externo (igual ao humano ser T1 hoje pro grupo inteiro).
+- Se `group.leader` é `None` (grupos v1 sem líder continuam válidos): comportamento ATUAL não muda
+  (todos conectam direto no orquestrador/soltos) — **retrocompatível**, não é obrigatório todo grupo
+  ter líder.
+- `_recruited_by`/linhagem (autoridade host-only, ADR-17/18): o líder passa a ser o `_recruited_by` dos
+  outros membros do MESMO grupo (não o orquestrador externo) — importante pra profundidade da árvore e
+  pra `_own_recruit` continuar correto se o líder algum dia puder `dismiss`/`reassign` seus colegas de
+  grupo (**decisão a confirmar na implementação**: dar ao líder poderes de `maestri` sobre o próprio
+  grupo, ou deixar só a fiação visual/lineage sem poder de comando extra — recomendação: começar SEM
+  poder de comando extra, só a fiação, e reavaliar depois de usar na prática).
+- Líder **não** ganha Maestro mode automaticamente (isso continua sendo um toggle humano explícito,
+  ADR-17 "autoridade nunca de campo preenchido pelo agente/spec") — a fiação de cabo é só visual/lineage,
+  não outorga capacidade de recrutar.
+
+### 12.2 — Guard-rails (não regredir ADR-17/18)
+- Nada muda nos tetos (`MAESTRO_FLEET_CAP`, tamanho de grupo, profundidade) — a mudança é só QUEM liga
+  em QUEM, não quantos.
+- Se `leader` no JSON (Fase B, agente) não bater com nenhum `member.name` do grupo, **erro de validação**
+  (estender `validate_team_template` ou uma checagem em `_materialize_team`) — não silenciosamente
+  ignorar o campo.
+
+### 12.3 — Testes Fase D
+- Unit (canvas): grupo com líder → líder conecta no orquestrador/T1, outros conectam no líder (não no
+  orquestrador); grupo sem líder → comportamento atual inalterado (regressão); `leader` inválido (nome
+  que não existe no grupo) → recusa antes de criar nada.
+- Runtime: montar um template com líder ao vivo e conferir visualmente a fiação dos cabos.
+
+### 12.4 — Definition of done (Fase D)
+`GroupSpec.leader` com comportamento real de fiação (líder = ponto único de conexão do grupo);
+retrocompatível com grupos sem líder; validação de `leader` inválido; testado (unit + runtime); ruff
+limpo; CHANGELOG + bump + PR.
+
