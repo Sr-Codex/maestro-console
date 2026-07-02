@@ -3,10 +3,25 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
-## [0.49.0] — Montar equipe também vira clique-pra-posicionar
-> Branch aberta direto de `main` (v0.48.0), em paralelo a PR #48 (Fase C) e #49 (Fase D) que também
-> bumpam pra 0.49.0 — quem mergear por último precisa rebasear pra 0.50.0 (já sinalizado nesses PRs).
+## [0.50.0] — Orquestração de equipe (Fase C): editor visual de templates
+> Branch aberta direto de `main` (v0.48.0), em paralelo ao PR #51 (que mergeou primeiro como
+> v0.49.0) — como sinalizado lá, rebaseando a versão pra v0.50.0 aqui.
 
+Fecha o gap conhecido desde a Fase A: criar/editar/duplicar/excluir um `TeamTemplate` (grupos +
+membros) inteiro pela UI, sem tocar no JSON manualmente.
+- **`_team_edit_dialog`** (template) + **`_team_group_edit_dialog`** (grupo, aninhado): nome/
+  descrição/grupos do template; nome/cor/líder/membros do grupo; membro = papel + agente
+  (claude/codex) + instrução.
+- **`_save_team_from_staging`**: lógica extraída (build via `to_dict`/`from_dict` do rascunho
+  editável + `validate_team_template` + persiste) — testável sem GTK, espelha
+  `_apply_team_decision` da Fase B. Erro de validação aparece na tela, não crasha.
+- FAB "🧩 Montar equipe": botão **"+ Novo template"**; linhas custom ganham **"Editar"**;
+  linhas built-in ganham **"Duplicar"** (clona pra editar uma cópia, já que built-in é
+  só-leitura).
+- `_color_picker_row` extraído (reusado por `_role_edit_dialog`/`_team_group_edit_dialog`) —
+  elimina bloco duplicado flagrado pelo SonarCloud.
+
+## [0.49.0] — Montar equipe também vira clique-pra-posicionar
 Generaliza o padrão de clique-pra-posicionar (AGENTS.md § "Cápsulas de UI do canvas", item 5) pro
 fluxo "Montar equipe" do FAB — removendo a exceção que existia até aqui (docs/14 §13).
 - `do_montar` agora entra em modo de posicionamento (`_start_placing`) em vez de materializar
