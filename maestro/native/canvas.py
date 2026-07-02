@@ -5723,6 +5723,7 @@ class CanvasWindow:
                                     x=gx, y=gy, w=float(gw), h=float(gh))
             self._load_group(g)
             groups_created += 1
+            member_nids: dict[str, str] = {}  # nome do papel -> nid, DENTRO deste grupo
             for i, member in enumerate(group.members):
                 col, row = i % cols, i // cols
                 px = gx + GROUP_PAD + col * (card_w + GROUP_PAD)
@@ -5737,10 +5738,26 @@ class CanvasWindow:
                 self._force_node_rect(nid, px, py, card_w, card_h)
                 self.model.set_node_cfg(nid, "role", member.name)  # nome p/ display/badge/HUD
                 self._apply_role_spec(nid, member)  # instrução REAL do template (não a lib)
+                member_nids[member.name] = nid
+                self._respawn_node(nid)
+            # Fiação de cabos (Fase D, docs/14 §12): grupo COM líder vira caixa-preta — o
+            # líder é o único ponto de conexão pra fora (orquestrador/T1 ↔ líder ↔ os demais
+            # membros do grupo). Grupo SEM líder: comportamento anterior inalterado (todos
+            # conectam direto no orquestrador/T1) — retrocompatível.
+            leader_nid = member_nids.get(group.leader) if group.leader else None
+            if leader_nid is not None:
                 if manager:
+                    self._recruited_by[leader_nid] = manager
+                    self.edges.add(manager, leader_nid)
+                for nid in member_nids.values():
+                    if nid == leader_nid:
+                        continue
+                    self._recruited_by[nid] = leader_nid
+                    self.edges.add(leader_nid, nid)
+            elif manager:
+                for nid in member_nids.values():
                     self._recruited_by[nid] = manager
                     self.edges.add(manager, nid)
-                self._respawn_node(nid)
             self._autofit_group(g.id)
             self._persist_group(g.id)  # WYSIWYG: reabre igual fechou
             gx += gw + gap

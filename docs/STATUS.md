@@ -1,8 +1,8 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-02 · v0.50.0**.
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-02 · v0.51.0**.
 > **Fontes de verdade canônicas:** [`CHANGELOG.md`](../CHANGELOG.md) (histórico completo
-> v0.1.0→v0.50.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..20). Este arquivo resume o
+> v0.1.0→v0.51.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..20). Este arquivo resume o
 > estado; em caso de divergência, o CHANGELOG/ADR mandam. Os artefatos em `_bmad-output/`
 > são o **planejamento do MVP** (histórico, congelado) — ver [`docs/index.md`](index.md).
 
@@ -50,7 +50,7 @@
 - **Auto-aprovação** (ADR-19): Maestro mode / toggle "Permissão total" por nó → o CLI roda sem prompts
   (o bwrap é o confinamento). **Cabo por headless** por padrão (ADR-20): resposta completa + contexto.
 
-### Orquestração de equipe — Fases A+B+C (v0.47.0/v0.48.0/v0.50.0), ver [`docs/14-plano-orquestracao-equipe.md`](14-plano-orquestracao-equipe.md)
+### Orquestração de equipe — Fases A+B+C+D (v0.47.0→v0.51.0), ver [`docs/14-plano-orquestracao-equipe.md`](14-plano-orquestracao-equipe.md)
 - **Team Templates** (`engine/team_templates.py`): `TeamTemplate`→`GroupSpec`(+`leader` schema)→
   `AgentSpec`(=`Role`), placeholders (`{projeto}`), persistência atômica, built-ins.
 - **`_materialize_team()`**: monta Grupos do canvas + recruta os membros DENTRO de cada um (grid,
@@ -67,6 +67,9 @@
 - **Editor visual de template** (Fase C, v0.50.0): `_team_edit_dialog`/`_team_group_edit_dialog` —
   criar/editar/duplicar/excluir grupos+membros pela UI (`_save_team_from_staging` valida antes de
   persistir); FAB ganhou "+ Novo template"/"Editar"/"Duplicar".
+- **Líder de grupo** (Fase D, v0.51.0): grupo com `leader` vira caixa-preta coordenada por ele
+  (orquestrador/T1 ↔ líder ↔ demais membros); sem líder, comportamento anterior inalterado.
+  Líder não ganha poder de comando extra nem Maestro mode automático.
 
 ## O que NÃO está feito (lacunas conhecidas)
 - **Medidor de custo/tokens + teto de orçamento** — diferencial-âncora de `docs/08`; parser/ledger
@@ -79,15 +82,11 @@
   validação semântica plena e **egress allow-list de rede** — adiados, com controles
   compensatórios (caps + kill-switch + HITL + auditoria).
 - **SSH remoto (Fase 7 do Editar Terminal)** — ainda não iniciado.
-- **Orquestração de equipe — Fase D** (comportamento de líder de grupo/delegate mode) — planejada
-  em `docs/14` §12; o campo `GroupSpec.leader` existe no schema desde a Fase A (e já é editável
-  pela UI da Fase C), mas sem comportamento ainda (todos os membros conectam direto no
-  orquestrador, líder ou não).
 
 ## Stack / device
 - **Linux aarch64** (Kali) no **ClockworkPi uConsole / CM4**; **Python ≥3.11**.
 - Canvas: **GTK4 + VTE-gtk4** (PyGObject), python do sistema. Engine: venv.
-- **588 testes** (pytest) + live opt-in (bwrap: socket-em-sandbox, drill do kill-switch); lint **ruff**.
+- **594 testes** (pytest) + live opt-in (bwrap: socket-em-sandbox, drill do kill-switch); lint **ruff**.
 
 ## Como navegar a documentação
 - **Estado atual:** este arquivo. · **Histórico de versões:** `CHANGELOG.md`. · **Decisões:** `docs/ADR.md`.

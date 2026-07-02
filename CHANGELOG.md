@@ -3,6 +3,18 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.51.0] — Orquestração de equipe (Fase D): comportamento de líder de grupo
+`GroupSpec.leader` existia no schema desde a Fase A, mas sem comportamento. Agora um grupo COM
+líder vira uma caixa-preta coordenada por ele — não mais um bando de membros soltos reportando
+individualmente pra fora.
+- **`_materialize_team`**: com líder, só ele conecta no orquestrador (ou vira o T1 do grupo, sem
+  orquestrador); os demais membros do grupo conectam no LÍDER, não pra fora. Sem líder,
+  comportamento anterior inalterado (retrocompatível).
+- **`validate_team_template`** (engine, compartilhado por Fases A/B/C): recusa ANTES de criar
+  qualquer coisa se `leader` apontar pra um nome que não é membro do grupo.
+- Líder **não** ganha poder de comando extra sobre os colegas nem Maestro mode automático —
+  autoridade continua só por toggle humano explícito (ADR-17); a mudança é só a fiação de cabo.
+
 ## [0.50.0] — Orquestração de equipe (Fase C): editor visual de templates
 > Branch aberta direto de `main` (v0.48.0), em paralelo ao PR #51 (que mergeou primeiro como
 > v0.49.0) — como sinalizado lá, rebaseando a versão pra v0.50.0 aqui.
@@ -31,7 +43,6 @@ fluxo "Montar equipe" do FAB — removendo a exceção que existia até aqui (do
 - `_materialize_team(spec, *, manager=None, origin=None)`: com `origin` (clique humano), usa essa
   posição; sem `origin` (Fase B, `maestri team`, sem clique possível), continua no cálculo
   automático de área livre de sempre — **única exceção que resta** ao padrão de clique.
-
 ## [0.48.0] — Orquestração de equipe (Fase B): montar equipe por linguagem natural
 Um manager em Maestro mode agora monta uma equipe inteira **descrevendo em linguagem natural**, sem
 precisar recrutar um por um — mas a materialização nunca acontece sem confirmação humana explícita

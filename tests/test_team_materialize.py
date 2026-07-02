@@ -391,6 +391,60 @@ def test_team_layout_size_soma_grupos_lado_a_lado():
     assert th == max(g1h, g2h)
 
 
+def test_materialize_grupo_com_leader_lider_conecta_no_manager_outros_no_lider(tmp_path):
+    """Fase D (docs/14 §12): grupo com líder vira caixa-preta — só o líder conecta pra
+    fora (orquestrador); os demais membros conectam no líder, não no orquestrador."""
+    w, created = _make_win(tmp_path)
+    spec = TeamTemplate(name="t", groups=[GroupSpec(
+        name="G", leader="coder",
+        members=[
+            Role("coder", "claude", "implemente"),
+            Role("reviewer", "codex", "revise"),
+            Role("qe", "codex", "teste"),
+        ],
+    )])
+    result = CanvasWindow._materialize_team(w, spec, manager="mgr")
+    assert result["ok"]
+    nid_by_role = {w.model.node_cfg(nid, "role"): nid for nid, _d in created}
+    leader_nid = nid_by_role["coder"]
+    assert w._recruited_by[leader_nid] == "mgr"
+    assert ("mgr", leader_nid) in w.edges.list()
+    for role in ("reviewer", "qe"):
+        nid = nid_by_role[role]
+        assert w._recruited_by[nid] == leader_nid
+        assert (leader_nid, nid) in w.edges.list()
+        assert ("mgr", nid) not in w.edges.list()  # NÃO conecta direto no orquestrador
+
+
+def test_materialize_grupo_com_leader_sem_manager_lider_fica_solto_como_t1(tmp_path):
+    """Sem orquestrador (FAB/humano): o líder não conecta em ninguém externo — ele É o
+    T1 do grupo; os outros membros ainda conectam nele."""
+    w, created = _make_win(tmp_path)
+    spec = TeamTemplate(name="t", groups=[GroupSpec(
+        name="G", leader="coder",
+        members=[Role("coder", "claude", "implemente"), Role("reviewer", "codex", "revise")],
+    )])
+    result = CanvasWindow._materialize_team(w, spec)  # sem manager=
+    assert result["ok"]
+    nid_by_role = {w.model.node_cfg(nid, "role"): nid for nid, _d in created}
+    leader_nid = nid_by_role["coder"]
+    assert leader_nid not in w._recruited_by
+    assert w._recruited_by[nid_by_role["reviewer"]] == leader_nid
+    assert (leader_nid, nid_by_role["reviewer"]) in w.edges.list()
+
+
+def test_materialize_grupo_sem_leader_mantem_comportamento_anterior(tmp_path):
+    """Regressão: grupo SEM líder continua com todo mundo conectando direto no
+    orquestrador (comportamento de antes da Fase D, inalterado)."""
+    w, created = _make_win(tmp_path)
+    spec = _template([["coder", "reviewer"]])  # sem leader (GroupSpec.leader=None default)
+    result = CanvasWindow._materialize_team(w, spec, manager="mgr")
+    assert result["ok"]
+    for nid, _d in created:
+        assert w._recruited_by[nid] == "mgr"
+        assert ("mgr", nid) in w.edges.list()
+
+
 def test_materialize_sem_groups_recusa(tmp_path):
     w, created = _make_win(tmp_path)
     w.groups = None

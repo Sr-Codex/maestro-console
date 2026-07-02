@@ -98,6 +98,13 @@ def validate_team_template(template: TeamTemplate) -> None:
                 raise TeamTemplateValidationError(f"papel {m.name!r} sem agente")
             if not m.instruction.strip():
                 raise TeamTemplateValidationError(f"papel {m.name!r} sem instrução")
+        if g.leader and g.leader not in {m.name for m in g.members}:
+            # Fase D (docs/14 §12): líder precisa ser um papel REAL do próprio grupo — um
+            # nome solto (typo, ou vindo de um JSON de agente na Fase B) não pode virar
+            # autoridade silenciosamente ignorada.
+            raise TeamTemplateValidationError(
+                f"grupo {g.name!r} tem líder {g.leader!r} que não é um membro do grupo"
+            )
 
 
 # -- Placeholders (`{projeto}` etc.) — chave ausente NÃO quebra (fica literal) --
