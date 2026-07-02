@@ -206,19 +206,20 @@ def test_materialize_forca_tamanho_mesmo_com_tamanho_persistido_orfao(tmp_path):
     vizinhos dentro do mesmo grupo. `_force_node_rect` precisa sobrescrever o tamanho,
     não só a posição."""
     w, created = _make_win(tmp_path)
-    w.model.sizes["claude-1"] = (740.0, 640.0)  # tamanho "órfão" simulado (resize antigo)
+    w.model.sizes["claude-1"] = (999.0, 999.0)  # tamanho "órfão" simulado (resize antigo)
     spec = _template([["coder", "reviewer", "qe"]])  # 3 lado a lado no grid
     result = CanvasWindow._materialize_team(w, spec)
     assert result["ok"]
     nid = created[0][0]
     assert nid == "claude-1"
-    assert w._node_size[nid] == (BASE_W, BASE_H)
-    assert w.model.sizes[nid] == (BASE_W, BASE_H)  # persistido foi sobrescrito
+    card = (CanvasWindow.MAESTRO_TEAM_CARD_W, CanvasWindow.MAESTRO_TEAM_CARD_H)
+    assert w._node_size[nid] == card
+    assert w.model.sizes[nid] == card  # persistido foi sobrescrito
     # com o tamanho forçado, os 3 cards do grid não se tocam (col a col)
     positions = [w._base_pos[n] for n, _d in created]
     xs = sorted(p[0] for p in positions)
-    assert xs[1] - xs[0] >= BASE_W  # espaço horizontal >= a largura real do card
-    assert xs[2] - xs[1] >= BASE_W
+    assert xs[1] - xs[0] >= card[0]  # espaço horizontal >= a largura real do card
+    assert xs[2] - xs[1] >= card[0]
 
 
 def test_materialize_escreve_instrucao_real_no_workspace_nao_so_o_nome(tmp_path):

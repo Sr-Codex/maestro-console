@@ -5283,6 +5283,11 @@ class CanvasWindow:
     # -- Orquestração de equipe (Fase A, docs/14): materializa um TeamTemplate inteiro --
     MAESTRO_TEAM_GROUP_HARD_CAP = 8  # anti "agentes demais" por grupo (§8, mesmo teto do HITL)
     MAESTRO_TEAM_GROUP_WARN = 5  # acima disso, avisar (não bloquear) — recomendado é 3-4
+    # tamanho do card no grid da equipe — maior que o BASE_W×BASE_H genérico (420×220):
+    # nesse tamanho dava pra ver o card, mas não pra ler o conteúdo do terminal (achado ao
+    # vivo). Calibrado no tamanho que o usuário validou (terminal nº8 da sessão de teste).
+    MAESTRO_TEAM_CARD_W = 500.0
+    MAESTRO_TEAM_CARD_H = 520.0
 
     @staticmethod
     def _team_templates_path() -> Path:
@@ -5371,12 +5376,13 @@ class CanvasWindow:
         gx, gy = float(ox), float(oy)
         gap = GROUP_PAD * 2
         groups_created = agents_created = 0
+        card_w, card_h = self.MAESTRO_TEAM_CARD_W, self.MAESTRO_TEAM_CARD_H
         for group in spec.groups:
             cols = min(3, max(1, len(group.members)))
             rows = -(-len(group.members) // cols)  # ceil sem importar math
-            gw = max(GROUP_MIN_W, GROUP_PAD * 2 + cols * BASE_W + (cols - 1) * GROUP_PAD)
+            gw = max(GROUP_MIN_W, GROUP_PAD * 2 + cols * card_w + (cols - 1) * GROUP_PAD)
             gh_content = (
-                GROUP_PAD + GROUP_TITLE_H + rows * BASE_H
+                GROUP_PAD + GROUP_TITLE_H + rows * card_h
                 + (rows - 1) * GROUP_PAD + GROUP_PAD_BOTTOM
             )
             gh = max(GROUP_MIN_H, gh_content)
@@ -5386,8 +5392,8 @@ class CanvasWindow:
             groups_created += 1
             for i, member in enumerate(group.members):
                 col, row = i % cols, i // cols
-                px = gx + GROUP_PAD + col * (BASE_W + GROUP_PAD)
-                py = gy + GROUP_PAD + GROUP_TITLE_H + row * (BASE_H + GROUP_PAD)
+                px = gx + GROUP_PAD + col * (card_w + GROUP_PAD)
+                py = gy + GROUP_PAD + GROUP_TITLE_H + row * (card_h + GROUP_PAD)
                 nid = self._new_agent_terminal(member.agent, default=(px, py))
                 if nid is None:
                     self._audit("team_materialize_partial", template=spec.name, group=group.name,
@@ -5395,7 +5401,7 @@ class CanvasWindow:
                     continue
                 agents_created += 1
                 # nunca herda posição/tamanho persistido antigo (id reciclado/órfão)
-                self._force_node_rect(nid, px, py, float(BASE_W), float(BASE_H))
+                self._force_node_rect(nid, px, py, card_w, card_h)
                 self.model.set_node_cfg(nid, "role", member.name)  # nome p/ display/badge/HUD
                 self._apply_role_spec(nid, member)  # instrução REAL do template (não a lib)
                 if manager:
