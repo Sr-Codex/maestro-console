@@ -5579,7 +5579,7 @@ class CanvasWindow:
         try:
             tpl = TeamTemplate.from_dict(staging)
             validate_team_template(tpl)
-        except (TeamTemplateValidationError, KeyError, TypeError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError) as exc:  # TeamTemplateValidationError < ValueError
             return False, str(exc)
         skip = {n for n in (original_name, tpl.name) if n}
         updated = [t for t in self._team_templates() if t.name not in skip]
@@ -5787,6 +5787,7 @@ class CanvasWindow:
         """Editor de UM grupo (nome/cor/líder/membros) — Fase C, docs/14 §11. Chamado de
         dentro de `_team_edit_dialog`; ao Salvar, devolve o grupo atualizado via callback
         (não toca o disco — só o template inteiro persiste, no Salvar de fora)."""
+        NO_LEADER = "(nenhum)"
         win, box = self._dialog(f"Grupo — {group_state.get('name') or 'novo'}")
         win.set_default_size(460, -1)
 
@@ -5836,7 +5837,7 @@ class CanvasWindow:
 
         def refresh_leader_combo():
             leader_combo.remove_all()
-            leader_combo.append_text("(nenhum)")
+            leader_combo.append_text(NO_LEADER)
             names = [w[0].get_text().strip() for w in member_widgets]
             for n in names:
                 if n:
@@ -5908,7 +5909,7 @@ class CanvasWindow:
                     "color": mcolor,
                 })
             leader_text = leader_combo.get_active_text()
-            leader = leader_text if leader_text and leader_text != "(nenhum)" else None
+            leader = leader_text if leader_text and leader_text != NO_LEADER else None
             updated = {
                 "name": name_e.get_text().strip(),
                 "color": color["hex"],
