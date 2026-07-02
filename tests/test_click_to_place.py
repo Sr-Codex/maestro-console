@@ -14,6 +14,8 @@ pytest.importorskip("gi")  # canvas usa PyGObject; o .venv é gi-free → roda n
 # antes do `from gi.repository import Gtk` abaixo, evitando o PyGIWarning de versão não fixada.
 from maestro.native.canvas import CanvasWindow  # noqa: E402, I001
 from gi.repository import Gtk  # noqa: E402, I001
+from maestro.engine.team_templates import GroupSpec, TeamTemplate  # noqa: E402
+from maestro.engine.teams import Role  # noqa: E402
 
 
 def _make_win():
@@ -104,6 +106,29 @@ def test_commit_placing_filetree_usa_a_posicao_clicada():
     w._create_file_tree = lambda default=None: calls.append(default)
     CanvasWindow._commit_placing(w, 70.0, 80.0)
     assert calls == [(70.0, 80.0)]
+
+
+def test_commit_placing_team_usa_a_posicao_clicada_spec_e_manager():
+    """Montar equipe (docs/14) agora segue o mesmo padrão de clique-pra-posicionar: o
+    bloco inteiro da equipe nasce onde o humano clicou, não num cálculo automático."""
+    w = _make_win()
+    spec = TeamTemplate(name="t", groups=[GroupSpec(name="G", members=[Role("a", "claude", "x")])])
+    w._placing_spec = {"kind": "team", "spec": spec, "manager": "mgr-1"}
+    calls = []
+    w._do_materialize_team = lambda s, *, manager=None, origin=None: calls.append(
+        (s, manager, origin)
+    )
+    CanvasWindow._commit_placing(w, 90.0, 100.0)
+    assert calls == [(spec, "mgr-1", (90.0, 100.0))]
+    assert w._placing_spec is None  # modo encerra após criar
+
+
+def test_placing_size_team_usa_o_layout_dinamico_do_template():
+    w = _make_win()
+    spec = TeamTemplate(name="t", groups=[GroupSpec(name="G", members=[Role("a", "claude", "x")])])
+    w._placing_spec = {"kind": "team", "spec": spec}
+    w._team_layout_size = lambda s: (777.0, 333.0)
+    assert CanvasWindow._placing_size(w) == (777.0, 333.0)
 
 
 @pytest.mark.parametrize(

@@ -72,6 +72,7 @@ from ..engine.roles import (  # noqa: E402
 from ..engine.state.store import Store  # noqa: E402
 from ..engine.team_templates import (  # noqa: E402
     BUILTIN_TEAM_TEMPLATES,
+    GroupSpec,
     TeamTemplate,
     TeamTemplateValidationError,
     default_team_templates_path,
@@ -4827,6 +4828,8 @@ class CanvasWindow:
             self._create_group(default=(bx, by))
         elif spec["kind"] == "filetree":
             self._create_file_tree(default=(bx, by))
+        elif spec["kind"] == "team":
+            self._do_materialize_team(spec["spec"], manager=spec.get("manager"), origin=(bx, by))
         self.plane.queue_draw()
 
     # Regra de arquitetura do canvas (AGENTS.md): TODO elemento criado pela cápsula
@@ -4841,7 +4844,12 @@ class CanvasWindow:
     }
 
     def _placing_size(self) -> tuple[float, float]:
-        kind = self._placing_spec["kind"] if self._placing_spec else "shell"
+        if not self._placing_spec:
+            return (BASE_W, BASE_H)
+        kind = self._placing_spec["kind"]
+        if kind == "team":
+            # tamanho DINÂMICO (depende do template) — não cabe no dict estático de baixo.
+            return self._team_layout_size(self._placing_spec["spec"])
         return self._PLACING_SIZES.get(kind, (BASE_W, BASE_H))
 
     def _new_shell_terminal(self, default: tuple[float, float] | None = None) -> str | None:
@@ -5612,10 +5620,43 @@ class CanvasWindow:
         self._item_resize_apply("node", nid, x, y, w, h)
         self._item_resize_persist("node", nid, x, y, w, h)
 
-    def _materialize_team(self, spec: TeamTemplate, *, manager: str | None = None) -> dict:
+    def _team_group_footprint(self, group: GroupSpec) -> tuple[float, float, int, int]:
+        """(gw, gh, cols, rows) que o retângulo do grupo vai ocupar pra materializar `group` —
+        mesmo grid usado por `_materialize_team` e pela prévia fantasma de "Montar equipe"
+        (clique-pra-posicionar, AGENTS.md § Cápsulas de UI, item 5)."""
+        card_w, card_h = self.MAESTRO_TEAM_CARD_W, self.MAESTRO_TEAM_CARD_H
+        cols = min(3, max(1, len(group.members)))
+        rows = -(-len(group.members) // cols)  # ceil sem importar math
+        gw = max(GROUP_MIN_W, GROUP_PAD * 2 + cols * card_w + (cols - 1) * GROUP_PAD)
+        gh_content = (
+            GROUP_PAD + GROUP_TITLE_H + rows * card_h
+            + (rows - 1) * GROUP_PAD + GROUP_PAD_BOTTOM
+        )
+        gh = max(GROUP_MIN_H, gh_content)
+        return (gw, gh, cols, rows)
+
+    def _team_layout_size(self, spec: TeamTemplate) -> tuple[float, float]:
+        """Tamanho TOTAL (w,h) do bloco que `_materialize_team` vai ocupar pra este spec —
+        usado pra dimensionar a prévia fantasma do modo "clique pra posicionar"."""
+        gap = GROUP_PAD * 2
+        total_w = 0.0
+        max_h = 0.0
+        for group in spec.groups:
+            gw, gh, _cols, _rows = self._team_group_footprint(group)
+            total_w += gw + gap
+            max_h = max(max_h, gh)
+        if total_w > 0:
+            total_w -= gap  # sem gap sobrando depois do último grupo
+        return (total_w, max_h)
+
+    def _materialize_team(self, spec: TeamTemplate, *, manager: str | None = None,
+                           origin: tuple[float, float] | None = None) -> dict:
         """Cria os Grupos do canvas + recruta os membros DENTRO de cada grupo, com papéis e
         cabos (docs/14 §5.A2). Ação do HUMANO via FAB (ou já confirmada pelo humano na Fase B)
-        -> NÃO passa pelo rate-limit de agente. Devolve um resultado compacto (nunca levanta)."""
+        -> NÃO passa pelo rate-limit de agente. `origin`, se dado, é a posição CLICADA pelo
+        humano (clique-pra-posicionar); sem `origin`, cai no cálculo automático de área livre
+        (usado pela Fase B, que não tem um clique humano de posicionamento). Devolve um
+        resultado compacto (nunca levanta)."""
         empty = {"ok": False, "groups": 0, "agents": 0, "warnings": []}
         if self.groups is None or self.controller is None or not self._ask_bus_dir:
             return {**empty, "error": "orquestrador/grupos indisponíveis"}
@@ -5643,20 +5684,16 @@ class CanvasWindow:
             if len(g.members) > self.MAESTRO_TEAM_GROUP_WARN
         ]
 
-        ox, oy = self._free_region_origin()
-        gx, gy = float(ox), float(oy)
+        if origin is not None:
+            gx, gy = float(origin[0]), float(origin[1])
+        else:
+            ox, oy = self._free_region_origin()
+            gx, gy = float(ox), float(oy)
         gap = GROUP_PAD * 2
         groups_created = agents_created = 0
         card_w, card_h = self.MAESTRO_TEAM_CARD_W, self.MAESTRO_TEAM_CARD_H
         for group in spec.groups:
-            cols = min(3, max(1, len(group.members)))
-            rows = -(-len(group.members) // cols)  # ceil sem importar math
-            gw = max(GROUP_MIN_W, GROUP_PAD * 2 + cols * card_w + (cols - 1) * GROUP_PAD)
-            gh_content = (
-                GROUP_PAD + GROUP_TITLE_H + rows * card_h
-                + (rows - 1) * GROUP_PAD + GROUP_PAD_BOTTOM
-            )
-            gh = max(GROUP_MIN_H, gh_content)
+            gw, gh, cols, _rows = self._team_group_footprint(group)
             g = self.groups.create(title=group.name, color=group.color or "blue",
                                     x=gx, y=gy, w=float(gw), h=float(gh))
             self._load_group(g)
@@ -5701,8 +5738,9 @@ class CanvasWindow:
         box.append(ok)
         dlg.present()
 
-    def _do_materialize_team(self, spec: TeamTemplate, *, manager: str | None = None) -> None:
-        result = self._materialize_team(spec, manager=manager)
+    def _do_materialize_team(self, spec: TeamTemplate, *, manager: str | None = None,
+                              origin: tuple[float, float] | None = None) -> None:
+        result = self._materialize_team(spec, manager=manager, origin=origin)
         if not result["ok"]:
             self._team_result_dialog(f"Não deu pra montar: {result['error']}")
             return
@@ -5757,7 +5795,9 @@ class CanvasWindow:
             manager = choices[idx - 1][0] if idx > 0 else None
             win.destroy()
             parent_win.destroy()
-            self._do_materialize_team(rendered, manager=manager)
+            # clique-pra-posicionar (AGENTS.md § Cápsulas de UI, item 5): humano escolhe
+            # onde o BLOCO inteiro da equipe nasce, em vez de um algoritmo decidir.
+            self._start_placing({"kind": "team", "spec": rendered, "manager": manager})
 
         montar.connect("clicked", do_montar)
         foot.append(cancel)

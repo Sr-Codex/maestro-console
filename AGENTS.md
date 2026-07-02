@@ -42,9 +42,13 @@ Padrão de toolbar do canvas nativo, decidido pelo usuário:
    posicionamento automático ad-hoc por feature. *Motivo:* tentar corrigir sobreposição com
    algoritmo (viewport-aware, força posição/tamanho contra id órfão) precisou de 4 rodadas de
    correção e ainda colidia na prática — deixar o humano apontar é simples e sempre certo.
-   **Exceção (decisão do usuário):** fluxos SEM clique humano possível (recrutar por agente via
-   `maestri recruit`, `_materialize_team`/Montar Equipe que cria vários de uma vez) continuam
-   com o posicionamento automático — só corrigido pra não herdar posição/tamanho de um id
+   **Generalizado pra "Montar equipe":** o bloco inteiro da equipe (todos os grupos+membros)
+   nasce onde o humano clica — prévia fantasma dimensionada dinamicamente pelo layout do
+   template (`_team_layout_size`/`_team_group_footprint`), `origin` propagado até
+   `_materialize_team`. **Única exceção que resta (decisão do usuário):** fluxo SEM clique
+   humano possível — recrutar por agente via `maestri recruit`/`maestri team` (Fase B,
+   confirmação humana mas sem ponto de clique no canvas) — continua com o posicionamento
+   automático (`_free_region_origin`), só corrigido pra não herdar posição/tamanho de um id
    reciclado/órfão, sem garantia de zero sobreposição.
 
 ## Como rodar/testar
