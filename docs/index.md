@@ -32,6 +32,8 @@
 | [`11-pesquisa-canvas-infinito-gpu.md`](11-pesquisa-canvas-infinito-gpu.md) | Já **auto-corrigido** (nota no topo): resolvido no CM4 (v0.24). |
 | [`12-pesquisa-cabo-fisica.md`](12-pesquisa-cabo-fisica.md) | **Atual** — casa com v0.34/ADR-14. |
 | [`16-pesquisa-diferenciais-n8n-frameworks-agente.md`](16-pesquisa-diferenciais-n8n-frameworks-agente.md) | Research (2026-07-02): n8n + BMAD/GSD/Beast Mode/Claude Code Agent Teams/gstack/CrewAI — diferenciais pro painel visual estilo n8n. |
+| [`17-pesquisa-comunidade-melhorias.md`](17-pesquisa-comunidade-melhorias.md) | Research (2026-07-02): mineração de comunidade (Opus 4.8 + Codex) — dicas de usuários (Maestri + Vibe Kanban/Claude Squad) p/ um gestor visual de agentes. Tema: *less babysitting*. |
+| [`18-plano-estado-por-no.md`](18-plano-estado-por-no.md) | **Plano cirúrgico:** sistema de estado por nó / "precisa de você" (#1 da pesquisa) — **Blocos 1+2 ENTREGUES em v0.52.0** (PR #56): estado "aguardando" + ícones Lucide + atenção-união + minimapa. Bloco 3 (monitor padrão-ON) pendente. |
 
 ## ⚠️ Roadmaps & auditorias com DEFASAGEM (ler com a nota datada no topo)
 | Doc | Cuidado |
