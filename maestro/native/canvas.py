@@ -1622,7 +1622,7 @@ class CanvasWindow:
         som) quando o terminal para de produzir output, estando fora de foco."""
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         chk = Gtk.CheckButton(label="Monitorar atividade")
-        chk.set_active(bool(self.model.node_cfg(nid, "monitor")))
+        chk.set_active(self._monitor_default_on(nid))  # reflete o EFETIVO (padrão-ON p/ agente)
         box.append(chk)
         hint = Gtk.Label(
             label="Avisa (dot 'aguardando' + notificação) quando o terminal PARA de produzir "
@@ -1643,7 +1643,8 @@ class CanvasWindow:
 
         def apply():
             on = chk.get_active()
-            self.model.set_node_cfg(nid, "monitor", "1" if on else "")
+            # tri-estado: ao SALVAR vira explícito ("1"/"0") — sai do default-por-tipo
+            self.model.set_node_cfg(nid, "monitor", "1" if on else "0")
             self.model.set_node_cfg(nid, "monitor_ms", secs.get_text().strip() or "1.5")
             self.model.set_node_cfg(nid, "monitor_sound", "1" if snd.get_active() else "")
             self._set_node_monitor(nid, on)
@@ -2144,7 +2145,7 @@ class CanvasWindow:
             auto = self._auto_shortcut(nid)
             if auto:
                 self.model.set_node_cfg(nid, "shortcut", auto)
-        if self.model.node_cfg(nid, "monitor"):  # monitorar atividade persistido (Fase 4)
+        if self._monitor_default_on(nid):  # monitor de atividade (Fase 4): padrão-ON p/ agente
             self._set_node_monitor(nid, True)
         self._renumber_nodes()  # atualiza os números de posição (Ctrl+Shift+N) [A.2]
         self._mm_refresh()  # C1: novo nó aparece no minimapa
@@ -2919,6 +2920,21 @@ class CanvasWindow:
             if spec.get("nid") == nid:
                 return spec.get("base") or nid
         return None
+
+    def _node_is_agent(self, nid: str) -> bool:
+        """True se o nó é um AGENTE de IA (não um shell) — fonte: `kind` do roster do canvas.
+        Conservador: kind ausente/desconhecido = NÃO agente (shell fica opt-in, sem monitor
+        marcando 'waiting' à toa num bash ocioso). Base do monitor padrão-ON (Bloco 3)."""
+        for spec in self.model.node_roster():
+            if spec.get("nid") == nid:
+                return spec.get("kind") == "agent"
+        return False
+
+    def _monitor_default_on(self, nid: str) -> bool:
+        """Estado EFETIVO do monitor de atividade, com tri-estado da cfg 'monitor':
+        "1"=on · "0"=off explícito · ""=default (ON p/ nó-agente, OFF p/ shell)."""
+        mon = self.model.node_cfg(nid, "monitor")
+        return mon == "1" or (mon == "" and self._node_is_agent(nid))
 
     def _rebuild_agent_argv(self, nid: str) -> None:
         """Recomputa o argv bwrap do agente (ex.: mudou o auto_approve) e atualiza _base_argv,

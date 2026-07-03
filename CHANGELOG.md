@@ -3,6 +3,18 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.53.0] — feat(canvas): monitor de atividade padrão-ON nos nós-agente (Bloco 3 do estado por nó)
+Fecha o `docs/18` (Bloco 3): o "aguardando (é sua vez)" agora aparece **sozinho** em todo
+nó-AGENTE, sem você precisar ligar o monitor na mão — que era o que faltava pra o v0.52.0 entregar
+de verdade o "menos babá" pra agentes interativos.
+- **Detecção de agente por `kind` do roster** (`_node_is_agent`) — **conservador**: kind
+  ausente/desconhecido = NÃO agente (shell fica opt-in; um bash ocioso nunca vira "waiting" à toa).
+- **Tri-estado da cfg `monitor`** (`_monitor_default_on`): `"1"`=on · `"0"`=off explícito ·
+  `""`=default (ON p/ agente, OFF p/ shell). Ao salvar no editor vira explícito ("1"/"0").
+- **Som continua OFF por padrão** — o padrão-ON avisa só com o dot visual.
+- **Testes:** `tests/test_monitor_default.py` (detecção agente/shell + tri-estado + explícito vence
+  default) — métodos reais, mocka só o model. Suite verde, ruff limpo, boot smoke sem traceback.
+
 ## [0.52.0] — feat(canvas): estado por nó "precisa de você" + ícones Lucide (pesquisa de comunidade #1)
 Puxado do `docs/18` (o #1 da pesquisa de comunidade `docs/17` — o pedido mais universal da
 categoria: "uma sessão fica esperando input sem você notar"). A análise achou que ~85% já existia
