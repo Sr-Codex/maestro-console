@@ -1,0 +1,337 @@
+<style>
+  :root{
+    color-scheme: light dark;
+    --bg:#f2f5f2; --surface:#ffffff; --surface-2:#f8faf8;
+    --ink:#191f1c; --ink-soft:#586159; --ink-faint:#8a938c;
+    --line:#e2e7e3; --rule:#edf1ed;
+
+    --green:#1c7a4a; --green-bg:#e9f4ed; --green-edge:#c3decd;
+    --blue:#2360ad;  --blue-bg:#e9f0fa;  --blue-edge:#c5d7ee;
+    --amber:#a06c15; --amber-bg:#f6efda; --amber-edge:#e6d2a2;
+
+    --maxw:1060px;
+    --font: "Iowan Old Style", "Palatino Linotype", ui-sans-serif, system-ui, sans-serif;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0e110f; --surface:#161a17; --surface-2:#1b201c;
+      --ink:#e9ede9; --ink-soft:#a0a9a2; --ink-faint:#6f7872;
+      --line:#292f2a; --rule:#222722;
+      --green:#5ec48a; --green-bg:#152a1e; --green-edge:#2c4936;
+      --blue:#6ea9ee;  --blue-bg:#15243a;  --blue-edge:#2c456a;
+      --amber:#e2ac4e; --amber-bg:#2a2110; --amber-edge:#4a3b1d;
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f2f5f2; --surface:#ffffff; --surface-2:#f8faf8;
+    --ink:#191f1c; --ink-soft:#586159; --ink-faint:#8a938c;
+    --line:#e2e7e3; --rule:#edf1ed;
+    --green:#1c7a4a; --green-bg:#e9f4ed; --green-edge:#c3decd;
+    --blue:#2360ad;  --blue-bg:#e9f0fa;  --blue-edge:#c5d7ee;
+    --amber:#a06c15; --amber-bg:#f6efda; --amber-edge:#e6d2a2;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e110f; --surface:#161a17; --surface-2:#1b201c;
+    --ink:#e9ede9; --ink-soft:#a0a9a2; --ink-faint:#6f7872;
+    --line:#292f2a; --rule:#222722;
+    --green:#5ec48a; --green-bg:#152a1e; --green-edge:#2c4936;
+    --blue:#6ea9ee;  --blue-bg:#15243a;  --blue-edge:#2c456a;
+    --amber:#e2ac4e; --amber-bg:#2a2110; --amber-edge:#4a3b1d;
+  }
+
+  *{box-sizing:border-box;}
+  body{margin:0;}
+  .page{
+    max-width:var(--maxw); margin:0 auto; padding:clamp(1.2rem,4vw,3rem) clamp(1rem,4vw,2rem) 4rem;
+    background:var(--bg); color:var(--ink);
+    font-family:var(--sans); font-size:16px; line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ---------- masthead ---------- */
+  .masthead{border-bottom:1px solid var(--line); padding-bottom:1.6rem; margin-bottom:2rem;}
+  .eyebrow{
+    font-family:var(--mono); font-size:.72rem; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--ink-faint); margin:0 0 .7rem;
+  }
+  h1{
+    font-family:var(--font); font-weight:600; font-size:clamp(1.8rem,4.5vw,2.7rem);
+    line-height:1.08; letter-spacing:-.01em; text-wrap:balance; margin:0 0 .6rem;
+  }
+  .lede{font-size:1.05rem; color:var(--ink-soft); max-width:60ch; margin:0;}
+  .lede b{color:var(--ink); font-weight:600;}
+
+  /* ---------- legend ---------- */
+  .legend{display:grid; grid-template-columns:repeat(3,1fr); gap:.8rem; margin:0 0 2.6rem;}
+  @media (max-width:680px){ .legend{grid-template-columns:1fr;} }
+  .chipcard{
+    background:var(--surface); border:1px solid var(--line); border-radius:12px;
+    border-top:3px solid var(--accent); padding:.9rem 1rem;
+  }
+  .chipcard .k{
+    font-family:var(--mono); font-size:.68rem; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--accent); margin:0 0 .3rem;
+  }
+  .chipcard .t{font-weight:650; font-size:.98rem; margin:0 0 .15rem;}
+  .chipcard .d{font-size:.82rem; color:var(--ink-soft); margin:0;}
+
+  /* ---------- lanes ---------- */
+  .lanes{display:flex; flex-direction:column; gap:1.4rem;}
+  .lane{
+    --accent:var(--ink); --accent-bg:var(--surface-2); --accent-edge:var(--line);
+    background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:1.4rem clamp(1rem,3vw,1.8rem) 1.6rem; position:relative; overflow:hidden;
+    opacity:0; transform:translateY(10px); animation:rise .55s cubic-bezier(.2,.7,.3,1) forwards;
+  }
+  .lane::before{content:""; position:absolute; inset:0 auto 0 0; width:4px; background:var(--accent);}
+  .lane--green{--accent:var(--green); --accent-bg:var(--green-bg); --accent-edge:var(--green-edge); animation-delay:.02s;}
+  .lane--blue{--accent:var(--blue);  --accent-bg:var(--blue-bg);  --accent-edge:var(--blue-edge);  animation-delay:.1s;}
+  .lane--amber{--accent:var(--amber);--accent-bg:var(--amber-bg); --accent-edge:var(--amber-edge); animation-delay:.18s;}
+
+  .lane__head{display:flex; flex-wrap:wrap; align-items:baseline; gap:.6rem .9rem; margin-bottom:1.3rem;}
+  .lane__num{
+    font-family:var(--mono); font-size:.8rem; color:var(--accent);
+    background:var(--accent-bg); border:1px solid var(--accent-edge);
+    border-radius:7px; padding:.15rem .5rem; align-self:center;
+  }
+  .lane__title{font-family:var(--font); font-weight:600; font-size:1.3rem; margin:0; letter-spacing:-.01em;}
+  .lane__when{
+    font-family:var(--mono); font-size:.68rem; letter-spacing:.09em; text-transform:uppercase;
+    color:var(--accent); border:1px dashed var(--accent-edge); border-radius:20px;
+    padding:.2rem .6rem; margin-left:auto; align-self:center;
+  }
+  .lane__sub{color:var(--ink-soft); font-size:.92rem; margin:-.6rem 0 1.3rem; max-width:66ch;}
+
+  /* ---------- flow / timeline ---------- */
+  .flow{position:relative; list-style:none; margin:0; padding:0;}
+  .flow::before{content:""; position:absolute; left:6px; top:.5rem; bottom:.5rem; width:2px; background:var(--accent-edge);}
+  .node{position:relative; padding:0 0 1rem 1.9rem; }
+  .node:last-child{padding-bottom:0;}
+  .node::before{
+    content:""; position:absolute; left:1px; top:.5rem; width:12px; height:12px; border-radius:50%;
+    background:var(--accent); box-shadow:0 0 0 4px var(--surface);
+  }
+  .node--dec::before{border-radius:3px; transform:rotate(45deg); top:.55rem;}
+  .node--end::before{width:14px; height:14px; left:0; background:var(--surface); border:3px solid var(--accent); box-shadow:0 0 0 3px var(--surface);}
+
+  .card{
+    background:var(--surface-2); border:1px solid var(--line); border-left:3px solid var(--accent);
+    border-radius:10px; padding:.55rem .8rem;
+  }
+  .card .nid{font-family:var(--mono); font-size:.7rem; color:var(--accent); letter-spacing:.03em; margin-right:.5rem;}
+  .card .lab{font-weight:600; font-size:.96rem;}
+  .card .sub{display:block; color:var(--ink-soft); font-size:.82rem; margin-top:.15rem;}
+  .node--end .card{background:var(--accent-bg); border-left-color:var(--accent);}
+  .node--dec .card{border-left-style:dashed;}
+
+  .branches{margin:.5rem 0 0; display:flex; flex-direction:column; gap:.3rem;}
+  .branch{display:flex; gap:.5rem; align-items:baseline; font-size:.86rem; color:var(--ink-soft);}
+  .branch .yn{
+    font-family:var(--mono); font-size:.66rem; text-transform:uppercase; letter-spacing:.06em;
+    padding:.08rem .4rem; border-radius:5px; flex:none; margin-top:.05rem;
+    background:var(--accent-bg); color:var(--accent); border:1px solid var(--accent-edge);
+  }
+  .branch--loop{color:var(--ink-faint);}
+  .branch--loop .yn{background:transparent;}
+  .branch b{color:var(--ink); font-weight:600;}
+
+  /* ---------- you are here ---------- */
+  .here{
+    margin-top:2.4rem; background:var(--blue-bg); border:1px solid var(--blue-edge);
+    border-radius:16px; padding:1.4rem clamp(1rem,3vw,1.8rem);
+  }
+  .here h2{font-family:var(--font); font-weight:600; font-size:1.25rem; margin:0 0 .3rem; color:var(--ink);}
+  .here p{margin:0 0 1rem; color:var(--ink-soft); font-size:.92rem; max-width:64ch;}
+  .trail{display:flex; flex-wrap:wrap; gap:.4rem; align-items:center;}
+  .step{
+    display:inline-flex; align-items:center; gap:.4rem;
+    background:var(--surface); border:1px solid var(--blue-edge); border-radius:20px;
+    padding:.28rem .7rem; font-size:.82rem;
+  }
+  .step .nid{font-family:var(--mono); font-size:.68rem; color:var(--blue);}
+  .step.now{background:var(--blue); border-color:var(--blue); color:#fff;}
+  .step.now .nid{color:#fff; opacity:.85;}
+  .arrow{color:var(--blue); font-size:.9rem; opacity:.6;}
+
+  footer{margin-top:2.6rem; padding-top:1.2rem; border-top:1px solid var(--line); color:var(--ink-faint); font-size:.8rem;}
+  footer code{font-family:var(--mono); font-size:.76rem; color:var(--ink-soft);}
+
+  @keyframes rise{to{opacity:1; transform:none;}}
+  @media (prefers-reduced-motion:reduce){ .lane{animation:none; opacity:1; transform:none;} }
+</style>
+
+<main class="page">
+  <header class="masthead">
+    <p class="eyebrow">maestro-console · disciplina de desenvolvimento</p>
+    <h1>Como eu construo software sem virar bagunça</h1>
+    <p class="lede">Três pistas que rodam <b>em paralelo</b>. A verde é rara (projeto do zero), a azul é o seu dia a dia, e a âmbar — aprender e trocar de sessão — nunca para.</p>
+  </header>
+
+  <section class="legend">
+    <div class="chipcard lane--green" style="--accent:var(--green)">
+      <p class="k">Pista 1 · rara</p>
+      <p class="t">Construir do zero</p>
+      <p class="d">Terreno vazio: planta → estrutura → cômodos → tarefas. O ciclo BMad completo.</p>
+    </div>
+    <div class="chipcard lane--blue" style="--accent:var(--blue)">
+      <p class="k">Pista 2 · ~90% dos dias</p>
+      <p class="t">Feature no dia a dia</p>
+      <p class="d">A casa já existe: reforma pontual, com branch + PR. Onde você quase sempre está.</p>
+    </div>
+    <div class="chipcard lane--amber" style="--accent:var(--amber)">
+      <p class="k">Pista 3 · sempre</p>
+      <p class="t">Fronteira de sessão</p>
+      <p class="d">O diário de obra: capturar lição na hora e saber a hora de trocar de turno.</p>
+    </div>
+  </section>
+
+  <div class="lanes">
+
+    <!-- ============ VERDE ============ -->
+    <section class="lane lane--green">
+      <div class="lane__head">
+        <span class="lane__num">Pista 1</span>
+        <h2 class="lane__title">Construir uma casa do zero</h2>
+        <span class="lane__when">só projeto novo</span>
+      </div>
+      <p class="lane__sub">Do geral pro específico. Você nunca começa pela pia sem a planta — essa é a espinha do BMad: <b>PRD → Épicos → Stories</b>.</p>
+      <ol class="flow">
+        <li class="node"><div class="card"><span class="nid">G1</span><span class="lab">Brief / Brainstorm</span><span class="sub">problema, público, objetivo — a conversa com o cliente</span></div></li>
+        <li class="node"><div class="card"><span class="nid">G2</span><span class="lab">PRD</span><span class="sub">requisitos e escopo — a <b>planta</b> da casa</span></div></li>
+        <li class="node"><div class="card"><span class="nid">G3</span><span class="lab">Architecture</span><span class="sub">stack, decisões, ADR — a <b>fundação e a estrutura</b></span></div></li>
+        <li class="node"><div class="card"><span class="nid">G4</span><span class="lab">Quebrar em Épicos</span><span class="sub">os <b>cômodos</b> da casa</span></div></li>
+        <li class="node"><div class="card"><span class="nid">G5</span><span class="lab">Escolher próximo Épico</span></div></li>
+        <li class="node"><div class="card"><span class="nid">G6</span><span class="lab">Quebrar Épico em Stories</span><span class="sub">as <b>tarefas</b> do cômodo — pequenas e testáveis</span></div></li>
+        <li class="node"><div class="card"><span class="nid">G7</span><span class="lab">Validar Story</span></div></li>
+        <li class="node"><div class="card"><span class="nid">G8</span><span class="lab">Dev Story</span><span class="sub">implementar + testar</span></div></li>
+        <li class="node node--dec">
+          <div class="card"><span class="nid">G9</span><span class="lab">Code Review OK?</span></div>
+          <div class="branches">
+            <div class="branch branch--loop"><span class="yn">não</span><span>↩ volta pro <b>Dev Story (G8)</b></span></div>
+            <div class="branch"><span class="yn">sim</span><span>segue</span></div>
+          </div>
+        </li>
+        <li class="node node--dec">
+          <div class="card"><span class="nid">G10</span><span class="lab">Mais stories no épico?</span></div>
+          <div class="branches">
+            <div class="branch branch--loop"><span class="yn">sim</span><span>↩ volta pra <b>Quebrar em Stories (G6)</b></span></div>
+            <div class="branch"><span class="yn">não</span><span>segue</span></div>
+          </div>
+        </li>
+        <li class="node"><div class="card"><span class="nid">G11</span><span class="lab">Retrospectiva do Épico</span><span class="sub">lições + ação</span></div></li>
+        <li class="node node--dec">
+          <div class="card"><span class="nid">G12</span><span class="lab">Mais épicos?</span></div>
+          <div class="branches">
+            <div class="branch branch--loop"><span class="yn">sim</span><span>↩ volta pra <b>Escolher Épico (G5)</b></span></div>
+            <div class="branch"><span class="yn">não</span><span>segue</span></div>
+          </div>
+        </li>
+        <li class="node node--end"><div class="card"><span class="nid">G13</span><span class="lab">MVP entregue</span><span class="sub">a casa habitável → alimenta a Pista 3</span></div></li>
+      </ol>
+    </section>
+
+    <!-- ============ AZUL ============ -->
+    <section class="lane lane--blue">
+      <div class="lane__head">
+        <span class="lane__num">Pista 2</span>
+        <h2 class="lane__title">Reformar a casa que já existe</h2>
+        <span class="lane__when">o dia a dia</span>
+      </div>
+      <p class="lane__sub">A parte de baixo (branch → commit → PR → merge) é o <b>Git</b>. Aqui é onde o item #3 (unload) andou — veja o rastro no fim.</p>
+      <ol class="flow">
+        <li class="node"><div class="card"><span class="nid">B1</span><span class="lab">Ideia nova</span></div></li>
+        <li class="node node--dec">
+          <div class="card"><span class="nid">B2</span><span class="lab">É a tarefa de agora?</span></div>
+          <div class="branches">
+            <div class="branch branch--loop"><span class="yn">não</span><span>registrar no <b>backlog</b> (1 linha) → continuar a tarefa atual → ↩ volta</span></div>
+            <div class="branch"><span class="yn">sim</span><span>segue</span></div>
+          </div>
+        </li>
+        <li class="node"><div class="card"><span class="nid">B3</span><span class="lab">Analisar o estado real</span><span class="sub">olhar a parede antes de furar</span></div></li>
+        <li class="node"><div class="card"><span class="nid">B4</span><span class="lab">Planejar a abordagem</span></div></li>
+        <li class="node node--dec">
+          <div class="card"><span class="nid">B5</span><span class="lab">Complexo? muitas partes móveis?</span></div>
+          <div class="branches">
+            <div class="branch"><span class="yn">sim</span><span><b>CONFIRMAR com o usuário</b> antes de codar → segue</span></div>
+            <div class="branch"><span class="yn">não</span><span>segue</span></div>
+          </div>
+        </li>
+        <li class="node"><div class="card"><span class="nid">B6</span><span class="lab">Pesquisar AO VIVO</span><span class="sub">fonte + data — não confiar na memória</span></div></li>
+        <li class="node"><div class="card"><span class="nid">B7</span><span class="lab">Validar a abordagem</span></div></li>
+        <li class="node"><div class="card"><span class="nid">B8</span><span class="lab">Branch curta</span><span class="sub">a partir da <code>main</code> atualizada — a fotocópia</span></div></li>
+        <li class="node"><div class="card"><span class="nid">B9</span><span class="lab">Implementar em passos pequenos</span><span class="sub">+ commits granulares (as fotos)</span></div></li>
+        <li class="node"><div class="card"><span class="nid">B10</span><span class="lab">Testar 100%</span><span class="sub">+ sanity-check por reversão</span></div></li>
+        <li class="node"><div class="card"><span class="nid">B11</span><span class="lab">Lint limpo + suite completa</span></div></li>
+        <li class="node"><div class="card"><span class="nid">B12</span><span class="lab">CHANGELOG + bump de versão + docs</span></div></li>
+        <li class="node"><div class="card"><span class="nid">B13</span><span class="lab">Push + abrir PR</span><span class="sub">o pedido formal: "posso juntar na main?"</span></div></li>
+        <li class="node node--dec">
+          <div class="card"><span class="nid">B14</span><span class="lab">CI verde?</span></div>
+          <div class="branches">
+            <div class="branch branch--loop"><span class="yn">não</span><span>↩ volta pra <b>Implementar (B9)</b></span></div>
+            <div class="branch"><span class="yn">sim</span><span>segue</span></div>
+          </div>
+        </li>
+        <li class="node"><div class="card"><span class="nid">B15</span><span class="lab">Usuário testa e decide o merge</span><span class="sub">a decisão é sempre sua → alimenta a Pista 3</span></div></li>
+        <li class="node node--dec">
+          <div class="card"><span class="nid">B16</span><span class="lab">Fim de fase / feature?</span></div>
+          <div class="branches">
+            <div class="branch"><span class="yn">sim</span><span><b>sugerir revisão do backlog (B17)</b></span></div>
+            <div class="branch branch--loop"><span class="yn">não</span><span>↩ volta pra <b>Ideia nova (B1)</b></span></div>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+    <!-- ============ ÂMBAR ============ -->
+    <section class="lane lane--amber">
+      <div class="lane__head">
+        <span class="lane__num">Pista 3</span>
+        <h2 class="lane__title">O diário de obra</h2>
+        <span class="lane__when">roda o tempo todo</span>
+      </div>
+      <p class="lane__sub">Não é uma fase — é disciplina que roda por baixo das outras duas (alimentada tanto pelo <b>MVP (G13)</b> quanto pelo <b>merge (B15)</b>). Aprender e trocar de turno acontece sempre.</p>
+      <ol class="flow">
+        <li class="node"><div class="card"><span class="nid">S1</span><span class="lab">Aprendizado durante o trabalho</span><span class="sub">um erro evitável, um truque que funcionou</span></div></li>
+        <li class="node"><div class="card"><span class="nid">S2</span><span class="lab">Capturar NA HORA</span><span class="sub">em <code>LESSONS.md</code> / memória — não deixar pra depois</span></div></li>
+        <li class="node node--dec">
+          <div class="card"><span class="nid">S3</span><span class="lab">Checkpoint natural?</span><span class="sub">PR fechou · já compactou 1× · troca de tema</span></div>
+          <div class="branches">
+            <div class="branch branch--loop"><span class="yn">não</span><span>↩ continua, volta pro <b>trabalho (S1)</b></span></div>
+            <div class="branch"><span class="yn">sim</span><span>segue</span></div>
+          </div>
+        </li>
+        <li class="node"><div class="card"><span class="nid">S4</span><span class="lab">Encerrar a sessão</span><span class="sub">bater o ponto</span></div></li>
+        <li class="node"><div class="card"><span class="nid">S5</span><span class="lab">Sessão NOVA: mini-retro</span><span class="sub">lê git log / PRs / CHANGELOG desde o último checkpoint — não tenta lembrar da conversa</span></div></li>
+        <li class="node node--end"><div class="card"><span class="nid">S6</span><span class="lab">Faltou lição? completa e recomeça</span><span class="sub">↩ volta ao início do trabalho</span></div></li>
+      </ol>
+    </section>
+
+  </div>
+
+  <!-- ============ VOCÊ ESTÁ AQUI ============ -->
+  <section class="here">
+    <h2>Você está vivendo a Pista 2 agora</h2>
+    <p>O item #3 (unload de nó) andou exatamente por ela. O rastro real, passo a passo — e onde estamos parados:</p>
+    <div class="trail">
+      <span class="step"><span class="nid">B2</span> backlog → puxado</span>
+      <span class="arrow">→</span>
+      <span class="step"><span class="nid">B3</span> investigate</span>
+      <span class="arrow">→</span>
+      <span class="step"><span class="nid">B6</span> TR (pesquisa)</span>
+      <span class="arrow">→</span>
+      <span class="step"><span class="nid">B7</span> revisão Fable</span>
+      <span class="arrow">→</span>
+      <span class="step"><span class="nid">B8</span> branch</span>
+      <span class="arrow">→</span>
+      <span class="step"><span class="nid">B9</span> commit 9e984f8</span>
+      <span class="arrow">→</span>
+      <span class="step now"><span class="nid">B13</span> abrir PR — decidindo</span>
+    </div>
+  </section>
+
+  <footer>
+    Fonte: <code>docs/fluxograma-dev.md</code> (diagrama Mermaid) · versão visual · maestro-console · 2026-07-03
+  </footer>
+</main>
