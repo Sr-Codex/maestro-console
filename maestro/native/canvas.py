@@ -647,6 +647,8 @@ class CanvasWindow:
             ".state-dot { font-size: 9px; margin-right: 2px; }",  # estado vira um DOT
             # E3: status proativo no card — discreto, à direita do título
             ".node-status { font-size: 10px; color: #9399b2; margin: 0 6px; }",
+            # F1: custo/tokens no header — mesmo padrão discreto do status
+            ".node-cost { font-size: 10px; color: #9399b2; margin: 0 4px; }",
             # B2: rodapé que ensina os atalhos (Zellij-like)
             ".hintbar { font-size: 10px; color: #9399b2; padding: 2px 8px;"
             " background-color: #181825; border-top: 1px solid #313244; }",
@@ -2084,8 +2086,7 @@ class CanvasWindow:
         head._status = status
         head.append(status)
         cost = Gtk.Label(label="")  # F1: custo/tokens acumulados do agente (medidor lean)
-        cost.add_css_class("dim-label")
-        cost.add_css_class("node-cost")
+        cost.add_css_class("node-cost")  # mesmo padrão discreto do .node-status (10px)
         head._cost = cost
         head.append(cost)
         nclose = Gtk.Button(label="✕")
