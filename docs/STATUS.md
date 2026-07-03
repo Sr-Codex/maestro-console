@@ -1,8 +1,8 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-03 · v0.54.0**.
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-03 · v0.55.0**.
 > **Fontes de verdade canônicas:** [`CHANGELOG.md`](../CHANGELOG.md) (histórico completo
-> v0.1.0→v0.54.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..21). Este arquivo resume o
+> v0.1.0→v0.55.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..22). Este arquivo resume o
 > estado; em caso de divergência, o CHANGELOG/ADR mandam. Os artefatos em `_bmad-output/`
 > são o **planejamento do MVP** (histórico, congelado) — ver [`docs/index.md`](index.md).
 
@@ -91,11 +91,12 @@
   `cost_from_tokens` (3 baldes de cache). Claude = `total_cost_usd`; Codex = tabela.
 - **`on_usage`** no orquestrador acumula o uso por agente no `UsageLedger` (persiste) a cada turno
   headless; **display lean por nó** ($ no header, ao vivo via `usage_bus`). Absorve o PR #9.
-- **Falta (Bloco D):** budget cap (soft/hard) — o controle de segurança do ADR-17.
+- **Budget cap** (Bloco D, v0.55.0, ADR-22): teto de $ que avisa (soft) e barra (hard) o gasto;
+  contador monotônico host-side (anti-laundering), barra no `delegate`, HUD + config/reset (botão 💰).
 
 ## O que NÃO está feito (lacunas conhecidas)
-- **Teto de orçamento (budget cap)** — o **medidor** de custo/tokens foi entregue (v0.54.0, F1 A+B+C);
-  falta o **budget cap** (Bloco D) — o controle de segurança do ADR-17.
+- **F1 completo** (v0.52→0.55): medidor + budget cap entregues. Extensões possíveis: teto por-linhagem,
+  estimativa pré-turno, teto de tokens p/ Codex sem preço (ver docs/20 §4).
 - **Rodar agente direto pela nota** — removido temporariamente na v0.37 (método `_run_note` fica).
 - **Hardware CM5** — planejado (16GB); device atual é **CM4** (ver `docs/uconsole.md`).
 - Fases 4–7 do roadmap de canvas (`docs/10`): steering, timeline, diff/commit por agente,

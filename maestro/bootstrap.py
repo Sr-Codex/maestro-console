@@ -11,6 +11,7 @@ import os
 import shutil
 from pathlib import Path
 
+from .engine import budget
 from .engine.adapters.base import load_profiles
 from .engine.logbook import Logbook
 from .engine.orchestrator import Orchestrator, OutputBus, make_agent_ask
@@ -59,6 +60,7 @@ def build_controller(
     usage_bus = OutputBus()  # reusa o bus de 1-assinante: (agent_id, total) → canvas atualiza o $
 
     def _on_usage(agent_id, u):  # u = TOTAL da sessão (do JSONL) → set, não add (evita duplicar)
+        budget.record_spend(store, agent_id, u.cost_usd)  # contador monotônico do budget (D)
         usage_bus.emit(agent_id, usage_ledger.set_total(agent_id, u))
 
     orch = Orchestrator(

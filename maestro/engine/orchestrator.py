@@ -17,6 +17,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from . import budget
 from .envelope import Envelope, EnvelopeState
 from .session import SessionManager
 from .teams import Team
@@ -93,6 +94,22 @@ class Orchestrator:
         self._max_retries = max_retries
 
     async def delegate(self, agent_id: str, task: str, *, task_id: str | None = None) -> Envelope:
+        # F1 Bloco D — HARD budget cap: recusa o turno ANTES de rodar se o gasto contado estourou
+        # o teto. `budget_blocked` NÃO é evento de abuso (não arma o kill-switch) — é estado
+        # permanente pós-hard, não runaway. Best-effort: nunca derruba por erro do próprio check.
+        if self._store is not None:
+            try:
+                if budget.check(self._store) == "hard":
+                    return Envelope(
+                        sender=agent_id, recipient="orchestrator",
+                        message_id=str(uuid.uuid4()), task_id=task_id,
+                        state=EnvelopeState.BLOCKED, task=task,
+                        note=f"budget excedido (${budget.counted_spend(self._store):.2f}) — "
+                             "turno barrado; zere o budget no app pra continuar.",
+                    )
+            except Exception:
+                pass  # medição/leitura falhou → não bloqueia (freio best-effort, não trava tudo)
+
         async def ask1(prompt: str) -> str:
             return await self._ask(agent_id, prompt)
 
