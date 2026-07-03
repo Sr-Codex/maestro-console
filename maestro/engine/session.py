@@ -30,6 +30,11 @@ class SessionManager:
     def _new_id(self) -> str:
         return str(uuid.uuid4())
 
+    def session_id(self, agent_id: str) -> str | None:
+        """Session-id atual do agente (p/ localizar o JSONL de uso — medidor F1). None se ainda
+        não rodou."""
+        return self._store.get_session(agent_id)
+
     def get_or_create_session(self, agent_id: str) -> tuple[str, bool]:
         """Retorna (session_id, is_new). is_new=True só no primeiro uso."""
         sid = self._store.get_session(agent_id)

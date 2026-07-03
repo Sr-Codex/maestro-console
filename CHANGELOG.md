@@ -3,6 +3,28 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.54.0] — feat: F1 medidor de custo/tokens por nó (Blocos A+B+C — "o velocímetro")
+Entrega o **diferencial-âncora** do `docs/08` (dor #1 "custo às cegas") — o medidor que mostra
+quanto cada agente gastou, por nó, ao vivo. Puxado do `docs/19` (plano validado após pesquisa
+profunda de 103 subagentes em repos GitHub reais: ccusage/tokscale/LiteLLM). Absorve e estende o
+PR #9 (`usage.py`).
+- **Preço vendorizado** (`maestro/engine/pricing.json`): subset ESTÁTICO da LiteLLM (só modelos
+  Claude/GPT usados), com header datado + commit SHA da fonte + URL de refresh — isola o volátil
+  (stack durável), **sem depender do pacote `litellm`** (pesado no ARM). Override do usuário via
+  `ui_state`; modelo desconhecido → mostra tokens com marca "sem preço" (não chuta).
+- **Custo:** Claude usa `total_cost_usd` (autoritativo, cache-aware); Codex converte tokens→$ pela
+  tabela (`cost_from_tokens`, 3 baldes de cache). `parse_run_usage` despacha por tipo de agente.
+- **Fiação (`on_usage`):** após cada turno mediado, o orquestrador lê o uso do **JSONL de sessão**
+  do agente (`~/.claude/projects/*.jsonl`, `~/.codex/sessions/**.jsonl`, mapeado por `session_id`) —
+  a fonte REAL que ccusage/tokscale usam, já que o run emite TEXTO (não json). Grava o total no
+  `UsageLedger` (persiste). Best-effort — nunca derruba o caminho de dados.
+- **Display lean por nó:** um número no header (`$0.42` ou `12.3k tok` p/ Codex sem preço),
+  atualizado ao vivo via `usage_bus` (marshalado p/ a main thread).
+- **Testes:** `test_usage.py` (preço/normalização/custo/3-baldes/dispatcher/desconhecido→sem preço)
+  + probe de runtime do display. 513 testes, ruff limpo, boot smoke sem traceback.
+- **Falta (Bloco D, próxima PR):** budget cap (soft pausa-e-confirma / hard barra) — o "limitador",
+  o controle de segurança que o ADR-17 exige.
+
 ## [0.53.0] — feat(canvas): monitor de atividade padrão-ON nos nós-agente (Bloco 3 do estado por nó)
 Fecha o `docs/18` (Bloco 3): o "aguardando (é sua vez)" agora aparece **sozinho** em todo
 nó-AGENTE, sem você precisar ligar o monitor na mão — que era o que faltava pra o v0.52.0 entregar
