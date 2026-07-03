@@ -167,7 +167,7 @@ def test_usage_from_session_sem_id_ou_arquivo_none(tmp_path, monkeypatch):
     assert usage_from_session("claude", "nao-existe") is None
 
 
-def test_make_agent_ask_usa_session_id_e_dispara_on_usage(monkeypatch):
+def test_make_agent_ask_usa_session_id_e_dispara_on_usage(monkeypatch, tmp_path):
     """Caminho REAL pós-fix: o run emite TEXTO; a medição vem do JSONL via session_id →
     usage_from_session → on_usage. Mocka só as fronteiras (CLI/SessionManager/JSONL)."""
     import asyncio
@@ -181,12 +181,13 @@ def test_make_agent_ask_usa_session_id_e_dispara_on_usage(monkeypatch):
 
     class FakeSM:
         async def run_in_session(self, profile, agent_id, prompt, **kw):
+            await asyncio.sleep(0)  # ponto de await (fronteira async real)
             return SimpleNamespace(stdout="texto puro do agente (sem json)")  # run emite TEXTO
 
         def session_id(self, agent_id):
             return "sid-1"
 
-    fake_ws = SimpleNamespace(create=lambda a: "/tmp/ws")
+    fake_ws = SimpleNamespace(create=lambda a: str(tmp_path))
     ask = orch_mod.make_agent_ask(
         FakeSM(), {"B": SimpleNamespace(name="claude")}, fake_ws,
         timeout=5, on_usage=lambda aid, u: captured.append((aid, u)),
