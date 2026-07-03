@@ -58,8 +58,8 @@ def build_controller(
     usage_ledger = UsageLedger(store)  # F1: acumula tokens/custo por agente (persiste no Store)
     usage_bus = OutputBus()  # reusa o bus de 1-assinante: (agent_id, total) → canvas atualiza o $
 
-    def _on_usage(agent_id, u):
-        usage_bus.emit(agent_id, usage_ledger.add(agent_id, u))
+    def _on_usage(agent_id, u):  # u = TOTAL da sessão (do JSONL) → set, não add (evita duplicar)
+        usage_bus.emit(agent_id, usage_ledger.set_total(agent_id, u))
 
     orch = Orchestrator(
         make_agent_ask(

@@ -59,17 +59,77 @@ def cost_from_tokens(
     input_tokens: int, output_tokens: int, model: str, *,
     cache_read: int = 0, cache_write: int = 0, table: dict | None = None,
 ) -> float | None:
-    """Custo em USD a partir de tokens (p/ Codex, que NÃO reporta custo). 3 baldes quando o
-    modelo tem preço de cache (input base · cache-write · cache-read); senão só input+output.
-    **None** se o modelo é desconhecido (mostra tokens com marca 'sem preço' — nunca chuta)."""
+    """Custo em USD por baldes. `input_tokens` = input BASE (não-cacheado); `cache_read`/
+    `cache_write` são SEPARADOS e ADITIVOS — é o formato do JSONL do claude (input excl. cache) e
+    do codex (sem cache). **None** se o modelo é desconhecido (tokens 'sem preço', não chuta)."""
     p = model_price(model, table)
     if p is None:
         return None
-    base_in = max(0, int(input_tokens) - int(cache_read) - int(cache_write))
-    cost = base_in * float(p.get("input", 0.0)) + int(output_tokens) * float(p.get("output", 0.0))
+    cost = int(input_tokens) * float(p.get("input", 0.0))
+    cost += int(output_tokens) * float(p.get("output", 0.0))
     cost += int(cache_read) * float(p.get("cache_read", p.get("input", 0.0)))
     cost += int(cache_write) * float(p.get("cache_write", p.get("input", 0.0)))
     return round(cost, 6)
+
+
+def _iter_jsonl(path: Path):
+    """Itera dicts de um arquivo JSONL (linha inválida = pulada). Silencioso se o arquivo some."""
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                d = _loads(line)
+                if d is not None:
+                    yield d
+    except OSError:
+        return
+
+
+def _claude_session_usage(session_id: str) -> AgentUsage | None:
+    """Soma o uso de um session_id nos JSONL do claude (~/.claude/projects/*/<id>.jsonl). O
+    input_tokens do JSONL é BASE; cache_creation/cache_read são separados → custo por baldes."""
+    base = Path.home() / ".claude" / "projects"
+    hits = list(base.glob(f"*/{session_id}.jsonl")) if base.is_dir() else []
+    if not hits:
+        return None
+    inp = out = cw = cr = 0
+    model = ""
+    for d in _iter_jsonl(hits[0]):
+        if d.get("type") != "assistant":
+            continue
+        msg = d.get("message") or {}
+        u = msg.get("usage")
+        if not isinstance(u, dict):
+            continue
+        inp += _int(u.get("input_tokens"))
+        out += _int(u.get("output_tokens"))
+        cw += _int(u.get("cache_creation_input_tokens"))
+        cr += _int(u.get("cache_read_input_tokens"))
+        model = msg.get("model") or model
+    if not (inp or out or cw or cr):
+        return None
+    cost = cost_from_tokens(inp, out, model, cache_read=cr, cache_write=cw) or 0.0
+    return AgentUsage(inp + cw + cr, out, cost)  # input exibido = total de prompt tokens
+
+
+def _codex_session_usage(session_id: str) -> AgentUsage | None:
+    """Uso de uma sessão do codex (~/.codex/sessions/**/*<id>*.jsonl): maior cumulativo → custo."""
+    base = Path.home() / ".codex" / "sessions"
+    hits = list(base.glob(f"**/*{session_id}*.jsonl")) if base.is_dir() else []
+    if not hits:
+        return None
+    text = "".join(open(hits[0], encoding="utf-8", errors="ignore"))
+    u = parse_codex_cumulative(text)
+    return with_cost(u, _extract_model(text)) if u else None
+
+
+def usage_from_session(agent_name: str, session_id: str | None) -> AgentUsage | None:
+    """Uso ACUMULADO de um agente, lido do JSONL de sessão (a fonte que ccusage/tokscale usam —
+    o run headless emite texto, não JSON, então o stdout não serve). Retorna o TOTAL da sessão."""
+    if not session_id:
+        return None
+    if "codex" in (agent_name or "").lower():
+        return _codex_session_usage(session_id)
+    return _claude_session_usage(session_id)
 
 
 @dataclass(frozen=True)
@@ -210,15 +270,15 @@ class UsageLedger:
         self._store = store
 
     def add(self, agent_id: str, u: AgentUsage) -> AgentUsage:
-        total = self.get(agent_id) + u
+        return self.set_total(agent_id, self.get(agent_id) + u)
+
+    def set_total(self, agent_id: str, total: AgentUsage) -> AgentUsage:
+        """Grava o TOTAL do agente (usado quando a fonte é o JSONL de sessão, que já é cumulativo —
+        somar de novo duplicaria). Persiste no Store."""
         self._store.set_ui(
             f"usage_{agent_id}",
             json.dumps(
-                {
-                    "input": total.input_tokens,
-                    "output": total.output_tokens,
-                    "cost": total.cost_usd,
-                }
+                {"input": total.input_tokens, "output": total.output_tokens, "cost": total.cost_usd}
             ),
         )
         return total

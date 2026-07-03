@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from .envelope import Envelope, EnvelopeState
 from .session import SessionManager
 from .teams import Team
-from .usage import parse_run_usage
+from .usage import usage_from_session
 from .workspace import Workspace
 from .wrapper import request_envelope
 
@@ -271,11 +271,12 @@ def make_agent_ask(
         res = await session_manager.run_in_session(
             profile, agent_id, prompt, workspace=ws, timeout=timeout, on_output=sink
         )
-        if on_usage is not None:  # F1: mede tokens/custo do turno (best-effort)
+        if on_usage is not None:  # F1: mede o uso do agente pelo JSONL de sessão (best-effort)
             try:
-                u = parse_run_usage(res.stdout, getattr(profile, "name", agent_id))
+                sid = session_manager.session_id(agent_id)
+                u = usage_from_session(getattr(profile, "name", agent_id), sid)
                 if u is not None:
-                    on_usage(agent_id, u)
+                    on_usage(agent_id, u)  # TOTAL acumulado da sessão (não delta)
             except Exception:  # medição nunca pode derrubar o caminho de dados
                 pass
         return res.stdout

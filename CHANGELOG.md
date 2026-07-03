@@ -14,8 +14,10 @@ PR #9 (`usage.py`).
   `ui_state`; modelo desconhecido → mostra tokens com marca "sem preço" (não chuta).
 - **Custo:** Claude usa `total_cost_usd` (autoritativo, cache-aware); Codex converte tokens→$ pela
   tabela (`cost_from_tokens`, 3 baldes de cache). `parse_run_usage` despacha por tipo de agente.
-- **Fiação (`on_usage`):** após cada turno headless mediado, o orquestrador mede o uso e acumula no
-  `UsageLedger` (persiste por agente no Store) — best-effort, nunca derruba o caminho de dados.
+- **Fiação (`on_usage`):** após cada turno mediado, o orquestrador lê o uso do **JSONL de sessão**
+  do agente (`~/.claude/projects/*.jsonl`, `~/.codex/sessions/**.jsonl`, mapeado por `session_id`) —
+  a fonte REAL que ccusage/tokscale usam, já que o run emite TEXTO (não json). Grava o total no
+  `UsageLedger` (persiste). Best-effort — nunca derruba o caminho de dados.
 - **Display lean por nó:** um número no header (`$0.42` ou `12.3k tok` p/ Codex sem preço),
   atualizado ao vivo via `usage_bus` (marshalado p/ a main thread).
 - **Testes:** `test_usage.py` (preço/normalização/custo/3-baldes/dispatcher/desconhecido→sem preço)

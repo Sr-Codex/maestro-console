@@ -85,11 +85,13 @@ def test_cost_from_tokens_desconhecido_none():
     assert cost_from_tokens(1000, 500, "modelo-fantasma") is None
 
 
-def test_cost_from_tokens_cache_barato():
-    # cache_read é ~10x mais barato que input base; separar os baldes reduz o custo
-    caro = cost_from_tokens(1000, 0, "gpt-5.5")  # tudo input base
-    barato = cost_from_tokens(1000, 0, "gpt-5.5", cache_read=900)  # 900 vieram de cache
-    assert caro is not None and barato is not None and barato < caro
+def test_cost_from_tokens_baldes_aditivos():
+    # cache_read é ~10x mais barato que input base (a mesma quantidade custa menos)
+    so_base = cost_from_tokens(1000, 0, "gpt-5.5")  # 1000 tokens à taxa de input
+    so_cache = cost_from_tokens(0, 0, "gpt-5.5", cache_read=1000)  # 1000 à taxa de cache_read
+    assert so_base is not None and so_cache is not None and so_cache < so_base
+    combo = cost_from_tokens(1000, 0, "gpt-5.5", cache_read=1000)  # baldes SOMAM (aditivo)
+    assert combo == approx(so_base + so_cache)
 
 
 def test_with_cost_preenche_so_codex():
@@ -134,33 +136,62 @@ def test_parse_run_usage_sem_uso_none():
     assert parse_run_usage("lixo sem json", "claude") is None
 
 
-# --- F1 Bloco B: prova END-TO-END da fiação (ask real → on_usage → custo) ---
+# --- F1: captura pelo JSONL de sessão (a fonte real; o run emite TEXTO, não json) ---
 
-def test_make_agent_ask_dispara_on_usage_com_custo():
-    """O caminho REAL: make_agent_ask.ask() roda o turno, parseia o stdout e chama on_usage
-    com o AgentUsage certo. Mocka só a fronteira (SessionManager/Workspace) — não o método."""
+def test_usage_from_session_claude_le_jsonl(tmp_path, monkeypatch):
+    import json as _json
+
+    from maestro.engine.usage import usage_from_session
+    monkeypatch.setenv("HOME", str(tmp_path))  # ~ → tmp; Path.home() respeita $HOME
+    sid = "sess-abc"
+    d = tmp_path / ".claude" / "projects" / "proj"
+    d.mkdir(parents=True)
+    (d / f"{sid}.jsonl").write_text("\n".join([
+        _json.dumps({"type": "assistant", "message": {"model": "claude-sonnet-5",
+                     "usage": {"input_tokens": 1000, "output_tokens": 200,
+                               "cache_read_input_tokens": 500}}}),
+        _json.dumps({"type": "user", "message": {}}),  # ignorada (não é assistant)
+        _json.dumps({"type": "assistant", "message": {"model": "claude-sonnet-5",
+                     "usage": {"input_tokens": 2000, "output_tokens": 300}}}),
+    ]))
+    u = usage_from_session("claude", sid)
+    assert u.output_tokens == 500  # 200 + 300 somados
+    # base 3000 · output 500 · cache_read 500 (aditivo)
+    assert u.cost_usd == approx(3000 * 3e-06 + 500 * 1.5e-05 + 500 * 3e-07)
+
+
+def test_usage_from_session_sem_id_ou_arquivo_none(tmp_path, monkeypatch):
+    from maestro.engine.usage import usage_from_session
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert usage_from_session("claude", None) is None
+    assert usage_from_session("claude", "nao-existe") is None
+
+
+def test_make_agent_ask_usa_session_id_e_dispara_on_usage(monkeypatch):
+    """Caminho REAL pós-fix: o run emite TEXTO; a medição vem do JSONL via session_id →
+    usage_from_session → on_usage. Mocka só as fronteiras (CLI/SessionManager/JSONL)."""
     import asyncio
     from types import SimpleNamespace
 
-    from maestro.engine.orchestrator import make_agent_ask
+    from maestro.engine import orchestrator as orch_mod
 
     captured = []
+    monkeypatch.setattr(orch_mod, "usage_from_session",
+                        lambda name, sid: AgentUsage(100, 50, 0.3) if sid == "sid-1" else None)
 
-    class FakeSM:  # fronteira: devolve o stdout que o CLI daria
+    class FakeSM:
         async def run_in_session(self, profile, agent_id, prompt, **kw):
-            return SimpleNamespace(stdout=(
-                '{"model":"claude-sonnet-5","total_cost_usd":0.3,'
-                '"usage":{"input_tokens":100,"output_tokens":50}}'))
+            return SimpleNamespace(stdout="texto puro do agente (sem json)")  # run emite TEXTO
 
-    class FakeWS:
-        def create(self, aid):
-            return "/tmp/ws"
+        def session_id(self, agent_id):
+            return "sid-1"
 
-    ask = make_agent_ask(
-        FakeSM(), {"B": SimpleNamespace(name="claude")}, FakeWS(),
+    fake_ws = SimpleNamespace(create=lambda a: "/tmp/ws")
+    ask = orch_mod.make_agent_ask(
+        FakeSM(), {"B": SimpleNamespace(name="claude")}, fake_ws,
         timeout=5, on_usage=lambda aid, u: captured.append((aid, u)),
     )
     out = asyncio.run(ask("B", "oi"))
-    assert "total_cost_usd" in out  # o caminho de dados (stdout) segue intacto
+    assert out == "texto puro do agente (sem json)"  # caminho de dados intacto
     assert captured and captured[0][0] == "B"  # atribuiu ao agente certo
-    assert captured[0][1].cost_usd == approx(0.3)  # custo autoritativo do Claude, medido
+    assert captured[0][1].cost_usd == approx(0.3)  # medido do JSONL (via session_id)

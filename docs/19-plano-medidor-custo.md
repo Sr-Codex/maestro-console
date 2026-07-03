@@ -65,9 +65,12 @@ copiado. (Ver §5, decisões abertas.)
 - `cost_from_tokens(usage, model, table)` — 3 baldes; unknown model → `None` (marca "sem preço").
 - Claude: usar `total_cost_usd` direto. Codex: `cost_from_tokens`.
 
-**Bloco B — fiar no run headless:**
-- No ponto onde o orquestrador roda o turno headless e tem o stdout, chamar `parse_*` +
-  `UsageLedger.add(agent, usage)`. Persiste via `ui_state` `usage_<agente>` (já existe).
+**Bloco B — fiar no run (fonte = JSONL de sessão):**
+- **Achado na implementação (medido):** o run headless emite TEXTO (adapters com `output_args=[]`),
+  então o stdout NÃO tem uso. Fonte correta = o **JSONL de sessão** (o que a pesquisa apontou):
+  `usage_from_session(agente, session_id)` lê `~/.claude/projects/*.jsonl` / `~/.codex/sessions`,
+  soma o uso e calcula o custo pela tabela. Mapeado por `session_id` (o `SessionManager` já rastreia).
+  `on_usage` grava o TOTAL no `UsageLedger` (persiste via `ui_state`).
 
 **Bloco C — display lean por nó:**
 - Um número discreto de **$ acumulado** no header/cápsula contextual do nó (reusa o padrão do dot
