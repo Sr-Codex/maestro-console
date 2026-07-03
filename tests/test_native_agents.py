@@ -31,4 +31,4 @@ def test_agent_argv_interativo_sob_bwrap(monkeypatch):
 
 
 def test_state_colors_tem_todos():
-    assert set(agents.STATE_COLORS) == {"idle", "busy", "blocked", "failed", "done"}
+    assert set(agents.STATE_COLORS) == {"idle", "busy", "waiting", "blocked", "failed", "done"}

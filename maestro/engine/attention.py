@@ -74,6 +74,36 @@ def attention_items(store, *, scan: int = 200) -> list[AttentionItem]:
     return items
 
 
+# Estados VISUAIS do nó que pedem atenção (setados no canvas, ex.: monitor de quietude →
+# "waiting"), independentes do fluxo de envelopes. Ver `attention_nids`.
+ATTENTION_VISUAL_STATES = {"waiting", "blocked", "failed"}
+
+
+def attention_nids(envelope_items, node_states, present) -> list[str]:
+    """União ORDENADA dos nós que precisam de você: (1) agentes cujo envelope mais recente é
+    acionável (`envelope_items` = saída de `attention_items`) + (2) nós cujo ESTADO VISUAL atual
+    (`node_states`: nid→estado) está em `ATTENTION_VISUAL_STATES` — ex.: o monitor de quietude
+    marca "waiting" sem gerar envelope. Dedup preservando ordem (envelope primeiro); filtra por
+    `present` (nids que existem no canvas). gi-free e testável.
+
+    *Por quê:* o contador "⚠ N" e o "pular pro próximo" liam SÓ envelopes, então um agente que
+    parou esperando input (detectado pelo monitor, não por envelope) não entrava na conta.
+    """
+    present = set(present)
+    out: list[str] = []
+    seen: set[str] = set()
+    for it in envelope_items:
+        agent = getattr(it, "agent", it)
+        if agent in present and agent not in seen:
+            seen.add(agent)
+            out.append(agent)
+    for nid, st in node_states.items():
+        if nid in present and nid not in seen and st in ATTENTION_VISUAL_STATES:
+            seen.add(nid)
+            out.append(nid)
+    return out
+
+
 def notify(summary: str, body: str = "", *, sound: bool = True) -> bool:
     """Notificação de desktop (notify-send) + SOM de alerta (sound=True). Retorna False se o
     notify-send está ausente/falha; o som é best-effort independente (não afeta o retorno)."""

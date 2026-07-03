@@ -46,7 +46,8 @@ def test_minimap_layout_mapeia_dois_rects():
 
 def test_state_activity_por_estado():
     assert state_activity("busy") == "trabalhando…"
-    assert state_activity("blocked") == "esperando você"
+    assert state_activity("waiting") == "é sua vez"  # agente parou esperando seu input
+    assert state_activity("blocked") == "bloqueado"
     assert state_activity("done") == "concluído"
     assert state_activity("idle") == ""  # ocioso não mostra nada
     assert state_activity("desconhecido") == ""  # fallback seguro

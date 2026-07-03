@@ -47,7 +47,12 @@ from ..engine.ask_bus import (  # noqa: E402
 )
 from ..engine.ask_router import AskRouter, policy_from_env  # noqa: E402
 from ..engine.ask_sock import SockServer  # noqa: E402
-from ..engine.attention import attention_items, notify  # noqa: E402
+from ..engine.attention import (  # noqa: E402
+    ATTENTION_VISUAL_STATES,
+    attention_items,
+    attention_nids,
+    notify,
+)
 from ..engine.envelope import EnvelopeState  # noqa: E402
 from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
 from ..engine.maestro_audit import append_event, read_events  # noqa: E402
@@ -163,7 +168,7 @@ _RESIZE_CURSOR = {  # borda -> (nome CSS moderno, nome legado X11 p/ temas incom
 }
 PAN_SCROLL_STEP = 90.0  # px de pan por unidade de scroll (SELECT + trackball) — velocidade do pan
 # estado do envelope (passo done) -> estado visual do nó
-_ST_MAP = {"DONE": "done", "BLOCKED": "blocked", "FAILED": "failed", "NEEDS_INPUT": "blocked"}
+_ST_MAP = {"DONE": "done", "BLOCKED": "blocked", "FAILED": "failed", "NEEDS_INPUT": "waiting"}
 # C4: cores das notas (paleta enxuta, ~5; estilo catppuccin p/ casar com o tema)
 NOTE_COLORS = {
     "yellow": "#f9e2af",
@@ -278,11 +283,19 @@ GROUP_CORNER = 16  # quadradinho de resize no canto inf-direito (px de tela)
 GROUP_PAD = 16  # respiro (margem) entre a borda do grupo e os itens contidos (auto-fit)
 GROUP_PAD_BOTTOM = 50  # margem inferior maior (equilibra com o topo, que tem a faixa do título)
 GROUP_MEMBER_FRAC = 0.25  # item conta como "dentro" ao sobrepor >=25% (não precisa 100%)
-# estado: cor + FORMA + tooltip (acessibilidade: não depender só da cor) — UI-1
-_STATE_GLYPH = {"idle": "●", "busy": "◐", "blocked": "▲", "failed": "✕", "done": "✓"}
+# estado: ÍCONE (Lucide) + cor + tooltip (acessibilidade: não depender só da cor) — UI-1.
+# O dot do cabeçalho é um Gtk.Image com o ícone Lucide pré-colorido `maestro-state-<st>`
+# (bundle em maestro/native/icons; cor = STATE_COLORS). Glyph unicode mantido só como
+# fallback/rótulo textual (legendas/testes gi-free).
+_STATE_GLYPH = {
+    "idle": "●", "busy": "◐", "waiting": "⏸", "blocked": "▲", "failed": "✕", "done": "✓",
+}
+_STATE_ICON = {st: f"maestro-state-{st}" for st in
+               ("idle", "busy", "waiting", "blocked", "failed", "done")}
 _STATE_PT = {
     "idle": "ocioso",
     "busy": "ocupado",
+    "waiting": "aguardando (é sua vez)",
     "blocked": "bloqueado",
     "failed": "falhou",
     "done": "concluído",
@@ -477,6 +490,7 @@ class CanvasWindow:
         self._active_edge: tuple[str, str] | None = None
         self._pan: tuple[float, float] | None = None
         self._focused_nid: str | None = None  # terminal em foco (p/ fechar via teclado)
+        self._node_state: dict[str, str] = {}  # estado ATUAL por nó (atenção ∪ visual + minimapa)
         self._mon: dict[str, dict] = {}  # monitorar atividade por-nó (Fase 4): handler/quiet/active
         self._mon_alerted: set[str] = set()  # nós com alerta de atenção ativo (limpa ao focar)
         self._selected: tuple[str, str] | None = None  # (kind, id) selecionado (borda azul)
@@ -702,8 +716,7 @@ class CanvasWindow:
             rules.append(f".palsw-{i} {{ background-color: {hexc}; }}")
         for cname, hexc in NOTE_COLORS.items():  # C4: cores dos GRUPOS (swatch do grupo)
             rules.append(f".notecol-{cname} {{ background-color: {hexc}; color: #1e1e2e; }}")
-        for st, hexc in STATE_COLORS.items():
-            rules.append(f".dot-{st} {{ color: {hexc}; }}")
+        # (o dot de estado virou Gtk.Image com ícone Lucide pré-colorido — sem CSS .dot-* de cor)
         provider = Gtk.CssProvider()
         data = "\n".join(rules)
         if hasattr(provider, "load_from_string"):
@@ -909,8 +922,11 @@ class CanvasWindow:
         bar.append(aa)
         # atenção (status): "⚠ N" quando algo precisa de você
         self._attn_label = Gtk.Label(label="")
-        self._attn_label.set_tooltip_text("itens que precisam de você")
+        self._attn_label.set_tooltip_text("precisam de você — clique p/ pular pro próximo")
         self._attn_label.add_css_class("fab-attn")
+        _attn_click = Gtk.GestureClick()  # clicar no "⚠ N" pula pro próximo nó em atenção
+        _attn_click.connect("released", lambda *_a: self._focus_next_attention())
+        self._attn_label.add_controller(_attn_click)
         bar.append(self._attn_label)
         return bar
 
@@ -1609,7 +1625,7 @@ class CanvasWindow:
         chk.set_active(bool(self.model.node_cfg(nid, "monitor")))
         box.append(chk)
         hint = Gtk.Label(
-            label="Avisa (dot de atenção + notificação + som) quando o terminal PARA de produzir "
+            label="Avisa (dot 'aguardando' + notificação) quando o terminal PARA de produzir "
                   "output, estando fora de foco. Ignora 'pensando' (TUI ocupada).", xalign=0)
         hint.add_css_class("dim-label")
         hint.set_wrap(True)
@@ -1621,11 +1637,15 @@ class CanvasWindow:
         secs.set_text(self.model.node_cfg(nid, "monitor_ms") or "1.5")
         trow.append(secs)
         box.append(trow)
+        snd = Gtk.CheckButton(label="Tocar som ao avisar (padrão: só dot visual)")
+        snd.set_active(bool(self.model.node_cfg(nid, "monitor_sound")))
+        box.append(snd)
 
         def apply():
             on = chk.get_active()
             self.model.set_node_cfg(nid, "monitor", "1" if on else "")
             self.model.set_node_cfg(nid, "monitor_ms", secs.get_text().strip() or "1.5")
+            self.model.set_node_cfg(nid, "monitor_sound", "1" if snd.get_active() else "")
             self._set_node_monitor(nid, on)
 
         applies.append(apply)
@@ -2028,9 +2048,9 @@ class CanvasWindow:
         num_lbl.add_css_class("dim-label")
         frame._num_lbl = num_lbl
         head.append(num_lbl)
-        dot = Gtk.Label(label=_STATE_GLYPH["idle"])  # estado: cor + forma + tooltip (UI-1)
+        dot = Gtk.Image.new_from_icon_name(_STATE_ICON["idle"])  # estado: ÍCONE Lucide (UI-1)
+        dot.set_pixel_size(13)
         dot.add_css_class("state-dot")
-        dot.add_css_class("dot-idle")
         dot.set_tooltip_text(_STATE_PT["idle"])
         head._dot = dot
         head.append(dot)
@@ -2379,9 +2399,8 @@ class CanvasWindow:
         win.present()
 
     def _focus_next_attention(self) -> None:
-        if self._store is None:
-            return
-        ids = [it.agent for it in attention_items(self._store) if it.agent in self.frames]
+        env = attention_items(self._store) if self._store is not None else []
+        ids = attention_nids(env, self._node_state, self.frames)  # envelope ∪ visual
         if not ids:
             return
         start = ids.index(self._focused_nid) + 1 if self._focused_nid in ids else 0
@@ -2802,7 +2821,13 @@ class CanvasWindow:
         items = []
         for nid, (bx, by) in self._base_pos.items():
             nw, nh = self._node_size.get(nid, (BASE_W, BASE_H))
-            items.append((bx, by, nw, nh, (0.55, 0.60, 0.85)))  # nós: azulado
+            st = self._node_state.get(nid, "idle")
+            if st in ATTENTION_VISUAL_STATES:  # realce: nó que precisa de você vira a cor do estado
+                h = STATE_COLORS.get(st, "#f59e0b").lstrip("#")
+                col = tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+            else:
+                col = (0.55, 0.60, 0.85)  # nós: azulado (padrão)
+            items.append((bx, by, nw, nh, col))
         for _id, (bx, by) in self._note_base.items():
             items.append((bx, by, 240, 160, (0.98, 0.89, 0.43)))  # notas: amarelo
         for _id, (bx, by) in self._ft_base.items():
@@ -3077,20 +3102,25 @@ class CanvasWindow:
         head._icon = w
 
     def set_node_state(self, nid: str, state: str) -> None:
-        """Estado do nó vira a COR DE UM DOT no cabeçalho (não inunda o head). UI-1."""
+        """Estado do nó vira um ÍCONE Lucide (pré-colorido) no cabeçalho — cor+forma+tooltip. UI-1.
+        Rastreia o estado em `_node_state` (fonte p/ a atenção ∪ visual e o realce no minimapa) e,
+        quando entra/sai de um estado de atenção, atualiza o "⚠ N" + minimapa."""
+        s = state if state in STATE_COLORS else "idle"
+        prev = self._node_state.get(nid, "idle")
+        self._node_state[nid] = s
         head = self.heads.get(nid)
         dot = getattr(head, "_dot", None) if head is not None else None
-        if dot is None:
-            return
-        s = state if state in STATE_COLORS else "idle"
-        for st in STATE_COLORS:
-            dot.remove_css_class(f"dot-{st}")
-        dot.add_css_class(f"dot-{s}")
-        dot.set_text(_STATE_GLYPH.get(s, "●"))  # forma por estado (não só cor)
-        dot.set_tooltip_text(_STATE_PT.get(s, s))
-        st_lbl = getattr(head, "_status", None)  # E3: status proativo ("fazendo X")
-        if st_lbl is not None:
-            st_lbl.set_text(state_activity(s))
+        if dot is not None:
+            if hasattr(dot, "set_from_icon_name"):  # Gtk.Image (produção)
+                dot.set_from_icon_name(_STATE_ICON.get(s, _STATE_ICON["idle"]))
+            dot.set_tooltip_text(_STATE_PT.get(s, s))
+            st_lbl = getattr(head, "_status", None)  # E3: status proativo ("fazendo X")
+            if st_lbl is not None:
+                st_lbl.set_text(state_activity(s))
+        # atenção ∪ visual: só recomputa quando a transição envolve um estado de atenção
+        # (evita varrer o Store a cada toggle idle↔busy de handoff — barato no CM4).
+        if prev in ATTENTION_VISUAL_STATES or s in ATTENTION_VISUAL_STATES:
+            self._refresh_attention()
 
     # -- modo conexão: criar/remover cabos por clique (V7-S2) --
     def _update_hintbar(self) -> None:
@@ -3472,10 +3502,12 @@ class CanvasWindow:
             st["quiet_id"] = GLib.timeout_add(self._node_monitor_ms(nid), self._mon_quiet, nid)
             return False
         st["active"] = False
-        self.set_node_state(nid, "blocked")  # dot de atenção no cabeçalho
+        self.set_node_state(nid, "waiting")  # "é sua vez": entra no ⚠ N + realce no minimapa
         self._mon_alerted.add(nid)
         name = self.model.node_name(nid, nid)
-        notify(f"maestro: {name} parou", self._mon_summary(text))  # notificação + som
+        # som OFF por padrão (só dot visual); opt-in por nó via node_cfg 'monitor_sound'
+        want_sound = bool(self.model.node_cfg(nid, "monitor_sound"))
+        notify(f"maestro: {name} parou", self._mon_summary(text), sound=want_sound)
         return False
 
     @staticmethod
@@ -6639,16 +6671,25 @@ class CanvasWindow:
     def _refresh_attention(self):
         if self._store is None:
             return True
-        items = attention_items(self._store)
-        current: set = set()
-        for it in items:
-            self.set_node_state(it.agent, _ST_MAP.get(it.state, "blocked"))  # realça o nó
-            key = (it.agent, it.state)
-            current.add(key)
-            if key not in self._notified:  # notifica só o que é novo
-                notify(f"maestro: {it.agent} precisa de você", it.state)
-        self._notified = current  # poda p/ os atuais: sem leak; re-notifica se voltar
-        self._attn_label.set_text(f"⚠ {len(items)}" if items else "")
+        if getattr(self, "_refreshing_attn", False):
+            return True  # reentrância (set_node_state chamou de volta): ignora e evita recursão
+        self._refreshing_attn = True
+        try:
+            items = attention_items(self._store)
+            current: set = set()
+            for it in items:
+                self.set_node_state(it.agent, _ST_MAP.get(it.state, "blocked"))  # realça o nó
+                key = (it.agent, it.state)
+                current.add(key)
+                if key not in self._notified:  # notifica só o que é novo
+                    notify(f"maestro: {it.agent} precisa de você", it.state)
+            self._notified = current  # poda p/ os atuais: sem leak; re-notifica se voltar
+            # "⚠ N" = UNIÃO envelope ∪ estado visual (ex.: monitor de quietude → "waiting")
+            nids = attention_nids(items, self._node_state, self.frames)
+            self._attn_label.set_text(f"⚠ {len(nids)}" if nids else "")
+        finally:
+            self._refreshing_attn = False
+        self._mm_refresh()  # minimapa realça os nós em atenção (cor do estado)
         return True  # repete
 
     def show(self):

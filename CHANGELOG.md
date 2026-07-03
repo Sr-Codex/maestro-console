@@ -3,6 +3,28 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.52.0] — feat(canvas): estado por nó "precisa de você" + ícones Lucide (pesquisa de comunidade #1)
+Puxado do `docs/18` (o #1 da pesquisa de comunidade `docs/17` — o pedido mais universal da
+categoria: "uma sessão fica esperando input sem você notar"). A análise achou que ~85% já existia
+(estados, dot, `attention_items`, "⚠ N", jump, monitor de quietude); esta entrega fecha o último
+quilômetro (Blocos 1+2 do plano):
+- **Estado "aguardando (é sua vez)"** distinto de "bloqueado"/"erro" — o monitor de quietude e o
+  envelope `NEEDS_INPUT` agora caem em `waiting` (âmbar), não mais em `blocked`.
+- **Dot de estado virou ÍCONE Lucide** (padrão elegante pedido pelo usuário): 6 ícones
+  pré-coloridos (`maestro-state-*`, reusando o bundle Lucide + `STATE_COLORS`) no lugar de glyphs
+  unicode — `circle`/`loader-circle`/`circle-pause`/`alert-triangle`/`circle-x`/`circle-check`.
+- **Atenção = união envelope ∪ estado visual** (`attention_nids`): o monitor de quietude marca
+  "waiting" sem gerar envelope, então agora ENTRA no contador "⚠ N" e no "pular pro próximo"
+  (antes só envelopes contavam — desconecto pré-existente corrigido).
+- **Minimapa realça** os nós em atenção com a cor do estado.
+- **Contador "⚠ N" clicável** → pula pro próximo nó que precisa de você.
+- **Toggle de som** por nó no monitor de atividade (som **OFF por padrão** — só dot visual).
+- **Testes:** `attention_nids` (união/dedup/filtro/vazio) + estados atualizados; probe de runtime
+  (system python+gi): ícones encontrados, `Gtk.Image` carrega, `set_node_state` real vira
+  "waiting"/troca ícone, união de atenção. Suite verde, ruff limpo, boot smoke sem traceback.
+- **Fica pra próxima rodada (Bloco 3):** monitor padrão-ON nos nós-agente (precisa distinguir
+  nó-agente de shell bash pra não marcar "waiting" à toa) — hoje o monitor é opt-in por nó.
+
 ## [0.51.1] — fix(canvas): líder de grupo não ganha autoridade de comando sobre os colegas
 Achado por revisão adversarial pós-merge da Fase D (v0.51.0): `_materialize_team` fazia
 `_recruited_by[colega] = líder`, e como a autoridade de `dismiss`/`reassign`/`wire` no sistema
