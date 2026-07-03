@@ -118,9 +118,39 @@ def parse_claude_usage(s) -> AgentUsage | None:
         if d.get("total_cost_usd") is not None
         else (cost_obj or {}).get("total_cost", src.get("total_cost"))
     )
-    if inp == 0 and out == 0 and cost == 0.0:
+    if inp == 0 and out == 0 and not cost:  # sem tokens nem custo → nada a reportar
         return None
     return AgentUsage(inp, out, cost)
+
+
+def _loads(line) -> dict | None:
+    """json.loads tolerante: o dict do JSON, ou None se vazio/inválido/não-dict."""
+    line = (line or "").strip()
+    if not line:
+        return None
+    try:
+        v = json.loads(line)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return v if isinstance(v, dict) else None
+
+
+def _tok(u: AgentUsage) -> int:
+    return u.input_tokens + u.output_tokens
+
+
+def _codex_line_tokens(line: str) -> AgentUsage | None:
+    """Tokens de UMA linha do codex NDJSON (evento com 'token'); None se não aplicável."""
+    if "token" not in line.lower():
+        return None
+    ev = _loads(line)
+    if ev is None:
+        return None
+    u = ev.get("usage") if isinstance(ev.get("usage"), dict) else ev
+    if not isinstance(u, dict):
+        return None
+    inp, out = _int(u.get("input_tokens")), _int(u.get("output_tokens"))
+    return AgentUsage(inp, out, 0.0) if (inp or out) else None
 
 
 def parse_codex_cumulative(s) -> AgentUsage | None:
@@ -131,24 +161,9 @@ def parse_codex_cumulative(s) -> AgentUsage | None:
     """
     best: AgentUsage | None = None
     for line in (s or "").splitlines():
-        line = line.strip()
-        if not line or "token" not in line.lower():
-            continue
-        try:
-            ev = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        u = ev.get("usage") if isinstance(ev.get("usage"), dict) else ev
-        if not isinstance(u, dict):
-            continue
-        inp = _int(u.get("input_tokens"))
-        out = _int(u.get("output_tokens"))
-        if inp or out:
-            cand = AgentUsage(inp, out, 0.0)
-            if best is None or (cand.input_tokens + cand.output_tokens) > (
-                best.input_tokens + best.output_tokens
-            ):
-                best = cand
+        cand = _codex_line_tokens(line)
+        if cand is not None and (best is None or _tok(cand) > _tok(best)):
+            best = cand
     return best
 
 
@@ -157,23 +172,15 @@ def _extract_model(s) -> str:
     em algum evento). '' se não achar (→ Codex fica com tokens sem custo, sem chutar)."""
     if not isinstance(s, str):
         return ""
-    try:  # claude: um único objeto JSON
-        d = json.loads(s)
-        if isinstance(d, dict) and d.get("model"):
-            return str(d["model"])
-    except (json.JSONDecodeError, TypeError):
-        pass
+    d = _loads(s)  # claude: um único objeto JSON
+    if d is not None and d.get("model"):
+        return str(d["model"])
     for line in s.splitlines():  # codex: NDJSON, procura o 1º evento com "model"
-        line = line.strip()
-        if not line or '"model"' not in line:
+        if '"model"' not in line:
             continue
-        try:
-            ev = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        m = ev.get("model") or (ev.get("msg") or {}).get("model") if isinstance(ev, dict) else None
-        if m:
-            return str(m)
+        ev = _loads(line)
+        if ev is not None and (ev.get("model") or (ev.get("msg") or {}).get("model")):
+            return str(ev.get("model") or ev["msg"]["model"])
     return ""
 
 

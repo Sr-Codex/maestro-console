@@ -1,5 +1,7 @@
 """Testes de uso de tokens/custo por agente (F1a) — sem GTK."""
 
+from pytest import approx
+
 from maestro.engine.state.store import Store
 from maestro.engine.usage import (
     AgentUsage,
@@ -62,7 +64,7 @@ def test_ledger_acumula_e_persiste(tmp_path):
 def test_model_price_exato_e_normalizado():
     # match exato
     p = model_price("gpt-5.5")
-    assert p is not None and p["input"] == 5e-06 and p["output"] == 3e-05
+    assert p is not None and p["input"] == approx(5e-06) and p["output"] == approx(3e-05)
     # normalização: sufixo de data e prefixo de região caem no modelo base
     assert model_price("gpt-5.5-2026-04-23") == p
     assert model_price("us.anthropic.claude-sonnet-5") == model_price("claude-sonnet-5")
@@ -75,7 +77,7 @@ def test_model_price_desconhecido_none():
 
 def test_cost_from_tokens_codex():
     # gpt-5.5: input 5e-06, output 3e-05 → 1000*5e-06 + 500*3e-05 = 0.005 + 0.015 = 0.02
-    assert cost_from_tokens(1000, 500, "gpt-5.5") == 0.02
+    assert cost_from_tokens(1000, 500, "gpt-5.5") == approx(0.02)
 
 
 def test_cost_from_tokens_desconhecido_none():
@@ -93,7 +95,7 @@ def test_cost_from_tokens_cache_barato():
 def test_with_cost_preenche_so_codex():
     # Codex (cost=0) → preenche pela tabela
     u = with_cost(AgentUsage(1000, 500, 0.0), "gpt-5.5")
-    assert u.cost_usd == 0.02
+    assert u.cost_usd == approx(0.02)
     # Claude (já tem total_cost_usd) → inalterado
     claude = AgentUsage(1000, 500, 0.99)
     assert with_cost(claude, "claude-sonnet-5") == claude
@@ -105,9 +107,11 @@ def test_with_cost_preenche_so_codex():
 # --- F1 Bloco B: dispatcher parse_run_usage (o que o run chama) ---
 
 def test_parse_run_usage_claude_usa_total_cost():
-    out = '{"model":"claude-sonnet-5","total_cost_usd":0.42,"usage":{"input_tokens":100,"output_tokens":50}}'
+    out = ('{"model":"claude-sonnet-5","total_cost_usd":0.42,'
+           '"usage":{"input_tokens":100,"output_tokens":50}}')
     u = parse_run_usage(out, "claude")
-    assert u == AgentUsage(100, 50, 0.42)  # custo autoritativo do Claude
+    assert (u.input_tokens, u.output_tokens) == (100, 50)
+    assert u.cost_usd == approx(0.42)  # custo autoritativo do Claude
 
 
 def test_parse_run_usage_codex_calcula_pela_tabela():
@@ -117,13 +121,13 @@ def test_parse_run_usage_codex_calcula_pela_tabela():
     ])
     u = parse_run_usage(nd, "codex")
     assert u.input_tokens == 1000 and u.output_tokens == 500
-    assert u.cost_usd == 0.02  # 1000*5e-06 + 500*3e-05
+    assert u.cost_usd == approx(0.02)  # 1000*5e-06 + 500*3e-05
 
 
 def test_parse_run_usage_codex_sem_modelo_fica_sem_custo():
     nd = '{"type":"token_count","usage":{"input_tokens":1000,"output_tokens":500}}'
     u = parse_run_usage(nd, "codex")
-    assert u.input_tokens == 1000 and u.cost_usd == 0.0  # sem model → tokens sem custo, não chuta
+    assert u.input_tokens == 1000 and not u.cost_usd  # sem model → tokens sem custo, não chuta
 
 
 def test_parse_run_usage_sem_uso_none():
