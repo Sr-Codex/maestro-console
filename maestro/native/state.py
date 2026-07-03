@@ -64,6 +64,11 @@ class CanvasModel:
     def set_node_cfg(self, node_id: str, key: str, value: str) -> None:
         self._store.set_ui(f"nodecfg_{node_id}_{key}", value)
 
+    def clear_node_cfg(self, node_id: str, key: str) -> None:
+        """Apaga a config por-nó (ui_state: `nodecfg_{nid}_{key}`) — usado ao fechar o nó
+        p/ um id reciclado não herdar estado de um nó morto (classe de bug de id órfão)."""
+        self._store.delete_ui(f"nodecfg_{node_id}_{key}")
+
     def node_roster(self) -> list[dict]:
         """Lista persistida dos terminais do canvas: [{nid, kind: agent|shell, base}].
         É a FONTE da verdade de QUAIS cards existem (recriados no startup) — antes o

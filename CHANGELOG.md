@@ -3,6 +3,28 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.56.0] — feat: unload de nó — Bloco A′ (ciclo de vida da sessão por CAPTURA)
+Primeira story do plano `docs/21` ("unload de nó" p/ liberar RAM no CM4, item #3 do `docs/15`).
+Plumbing testável, **sem mudança visual** — prepara o descarregar/retomar dos blocos B/C.
+- **Captura, não injeção** (correção do Fable ao plano): em vez de injetar um `--session-id` fixo
+  (que quebraria no 2º respawn — argv reusado em ~8 gatilhos — e colidiria com o medidor F1),
+  lemos o **JSONL mais novo** no dir de projeto EXCLUSIVO do nó (`~/.claude/projects/<slug do
+  workspace>/`) → é a sessão viva. Novo módulo gi-free `maestro/engine/session_capture.py`.
+- **Slug provado contra a fonte real:** o encoding do dir de projeto do Claude (todo não-alfanumérico
+  → `-`) foi validado em teste contra os dirs REAIS de `~/.claude/projects` (não só round-trip
+  sintético) — evita a classe de bug "unit test verde mas a fonte real emite outro formato".
+- **Persistência em chave PRÓPRIA do canvas:** `_capture_node_session(nid)` grava em
+  `nodecfg_{nid}_session` (`ui_state`, sobrevive a restart) via `CanvasModel.set_node_cfg` —
+  **NÃO** na tabela `sessions` do orquestrador (evita colidir com medidor/budget F1). Getter
+  `_node_session(nid)` (base do reload — Bloco C).
+- **Limpeza no `_close_node`:** ao fechar o nó, `clear_node_cfg(nid, "session")` apaga a linha
+  (novos `Store.delete_ui` + `CanvasModel.clear_node_cfg`) → um nid reciclado não herda a sessão
+  de um nó morto (classe de bug de id órfão já conhecida no projeto).
+- **Testes:** `test_session_capture.py` (slug vs dirs reais, JSONL mais novo por mtime, dir
+  vazio/inexistente, isolamento por-nó, delete idempotente) + `test_unload_capture_canvas.py`
+  (captura/persistência/getter e o **wiring REAL do `_close_node`**). 536 testes (532 `.venv` + 4
+  canvas no python do sistema), ruff limpo no que tocou.
+
 ## [0.55.0] — feat: F1 Bloco D — budget cap (o "limitador") — controle de segurança do ADR-17
 Fecha o F1 e o requisito do **ADR-17** ("budget por custo real de tokens"): um teto de $ que avisa
 (soft) e barra (hard) o gasto dos agentes. Plano `docs/20`, **revisado adversarialmente pelo Fable 5**

@@ -75,6 +75,7 @@ from ..engine.roles import (  # noqa: E402
     save_role_library,
     write_role_sidecar,
 )
+from ..engine.session_capture import newest_session_id  # noqa: E402
 from ..engine.state.store import Store  # noqa: E402
 from ..engine.team_templates import (  # noqa: E402
     BUILTIN_TEAM_TEMPLATES,
@@ -2314,6 +2315,7 @@ class CanvasWindow:
             self._sock_server.remove_node(nid)
         self._agent_nids.discard(nid)  # sai do fleet
         self._recruited_by.pop(nid, None)  # sai da linhagem
+        self.model.clear_node_cfg(nid, "session")  # unload A′: id órfão não herda sessão morta
         base = self._agent_base(nid)  # desregistra a INSTÂNCIA do controller (libera o id)
         if self.controller is not None and base is not None and nid != base:
             try:
@@ -3267,6 +3269,21 @@ class CanvasWindow:
     def _node_ws(self, nid: str):
         base_home = Path(self._ask_bus_dir).parent
         return Workspace(str(base_home / "workspaces")).path(nid)
+
+    # -- ciclo de vida da sessão do nó (unload — Bloco A′) --
+    def _capture_node_session(self, nid: str) -> str | None:
+        """Lê o JSONL mais novo no dir de projeto exclusivo do nó (`_node_ws`) e persiste o
+        session-id capturado em `nodecfg_{nid}_session` (ui_state → sobrevive a restart).
+        Chave PRÓPRIA do canvas — NÃO a tabela `sessions` do orquestrador (evita colidir com
+        o medidor/budget F1). Retorna o id capturado, ou None se o nó ainda não gravou sessão."""
+        sid = newest_session_id(self._node_ws(nid))
+        if sid:
+            self.model.set_node_cfg(nid, "session", sid)
+        return sid
+
+    def _node_session(self, nid: str) -> str:
+        """Session-id persistido do nó (capturado), ou "" se nenhum. Base do reload (Bloco C)."""
+        return self.model.node_cfg(nid, "session")
 
     # -- Responsabilidades (roles) por terminal (Fase 5) --
     @staticmethod

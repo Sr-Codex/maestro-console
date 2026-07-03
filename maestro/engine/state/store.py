@@ -645,3 +645,8 @@ class Store:
         with self._lock:
             row = self._conn.execute("SELECT v FROM ui_state WHERE k=?", (key,)).fetchone()
         return json.loads(row["v"]) if row else None
+
+    def delete_ui(self, key: str) -> None:
+        """Remove a linha de ui_state (idempotente) — p/ limpar estado por-nó ao fechar."""
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM ui_state WHERE k=?", (key,))
