@@ -434,6 +434,10 @@ class CanvasWindow:
         self._project_dir = project_dir  # raiz do projeto (workspace atual) p/ File Tree
         self._home_base = home_base  # base do app (p/ o registro de workspaces)
         self.controller = controller
+        if controller is not None:  # F1: assina o usage_bus → atualiza o $ do nó ao vivo
+            _ub = getattr(controller, "usage_bus", None)
+            if _ub is not None:  # marshala p/ a main thread (emit vem do worker do delegate)
+                _ub.set(lambda aid, _t: GLib.idle_add(self._refresh_node_cost, aid))
         self.run_team_name = run_team_name
         self.edges = edges  # EdgeModel | None — cabos criados pelo usuário (V7-S2)
         self.floors = floors  # Floors | None — ambientes isolados (V8-S5)
@@ -2079,6 +2083,11 @@ class CanvasWindow:
         status.add_css_class("node-status")
         head._status = status
         head.append(status)
+        cost = Gtk.Label(label="")  # F1: custo/tokens acumulados do agente (medidor lean)
+        cost.add_css_class("dim-label")
+        cost.add_css_class("node-cost")
+        head._cost = cost
+        head.append(cost)
         nclose = Gtk.Button(label="✕")
         nclose.set_has_frame(False)
         nclose.set_tooltip_text("fechar este terminal (remove do canvas nesta sessão)")
@@ -2147,6 +2156,7 @@ class CanvasWindow:
                 self.model.set_node_cfg(nid, "shortcut", auto)
         if self._monitor_default_on(nid):  # monitor de atividade (Fase 4): padrão-ON p/ agente
             self._set_node_monitor(nid, True)
+        self._refresh_node_cost(nid)  # F1: mostra o custo/tokens acumulado do agente no header
         self._renumber_nodes()  # atualiza os números de posição (Ctrl+Shift+N) [A.2]
         self._mm_refresh()  # C1: novo nó aparece no minimapa
         self._autofit_all_groups()  # C2: se o nó nasceu dentro de um grupo, ele abraça
@@ -3116,6 +3126,31 @@ class CanvasWindow:
         w.add_css_class("node-icon")
         head.insert_child_after(w, head._dot)  # logo após o dot de estado
         head._icon = w
+
+    @staticmethod
+    def _fmt_cost(u) -> str:
+        """Rótulo curto do medidor (F1): '$0.42' quando há custo; senão tokens ('12.3k tok');
+        '' quando zero. Codex sem preço aparece como tokens — honesto, não chuta custo."""
+        if getattr(u, "cost_usd", 0.0):
+            return f"${u.cost_usd:.2f}"
+        tot = getattr(u, "input_tokens", 0) + getattr(u, "output_tokens", 0)
+        if tot >= 1000:
+            return f"{tot / 1000:.1f}k tok"
+        return f"{tot} tok" if tot else ""
+
+    def _refresh_node_cost(self, nid: str) -> None:
+        """Atualiza o $ do header do nó a partir do UsageLedger (F1). Chamado na criação e a
+        cada evento do usage_bus (marshalado p/ a main thread via idle_add)."""
+        ctrl = self.controller
+        led = getattr(ctrl, "usage_ledger", None) if ctrl is not None else None
+        head = self.heads.get(nid)
+        lbl = getattr(head, "_cost", None) if head is not None else None
+        if led is None or lbl is None:
+            return
+        u = led.get(nid)
+        lbl.set_text(self._fmt_cost(u))
+        lbl.set_tooltip_text(
+            f"{u.input_tokens + u.output_tokens} tokens acumulados · ${u.cost_usd:.4f}")
 
     def set_node_state(self, nid: str, state: str) -> None:
         """Estado do nó vira um ÍCONE Lucide (pré-colorido) no cabeçalho — cor+forma+tooltip. UI-1.

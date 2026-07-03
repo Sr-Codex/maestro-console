@@ -34,6 +34,7 @@
 | [`16-pesquisa-diferenciais-n8n-frameworks-agente.md`](16-pesquisa-diferenciais-n8n-frameworks-agente.md) | Research (2026-07-02): n8n + BMAD/GSD/Beast Mode/Claude Code Agent Teams/gstack/CrewAI — diferenciais pro painel visual estilo n8n. |
 | [`17-pesquisa-comunidade-melhorias.md`](17-pesquisa-comunidade-melhorias.md) | Research (2026-07-02): mineração de comunidade (Opus 4.8 + Codex) — dicas de usuários (Maestri + Vibe Kanban/Claude Squad) p/ um gestor visual de agentes. Tema: *less babysitting*. |
 | [`18-plano-estado-por-no.md`](18-plano-estado-por-no.md) | **Plano cirúrgico ENTREGUE:** sistema de estado por nó / "precisa de você" (#1 da pesquisa) — Blocos 1+2 (v0.52.0) + Bloco 3 (v0.53.0): estado "aguardando" + ícones Lucide + atenção-união + minimapa + monitor padrão-ON nos nós-agente. |
+| [`19-plano-medidor-custo.md`](19-plano-medidor-custo.md) | **Plano cirúrgico:** F1 medidor de custo/tokens — **Blocos A+B+C ENTREGUES em v0.54.0** (preço vendorizado + custo + display por nó, absorve PR #9). Bloco D (budget cap) pendente. |
 
 ## ⚠️ Roadmaps & auditorias com DEFASAGEM (ler com a nota datada no topo)
 | Doc | Cuidado |

@@ -17,6 +17,7 @@ from .engine.orchestrator import Orchestrator, OutputBus, make_agent_ask
 from .engine.registry import Registry
 from .engine.session import SessionManager
 from .engine.state.store import Store
+from .engine.usage import UsageLedger
 from .engine.workspace import Workspace
 from .tui.controller import TUIController
 
@@ -54,12 +55,22 @@ def build_controller(
         registry.register(name, name)
 
     output_bus = OutputBus()  # stream ao vivo dos agentes (web liga o SSE)
+    usage_ledger = UsageLedger(store)  # F1: acumula tokens/custo por agente (persiste no Store)
+    usage_bus = OutputBus()  # reusa o bus de 1-assinante: (agent_id, total) → canvas atualiza o $
+
+    def _on_usage(agent_id, u):
+        usage_bus.emit(agent_id, usage_ledger.add(agent_id, u))
+
     orch = Orchestrator(
-        make_agent_ask(sm, agents, ws, timeout=timeout, on_output=output_bus.emit),
+        make_agent_ask(
+            sm, agents, ws, timeout=timeout, on_output=output_bus.emit, on_usage=_on_usage
+        ),
         store=store,
         logbook=logbook,
     )
     controller = TUIController(registry, store, orch)
     controller.output_bus = output_bus
+    controller.usage_ledger = usage_ledger  # F1: canvas lê o total por nó
+    controller.usage_bus = usage_bus  # F1: canvas assina p/ atualizar o $ ao vivo
     controller.agents = agents  # mesmo dict do make_agent_ask: permite instâncias em runtime
     return controller, store

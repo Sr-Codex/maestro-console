@@ -1,0 +1,23 @@
+{
+  "_meta": {
+    "descricao": "Tabela de preço vendorizada (subset ESTÁTICO) para o medidor de custo (F1). Só os modelos Claude/GPT que o projeto usa. Isola o volátil atrás de um arquivo de dados (AGENTS.md, regra 5 de stack durável) — SEM depender do pacote `litellm` (pesado/churny no ARM).",
+    "unidade": "USD por token (input/output/cache_read/cache_write)",
+    "fonte": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
+    "fonte_commit": "8bb4e624126bd02dbc5190cdc40e520ba93502c9",
+    "consultado_em": "2026-07-03",
+    "refresh": "Rebaixar do `fonte` no commit atual, re-extrair os modelos abaixo, re-pinar `fonte_commit`+`consultado_em`. Preço muda com releases de modelo — tratar como dado datado.",
+    "override_usuario": "ui_state `pricing_override` (JSON model->{input,output,...}) tem prioridade sobre este arquivo; modelo ausente aqui e no override → custo None (mostra tokens, marca 'sem preço', não chuta)."
+  },
+  "claude-sonnet-5":  {"input": 3e-06,  "output": 1.5e-05, "cache_read": 3e-07,  "cache_write": 3.75e-06},
+  "claude-opus-4-8":  {"input": 5e-06,  "output": 2.5e-05, "cache_read": 5e-07,  "cache_write": 6.25e-06},
+  "claude-opus-4-6":  {"input": 5e-06,  "output": 2.5e-05, "cache_read": 5e-07,  "cache_write": 6.25e-06},
+  "claude-haiku-4-5": {"input": 1e-06,  "output": 5e-06,   "cache_read": 1e-07,  "cache_write": 1.25e-06},
+  "claude-fable-5":   {"input": 1e-05,  "output": 5e-05,   "cache_read": 1e-06,  "cache_write": 1.25e-05},
+  "gpt-5.5":          {"input": 5e-06,  "output": 3e-05,   "cache_read": 5e-07},
+  "gpt-5.5-codex":    {"input": 5e-06,  "output": 3e-05,   "cache_read": 5e-07},
+  "gpt-5.4":          {"input": 2.5e-06,"output": 1.5e-05, "cache_read": 2.5e-07},
+  "gpt-5.2-codex":    {"input": 1.75e-06,"output": 1.4e-05,"cache_read": 1.75e-07},
+  "gpt-5.1-codex":    {"input": 1.25e-06,"output": 1e-05,  "cache_read": 1.25e-07},
+  "gpt-5-codex":      {"input": 1.25e-06,"output": 1e-05,  "cache_read": 1.25e-07},
+  "codex-mini-latest":{"input": 1.5e-06,"output": 6e-06,   "cache_read": 3.75e-07}
+}

@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from .envelope import Envelope, EnvelopeState
 from .session import SessionManager
 from .teams import Team
+from .usage import parse_run_usage
 from .workspace import Workspace
 from .wrapper import request_envelope
 
@@ -253,11 +254,14 @@ def make_agent_ask(
     *,
     timeout: float,
     on_output=None,
+    on_usage=None,
 ) -> Ask:
     """ask() real: roda o agente sob sessão (mutex/continuidade) + sandbox.
 
     ``on_output(agent_id, chunk)``: se dado, recebe o stdout do agente AO VIVO
     (terminais read-only no canvas — V5). Caminho de dados segue headless.
+    ``on_usage(agent_id, AgentUsage)``: se dado, recebe o uso de tokens/custo do turno
+    (medidor F1) — best-effort; nunca derruba o run.
     """
 
     async def ask(agent_id: str, prompt: str) -> str:
@@ -267,6 +271,13 @@ def make_agent_ask(
         res = await session_manager.run_in_session(
             profile, agent_id, prompt, workspace=ws, timeout=timeout, on_output=sink
         )
+        if on_usage is not None:  # F1: mede tokens/custo do turno (best-effort)
+            try:
+                u = parse_run_usage(res.stdout, getattr(profile, "name", agent_id))
+                if u is not None:
+                    on_usage(agent_id, u)
+            except Exception:  # medição nunca pode derrubar o caminho de dados
+                pass
         return res.stdout
 
     return ask

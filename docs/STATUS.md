@@ -1,8 +1,8 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-03 · v0.53.0**.
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-03 · v0.54.0**.
 > **Fontes de verdade canônicas:** [`CHANGELOG.md`](../CHANGELOG.md) (histórico completo
-> v0.1.0→v0.53.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..21). Este arquivo resume o
+> v0.1.0→v0.54.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..21). Este arquivo resume o
 > estado; em caso de divergência, o CHANGELOG/ADR mandam. Os artefatos em `_bmad-output/`
 > são o **planejamento do MVP** (histórico, congelado) — ver [`docs/index.md`](index.md).
 
@@ -86,9 +86,16 @@
   todo agente (detecção por `kind` do roster; tri-estado da cfg `monitor`; shell fica opt-in pra um
   bash ocioso não virar "waiting" à toa). Som segue OFF por padrão.
 
+### Medidor de custo/tokens por nó — F1 Blocos A+B+C (v0.54.0), ver [`docs/19-plano-medidor-custo.md`](19-plano-medidor-custo.md)
+- **Preço vendorizado** (`engine/pricing.json`, subset LiteLLM estático, sem dep do pacote) +
+  `cost_from_tokens` (3 baldes de cache). Claude = `total_cost_usd`; Codex = tabela.
+- **`on_usage`** no orquestrador acumula o uso por agente no `UsageLedger` (persiste) a cada turno
+  headless; **display lean por nó** ($ no header, ao vivo via `usage_bus`). Absorve o PR #9.
+- **Falta (Bloco D):** budget cap (soft/hard) — o controle de segurança do ADR-17.
+
 ## O que NÃO está feito (lacunas conhecidas)
-- **Medidor de custo/tokens + teto de orçamento** — diferencial-âncora de `docs/08`; parser/ledger
-  existem (PR #9) mas a feature de produto está **reservada/não entregue** (F1 em `docs/10`).
+- **Teto de orçamento (budget cap)** — o **medidor** de custo/tokens foi entregue (v0.54.0, F1 A+B+C);
+  falta o **budget cap** (Bloco D) — o controle de segurança do ADR-17.
 - **Rodar agente direto pela nota** — removido temporariamente na v0.37 (método `_run_note` fica).
 - **Hardware CM5** — planejado (16GB); device atual é **CM4** (ver `docs/uconsole.md`).
 - Fases 4–7 do roadmap de canvas (`docs/10`): steering, timeline, diff/commit por agente,
@@ -101,7 +108,7 @@
 ## Stack / device
 - **Linux aarch64** (Kali) no **ClockworkPi uConsole / CM4**; **Python ≥3.11**.
 - Canvas: **GTK4 + VTE-gtk4** (PyGObject), python do sistema. Engine: venv.
-- **497 testes** (pytest, +11 skip) + live opt-in (bwrap: socket-em-sandbox, drill do kill-switch); lint **ruff**.
+- **513 testes** (pytest, +12 skip) + live opt-in (bwrap: socket-em-sandbox, drill do kill-switch); lint **ruff**.
 
 ## Como navegar a documentação
 - **Estado atual:** este arquivo. · **Histórico de versões:** `CHANGELOG.md`. · **Decisões:** `docs/ADR.md`.
