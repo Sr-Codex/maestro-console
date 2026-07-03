@@ -18,6 +18,7 @@ from ..engine.sandbox import wrap as sandbox_wrap
 STATE_COLORS = {
     "idle": "#6b7280",
     "busy": "#3b82f6",
+    "waiting": "#f59e0b",  # "é sua vez": agente parou esperando seu input (âmbar)
     "blocked": "#f59e0b",
     "failed": "#ef4444",
     "done": "#22c55e",

@@ -139,7 +139,8 @@ class EdgeModel:
 STATE_ACTIVITY = {
     "idle": "",
     "busy": "trabalhando…",
-    "blocked": "esperando você",
+    "waiting": "é sua vez",  # agente parou esperando seu input
+    "blocked": "bloqueado",
     "failed": "falhou",
     "done": "concluído",
 }
