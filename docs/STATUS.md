@@ -1,8 +1,8 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-03 · v0.52.0**.
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-03 · v0.53.0**.
 > **Fontes de verdade canônicas:** [`CHANGELOG.md`](../CHANGELOG.md) (histórico completo
-> v0.1.0→v0.52.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..21). Este arquivo resume o
+> v0.1.0→v0.53.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..21). Este arquivo resume o
 > estado; em caso de divergência, o CHANGELOG/ADR mandam. Os artefatos em `_bmad-output/`
 > são o **planejamento do MVP** (histórico, congelado) — ver [`docs/index.md`](index.md).
 
@@ -82,8 +82,9 @@
   agora entra na conta e no "pular pro próximo" (Ctrl+Shift+A); o "⚠ N" é **clicável**; o
   **minimapa realça** os nós em atenção com a cor do estado. Monitor com **toggle de som** (OFF por
   padrão — só dot visual).
-- **Falta (Bloco 3, próxima rodada):** monitor **padrão-ON** nos nós-agente (precisa distinguir
-  nó-agente de shell bash pra não marcar "waiting" à toa) — hoje é opt-in por nó.
+- **Monitor padrão-ON nos nós-agente** (Bloco 3, v0.53.0): o "aguardando" aparece **sozinho** em
+  todo agente (detecção por `kind` do roster; tri-estado da cfg `monitor`; shell fica opt-in pra um
+  bash ocioso não virar "waiting" à toa). Som segue OFF por padrão.
 
 ## O que NÃO está feito (lacunas conhecidas)
 - **Medidor de custo/tokens + teto de orçamento** — diferencial-âncora de `docs/08`; parser/ledger
