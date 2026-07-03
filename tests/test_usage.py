@@ -132,3 +132,35 @@ def test_parse_run_usage_codex_sem_modelo_fica_sem_custo():
 
 def test_parse_run_usage_sem_uso_none():
     assert parse_run_usage("lixo sem json", "claude") is None
+
+
+# --- F1 Bloco B: prova END-TO-END da fiação (ask real → on_usage → custo) ---
+
+def test_make_agent_ask_dispara_on_usage_com_custo():
+    """O caminho REAL: make_agent_ask.ask() roda o turno, parseia o stdout e chama on_usage
+    com o AgentUsage certo. Mocka só a fronteira (SessionManager/Workspace) — não o método."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from maestro.engine.orchestrator import make_agent_ask
+
+    captured = []
+
+    class FakeSM:  # fronteira: devolve o stdout que o CLI daria
+        async def run_in_session(self, profile, agent_id, prompt, **kw):
+            return SimpleNamespace(stdout=(
+                '{"model":"claude-sonnet-5","total_cost_usd":0.3,'
+                '"usage":{"input_tokens":100,"output_tokens":50}}'))
+
+    class FakeWS:
+        def create(self, aid):
+            return "/tmp/ws"
+
+    ask = make_agent_ask(
+        FakeSM(), {"B": SimpleNamespace(name="claude")}, FakeWS(),
+        timeout=5, on_usage=lambda aid, u: captured.append((aid, u)),
+    )
+    out = asyncio.run(ask("B", "oi"))
+    assert "total_cost_usd" in out  # o caminho de dados (stdout) segue intacto
+    assert captured and captured[0][0] == "B"  # atribuiu ao agente certo
+    assert captured[0][1].cost_usd == approx(0.3)  # custo autoritativo do Claude, medido
