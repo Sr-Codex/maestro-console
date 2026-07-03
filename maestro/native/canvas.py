@@ -1068,6 +1068,11 @@ class CanvasWindow:
             self._ctx_edit_node)
         edt.add_css_class("note-ctx-btn")
         bar.append(edt)
+        unl = self._fab_button(
+            "media-eject-symbolic", "⏏", "Descarregar (libera a RAM; o card fica p/ retomar)",
+            self._ctx_unload_node)
+        unl.add_css_class("note-ctx-btn")
+        bar.append(unl)
         dele = self._fab_button(
             "user-trash-symbolic", "🗑", "Fechar terminal (remove do canvas)",
             self._ctx_close_node)
@@ -2018,6 +2023,11 @@ class CanvasWindow:
         if nid is not None:
             self._focus_node(nid)
 
+    def _ctx_unload_node(self) -> None:
+        nid = self._sel_nid()
+        if nid is not None:
+            self._confirm_unload(nid)
+
     def _ctx_close_node(self) -> None:
         nid = self._sel_nid()
         if nid is not None:
@@ -2316,6 +2326,7 @@ class CanvasWindow:
         self._agent_nids.discard(nid)  # sai do fleet
         self._recruited_by.pop(nid, None)  # sai da linhagem
         self.model.clear_node_cfg(nid, "session")  # unload A′: id órfão não herda sessão morta
+        self.model.clear_node_cfg(nid, "unloaded")  # unload B: nem a flag de descarregado
         base = self._agent_base(nid)  # desregistra a INSTÂNCIA do controller (libera o id)
         if self.controller is not None and base is not None and nid != base:
             try:
@@ -3033,6 +3044,7 @@ class CanvasWindow:
             cwd = None
         if nid in self._mon:  # M1: o BANNER do restart não deve virar falso "parou"
             self._mon[nid]["skip"] = True
+        self.model.clear_node_cfg(nid, "unloaded")  # respawnou → não está mais descarregado
         term.reset(True, True)  # limpa tela + scrollback p/ um restart limpo
         _spawn_into(term, self._node_argv(nid), cwd, self._node_envv(nid))
         return False  # idle one-shot
@@ -3284,6 +3296,78 @@ class CanvasWindow:
     def _node_session(self, nid: str) -> str:
         """Session-id persistido do nó (capturado), ou "" se nenhum. Base do reload (Bloco C)."""
         return self.model.node_cfg(nid, "session")
+
+    def _node_unloaded(self, nid: str) -> bool:
+        """True se o nó está descarregado (processo morto de propósito; card fica)."""
+        return bool(self.model.node_cfg(nid, "unloaded"))
+
+    def _unload_node(self, nid: str) -> None:
+        """Descarrega o nó (unload — Bloco B): captura a sessão (A′), mata o processo SEM
+        respawnar e persiste a flag 'unloaded' (o card fica; retomar = Bloco C).
+
+        SIGKILL direto (espelha _kill_all_agents), não a escalada SIGTERM→SIGKILL do
+        respawn: dentro do bwrap o SIGTERM NEM CHEGA ao CLI (ADR-23) — a escalada seria
+        ilusão. A conversa já está no JSONL do disco; o kill não a perde."""
+        frame = self.frames.get(nid)
+        term = getattr(frame, "_term", None) if frame is not None else None
+        if term is None:
+            return
+        self._capture_node_session(nid)  # A′: persiste a sessão viva ANTES de matar
+        self._set_node_monitor(nid, False)  # senão a morte vira falso "é sua vez"
+        self._mon_alerted.discard(nid)
+        # anti-race (revisão Fable): um respawn em voo ("killing"/pending) faria o
+        # _on_child_exited RESSUSCITAR o nó logo após o unload — zera antes do kill.
+        term._respawn_state = "idle"
+        term._respawn_pending = False
+        src = getattr(term, "_respawn_force_src", None)
+        if src:
+            GLib.source_remove(src)
+            term._respawn_force_src = None
+        killed = self._signal_child(term, signal.SIGKILL)  # bwrap colapsa a árvore
+        self.model.set_node_cfg(nid, "unloaded", "1")  # persiste: "abre igual fechou"
+        self.set_node_state(nid, "idle")  # sai de qualquer estado de atenção
+        self._audit("unload", node=nid, killed=bool(killed))
+        self._refresh_fleet_hud()
+        self.plane.queue_draw()
+
+    @staticmethod
+    def _unload_msg(busy: bool) -> str:
+        """Texto da confirmação do descarregar (puro, testável). Confirmação SEMPRE —
+        `tui_busy` tem falso negativo (tela scrollada/prompt de permissão), então o
+        guard reforça o aviso quando ocupado, mas nunca substitui a confirmação."""
+        base = ("Mata o processo pra liberar RAM. O card fica no canvas e a\n"
+                "conversa é retomada ao recarregar (a sessão já está no disco).")
+        if busy:
+            return ("⚠ O agente parece estar TRABALHANDO — descarregar agora\n"
+                    "interrompe o turno em voo (o retomar devolve só o que já\n"
+                    "foi gravado; o que o turno já fez no workspace FICA).\n\n" + base)
+        return base
+
+    def _confirm_unload(self, nid: str) -> None:
+        """Confirmação do descarregar (ação destrutiva p/ o turno em voo)."""
+        frame = self.frames.get(nid)
+        term = getattr(frame, "_term", None) if frame is not None else None
+        if term is None:
+            return
+        busy = tui_busy(self._term_text(term))
+        name = self.model.node_name(nid, nid)
+        dlg, box = self._dialog(f"⏏ Descarregar {name}")
+        msg = Gtk.Label(label=self._unload_msg(busy))
+        msg.set_wrap(True)
+        msg.set_xalign(0.0)
+        box.append(msg)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.set_halign(Gtk.Align.END)
+        cancel = Gtk.Button(label="Cancelar")
+        cancel.connect("clicked", lambda _b: dlg.destroy())
+        go = Gtk.Button(label="⏏ Descarregar")
+        if busy:
+            go.add_css_class("destructive-action")
+        go.connect("clicked", lambda _b: (self._unload_node(nid), dlg.destroy()))
+        row.append(cancel)
+        row.append(go)
+        box.append(row)
+        dlg.present()
 
     # -- Responsabilidades (roles) por terminal (Fase 5) --
     @staticmethod

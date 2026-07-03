@@ -3,9 +3,31 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
-## [0.56.0] — feat: unload de nó — Bloco A′ (ciclo de vida da sessão por CAPTURA)
-Primeira story do plano `docs/21` ("unload de nó" p/ liberar RAM no CM4, item #3 do `docs/15`).
-Plumbing testável, **sem mudança visual** — prepara o descarregar/retomar dos blocos B/C.
+## [0.56.0] — feat: unload de nó — Blocos A′+B (captura de sessão + ação "Descarregar")
+Stories A′ e B do plano `docs/21` ("unload de nó" p/ liberar RAM no CM4, item #3 do `docs/15`),
+acumuladas na mesma branch (decisão do usuário: 1 PR pra feature; blocos C/D seguem nela).
+
+### Bloco B — ação "Descarregar" (⏏ na cápsula contextual do nó)
+- **SIGKILL direto, sem 3º estado** (ADR-23): revisão adversarial do Fable provou por spike de
+  runtime que **o bwrap não repassa SIGTERM ao filho** — a "escalada graciosa" do respawn nunca
+  entregou um SIGTERM ao CLI de agente; um estado `"unloading"` com escalada compraria
+  complexidade em troca de nada. A conversa já está no JSONL do disco antes do kill.
+- **Fix anti-race (achado da revisão):** o unload zera `_respawn_state`/`_respawn_pending` e
+  cancela o timeout ANTES do SIGKILL — senão um respawn em voo faria `_on_child_exited`
+  **ressuscitar** o nó recém-descarregado. Race provada e fechada em teste.
+- **Guard de ociosidade = confirmação SEMPRE** (reforçada quando `tui_busy`): falso negativo do
+  busy (tela scrollada/prompt de permissão) degrada pra 1 clique a mais, nunca pra kill
+  silencioso; bloquear quando ocupado mataria o caso nº 1 (agente travado comendo RAM).
+- **Ciclo completo da flag `unloaded`** (`node_cfg`, persiste — "abre igual fechou"): setada no
+  unload; limpa em `_do_respawn` (ponto único dos ~8 gatilhos de respawn — "descarregado" nunca
+  mente com processo vivo) e no `_close_node` (id reciclado não nasce descarregado).
+- No unload: captura a sessão (A′) ANTES de matar, desliga o monitor de atividade (sem falso
+  "é sua vez"), sai de estado de atenção, audita (`unload` na trilha ADR-17) e atualiza o HUD.
+- **Testes** (`test_unload_node_canvas.py`): kill de **processo REAL** (SIGKILL verificado),
+  race reproduzida com `_on_child_exited` real (com e sem o fix), flag em respawn/close,
+  texto do guard. 542 testes (532 `.venv` + 10 canvas), ruff limpo no que tocou.
+
+### Bloco A′ — ciclo de vida da sessão por CAPTURA (plumbing, sem mudança visual)
 - **Captura, não injeção** (correção do Fable ao plano): em vez de injetar um `--session-id` fixo
   (que quebraria no 2º respawn — argv reusado em ~8 gatilhos — e colidiria com o medidor F1),
   lemos o **JSONL mais novo** no dir de projeto EXCLUSIVO do nó (`~/.claude/projects/<slug do
