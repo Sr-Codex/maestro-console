@@ -1,8 +1,8 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-02 · v0.51.1**.
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-03 · v0.52.0**.
 > **Fontes de verdade canônicas:** [`CHANGELOG.md`](../CHANGELOG.md) (histórico completo
-> v0.1.0→v0.51.1) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..20). Este arquivo resume o
+> v0.1.0→v0.52.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..21). Este arquivo resume o
 > estado; em caso de divergência, o CHANGELOG/ADR mandam. Os artefatos em `_bmad-output/`
 > são o **planejamento do MVP** (histórico, congelado) — ver [`docs/index.md`](index.md).
 
@@ -74,6 +74,17 @@
   autoridade (`_recruited_by`) de fato, dando dismiss/reassign de graça; agora fiação e
   autoridade são separadas — autoridade continua com quem já a tinha antes da Fase D).
 
+### Estado por nó "precisa de você" (v0.52.0), ver [`docs/18-plano-estado-por-no.md`](18-plano-estado-por-no.md)
+- **Estados do nó viraram ícones Lucide** pré-coloridos (`maestro-state-*`, reusando o bundle
+  Lucide + `STATE_COLORS`) no lugar de glyphs unicode. Estado **"aguardando (é sua vez)"** distinto
+  de bloqueado/erro: monitor de quietude + envelope `NEEDS_INPUT` → `waiting` (âmbar, circle-pause).
+- **Contador "⚠ N" = união envelope ∪ estado visual** (`attention_nids`): o monitor de quietude
+  agora entra na conta e no "pular pro próximo" (Ctrl+Shift+A); o "⚠ N" é **clicável**; o
+  **minimapa realça** os nós em atenção com a cor do estado. Monitor com **toggle de som** (OFF por
+  padrão — só dot visual).
+- **Falta (Bloco 3, próxima rodada):** monitor **padrão-ON** nos nós-agente (precisa distinguir
+  nó-agente de shell bash pra não marcar "waiting" à toa) — hoje é opt-in por nó.
+
 ## O que NÃO está feito (lacunas conhecidas)
 - **Medidor de custo/tokens + teto de orçamento** — diferencial-âncora de `docs/08`; parser/ledger
   existem (PR #9) mas a feature de produto está **reservada/não entregue** (F1 em `docs/10`).
@@ -89,7 +100,7 @@
 ## Stack / device
 - **Linux aarch64** (Kali) no **ClockworkPi uConsole / CM4**; **Python ≥3.11**.
 - Canvas: **GTK4 + VTE-gtk4** (PyGObject), python do sistema. Engine: venv.
-- **593 testes** (pytest) + 6 live opt-in (bwrap: socket-em-sandbox, drill do kill-switch); lint **ruff**.
+- **497 testes** (pytest, +11 skip) + live opt-in (bwrap: socket-em-sandbox, drill do kill-switch); lint **ruff**.
 
 ## Como navegar a documentação
 - **Estado atual:** este arquivo. · **Histórico de versões:** `CHANGELOG.md`. · **Decisões:** `docs/ADR.md`.
