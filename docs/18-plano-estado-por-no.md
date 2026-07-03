@@ -2,8 +2,15 @@
 
 > Data: 2026-07-02 · PT-BR · Origem: `docs/17` (pesquisa de comunidade — **#1 no ranking dos DOIS
 > modelos**). Puxado da fila pelo usuário em 2026-07-02. Segue o protocolo do `AGENTS.md`:
-> **analisar → planejar → (pesquisar) → validar → codar**. Este doc cobre analisar+planejar;
-> a implementação só começa após validação do usuário.
+> **analisar → planejar → (pesquisar) → validar → codar**.
+>
+> ✅ **ENTREGUE — Blocos 1+2 em v0.52.0 (PR #56, 2026-07-03).** Além do plano original, o usuário
+> pediu **migrar os estados pra ícones Lucide** (reusar o bundle do app) — feito: 6 ícones
+> `maestro-state-*` pré-coloridos. Decisões de UX validadas: estado "aguardando" = **circle-pause
+> âmbar**; **toggle de som** (OFF por padrão). **Falta o Bloco 3** (monitor padrão-ON nos
+> nós-agente) — descobriu-se uma sutileza (distinguir nó-agente de shell bash pra não marcar
+> "waiting" à toa) → adiado pra próxima rodada; hoje o monitor segue opt-in por nó. Detalhes de
+> implementação/verificação no CHANGELOG v0.52.0 e no `docs/STATUS.md`.
 
 ## 1. Objetivo (a dor)
 "Uma sessão fica esperando um comando o tempo todo sem você notar" — o pedido mais universal da
