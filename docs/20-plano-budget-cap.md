@@ -80,11 +80,11 @@ trilha, HUD), fonte = `UsageLedger` em vez de `_fleet_count()`.
 3. ✅ **Overshoot aceito** (é disjuntor) + contar dispatches em-voo no check + documentar no ADR.
 4. ✅ **Barra no `delegate` (engine)** — como o soft virou só-aviso, **sem HITL na thread da main**.
 
-## 8. DECISÕES que ainda faltam o usuário validar (o que o Fable elevou)
-- **A mais importante (semântica do contador):** confirmar o **contador monotônico host-side**
-  (soma só deltas positivos, inclui dispensados, nunca subtrai) + **baseline/reset manual**. É o
-  que torna o cap **não-contornável** por agente e **usável** por humano. Errar aqui = cap teatral
-  ou inquebrável-e-inútil.
-- **Soft = aviso (não HITL):** confirmar a reversão (§7.1).
-- **Codex sem preço:** aceitar que um fleet Codex-pesado pode furar o teto invisível (só marca no
-  HUD), ou bloquear tokens-sem-preço também? (MVP: só marca.)
+## 8. DECISÕES — VALIDADAS com o usuário (2026-07-03, pós-Fable)
+- ✅ **Contador MONOTÔNICO host-side** (soma só deltas positivos, inclui dispensados, nunca subtrai)
+  + **baseline/reset manual** (botão "zerar" só na UI do host). Fecha o furo de laundering do ADR-17.
+- ✅ **Soft = só AVISO** (notificação + HUD âmbar + top-spender; não bloqueia). Só o hard barra.
+- ✅ **Codex sem preço = só MARCAR no HUD** ("tokens sem preço"); o teto de $ conta só o que tem
+  preço (sem teto de tokens separado no MVP).
+
+**Plano fechado — pronto pra codar** (segue o DoD do §6, com nota ligada ao ADR-17).
