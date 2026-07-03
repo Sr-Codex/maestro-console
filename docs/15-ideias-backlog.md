@@ -85,7 +85,9 @@ comum: *less babysitting* (menos babá). Cada um mapeia à arquitetura atual (ca
 Team Templates/líder, Maestro mode, bwrap):
 - **"Unload" de nó** — matar o processo VTE/PTY mantendo o nó + estado no `CanvasModel`/`ui_state`;
   reabrir sob demanda. Ataca a dor de RAM (Maestri: 20GB → unload na v0.29), **decisiva no CM4**.
-  Alto valor no nosso hardware. 🧊
+  Alto valor no nosso hardware. ✅ **PUXADO 2026-07-03 → investigação + TR + spike + plano
+  revisado pelo Fable em `docs/21-plano-unload-no-ram.md`** (rota kill-and-resume por CAPTURA de
+  sessão; Congelar/CRIU descartados). Pronto pra virar stories.
 - **Recuperação/reattach + "arquivar em vez de fechar"** — ao abrir, detectar nós/worktrees órfãos
   (pós-crash) e oferecer reanexar / novo agente no worktree / arquivar. Casa com "abre igual fechou"
   e com os Floors já existentes. 🧊

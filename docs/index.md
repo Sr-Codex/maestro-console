@@ -35,6 +35,7 @@
 | [`17-pesquisa-comunidade-melhorias.md`](17-pesquisa-comunidade-melhorias.md) | Research (2026-07-02): mineração de comunidade (Opus 4.8 + Codex) — dicas de usuários (Maestri + Vibe Kanban/Claude Squad) p/ um gestor visual de agentes. Tema: *less babysitting*. |
 | [`18-plano-estado-por-no.md`](18-plano-estado-por-no.md) | **Plano cirúrgico ENTREGUE:** sistema de estado por nó / "precisa de você" (#1 da pesquisa) — Blocos 1+2 (v0.52.0) + Bloco 3 (v0.53.0): estado "aguardando" + ícones Lucide + atenção-união + minimapa + monitor padrão-ON nos nós-agente. |
 | [`19-plano-medidor-custo.md`](19-plano-medidor-custo.md) | **Plano cirúrgico:** F1 medidor de custo/tokens — **Blocos A+B+C ENTREGUES em v0.54.0** (preço vendorizado + custo + display por nó, absorve PR #9). Bloco D (budget cap) pendente. |
+| [`21-plano-unload-no-ram.md`](21-plano-unload-no-ram.md) | **Plano cirúrgico:** "unload" de nó (item #3, backlog) — descarregar/retomar p/ liberar RAM no CM4 via **kill-and-resume por CAPTURA de sessão** (`--resume`; Congelar/CRIU descartados). Fundação provada (investigação + medição de RAM + spike runtime + revisão adversarial Fable). Sequência A′→B→C→D — pronto pra virar stories. |
 
 ## ⚠️ Roadmaps & auditorias com DEFASAGEM (ler com a nota datada no topo)
 | Doc | Cuidado |
