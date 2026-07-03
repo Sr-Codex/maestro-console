@@ -3,6 +3,24 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.55.0] — feat: F1 Bloco D — budget cap (o "limitador") — controle de segurança do ADR-17
+Fecha o F1 e o requisito do **ADR-17** ("budget por custo real de tokens"): um teto de $ que avisa
+(soft) e barra (hard) o gasto dos agentes. Plano `docs/20`, **revisado adversarialmente pelo Fable 5**
+(achou 3 furos que teriam quebrado a feature — ver ADR-22).
+- **Contador MONOTÔNICO host-side** (`budget.py`): o gasto contado só sobe — o agente NÃO consegue
+  baixá-lo (dispensar o caro / rotacionar sessão não reduz). Fecha o *laundering* do runaway (o
+  adversário do ADR-17). `record_spend` soma só deltas positivos; `baseline`/`reset` só pelo host.
+- **Hard cap barra no `Orchestrator.delegate`** (fronteira robusta): estourou → recusa o turno
+  (envelope BLOCKED) ANTES de rodar o agente. `budget_blocked` **fora de `ABUSE_EVENTS`** (não arma
+  o kill-switch — pós-hard é estado permanente, não runaway).
+- **Soft = só AVISO** (custo é monotônico → HITL por-turno viraria hard-cap ruim): notificação única
+  + HUD do fleet fica âmbar/vermelho (`$gasto/$teto`) + mostra o top-spender.
+- **Config + reset** na cápsula principal (botão 💰): teto hard/soft, "zerar gasto" (só o host).
+  Codex sem preço só marca (não entra no $). Escopo global do fleet (disjuntor).
+- **Testes:** `test_budget.py` (verdict, contador monotônico, **resistência a laundering**, reset,
+  gate real do delegate) + probe de runtime do HUD (âmbar/vermelho/reset). 523 testes, ruff limpo,
+  boot smoke sem traceback.
+
 ## [0.54.0] — feat: F1 medidor de custo/tokens por nó (Blocos A+B+C — "o velocímetro")
 Entrega o **diferencial-âncora** do `docs/08` (dor #1 "custo às cegas") — o medidor que mostra
 quanto cada agente gastou, por nó, ao vivo. Puxado do `docs/19` (plano validado após pesquisa

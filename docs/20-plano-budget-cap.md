@@ -87,4 +87,5 @@ trilha, HUD), fonte = `UsageLedger` em vez de `_fleet_count()`.
 - ✅ **Codex sem preço = só MARCAR no HUD** ("tokens sem preço"); o teto de $ conta só o que tem
   preço (sem teto de tokens separado no MVP).
 
-**Plano fechado — pronto pra codar** (segue o DoD do §6, com nota ligada ao ADR-17).
+✅ **ENTREGUE em v0.55.0 (2026-07-03), ADR-22.** Contador monotônico + hard no delegate + soft=aviso
++ HUD/config/reset. Verificação no CHANGELOG e testes (`test_budget.py` + probe do HUD).

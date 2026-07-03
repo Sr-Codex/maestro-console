@@ -33,6 +33,7 @@ gi.require_version("Vte", "3.91")
 gi.require_version("Pango", "1.0")
 from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Pango, Vte  # noqa: E402
 
+from ..engine import budget  # noqa: E402
 from ..engine.ask_bus import (  # noqa: E402
     ASK_MAX_PROMPT_BYTES,
     AskBusError,
@@ -437,7 +438,7 @@ class CanvasWindow:
         if controller is not None:  # F1: assina o usage_bus → atualiza o $ do nó ao vivo
             _ub = getattr(controller, "usage_bus", None)
             if _ub is not None:  # marshala p/ a main thread (emit vem do worker do delegate)
-                _ub.set(lambda aid, _t: GLib.idle_add(self._refresh_node_cost, aid))
+                _ub.set(lambda aid, _t: GLib.idle_add(self._on_usage_update, aid))
         self.run_team_name = run_team_name
         self.edges = edges  # EdgeModel | None — cabos criados pelo usuário (V7-S2)
         self.floors = floors  # Floors | None — ambientes isolados (V8-S5)
@@ -670,6 +671,8 @@ class CanvasWindow:
             ".fab-stop { color: #f38ba0; }",  # kill-switch (vermelho)
             ".fleet-hud { background: rgba(30,30,46,0.85); color: #cdd6f4; "
             "padding: 3px 10px; border-radius: 10px; font-size: 12px; }",  # HUD do fleet
+            ".fleet-hud.hud-soft { color: #f9e2af; }",  # F1-D: budget perto do teto (âmbar)
+            ".fleet-hud.hud-hard { color: #f38ba8; }",  # F1-D: budget estourado (vermelho)
             ".fab-attn { color: #f9e2af; font-size: 12px; padding: 0 4px; }",  # ⚠ N
             # diálogo Editar Terminal: rótulo de seção + caixa de preview da fonte
             ".editor-section { font-weight: bold; margin-top: 6px; }",
@@ -913,6 +916,9 @@ class CanvasWindow:
             bar.append(self._fab_button(
                 "process-stop-symbolic", "⛔", "Parar TODOS os agentes (kill-switch)",
                 self._confirm_kill_all, css="fab-stop"))
+            bar.append(self._fab_button(  # F1 Bloco D: teto de gasto ($)
+                "wallet-symbolic", "💰", "Budget: teto de gasto dos agentes",
+                self._budget_dialog))
         # — config de software / features globais —
         add("folder-symbolic", "📁", "Árvore de arquivos", "filetree")
         add("view-grid-symbolic", "🗂", "Workspaces", "workspaces")
@@ -3806,9 +3812,117 @@ class CanvasWindow:
         if lbl is None:
             return
         n = self._fleet_count()
-        lbl.set_visible(n > 0)
-        if n > 0:
-            lbl.set_text(self._fleet_hud_text())
+        text = self._fleet_hud_text() if n > 0 else ""
+        verdict = "ok"
+        if self._store is not None:  # F1 Bloco D: mostra o budget ($ gasto / teto) com cor
+            soft, hard = budget.budget_limits(self._store)
+            if hard:
+                spent = budget.counted_spend(self._store)
+                seg = f"💰 ${spent:.2f}/${hard:.2f}"
+                text = f"{text}  ·  {seg}" if text else seg
+                verdict = budget.budget_verdict(spent, soft, hard)
+        for c in ("hud-soft", "hud-hard"):
+            lbl.remove_css_class(c)
+        if verdict != "ok":
+            lbl.add_css_class("hud-hard" if verdict == "hard" else "hud-soft")
+        lbl.set_visible(bool(text))
+        if text:
+            lbl.set_text(text)
+
+    # -- F1 Bloco D: budget cap (o "limitador") --
+    def _on_usage_update(self, aid: str) -> bool:
+        """Um evento do usage_bus: atualiza o $ do nó + o HUD do budget + avisa se cruzou o soft."""
+        self._refresh_node_cost(aid)
+        self._refresh_fleet_hud()
+        self._budget_soft_notify()
+        return False  # idle_add one-shot
+
+    def _budget_top_spender(self) -> str | None:
+        """Nó que mais gastou (mostrado no aviso — o humano decide quem dispensar)."""
+        led = getattr(self.controller, "usage_ledger", None) if self.controller else None
+        if led is None:
+            return None
+        best, best_c = None, 0.0
+        for nid in self.frames:
+            c = led.get(nid).cost_usd
+            if c > best_c:
+                best, best_c = nid, c
+        return self.model.node_name(best, best) if best else None
+
+    def _budget_soft_notify(self) -> None:
+        """Aviso ÚNICO ao cruzar o soft (custo é monotônico → não repetir a cada turno). Rearma
+        quando volta a 'ok' (reset). Só aviso — nunca bloqueia (o hard barra no delegate)."""
+        if self._store is None:
+            return
+        v = budget.check(self._store)
+        if v == "soft" and not getattr(self, "_budget_notified", False):
+            self._budget_notified = True
+            top = self._budget_top_spender()
+            body = f"gasto ${budget.counted_spend(self._store):.2f}"
+            notify("maestro: budget no aviso", body + (f" · maior: {top}" if top else ""),
+                   sound=False)
+        elif v == "ok":
+            self._budget_notified = False
+
+    def _budget_dialog(self, *_a) -> None:
+        """Config do teto (hard/soft $) + zerar. SÓ o host mexe (nunca comando de agente)."""
+        if self._store is None:
+            return
+        dlg = Gtk.Window(title="Budget — teto de gasto do fleet")
+        dlg.set_modal(True)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        for m in ("top", "bottom", "start", "end"):
+            getattr(box, f"set_margin_{m}")(14)
+        hint = Gtk.Label(xalign=0, wrap=True, label=(
+            "Teto de gasto dos agentes (USD). Vazio = sem teto. No HARD, os runs mediados param "
+            "até você zerar. SOFT (só aviso) vazio = 75% do hard. O contador só sobe — o agente "
+            "não consegue baixá-lo; zere você aqui."))
+        hint.add_css_class("dim-label")
+        box.append(hint)
+
+        def row(label, key):
+            r = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            r.append(Gtk.Label(label=label))
+            e = Gtk.Entry()
+            e.set_max_width_chars(8)
+            e.set_placeholder_text("$")
+            e.set_text(self._store.get_ui(f"budget_{key}") or "")
+            r.append(e)
+            box.append(r)
+            return e
+
+        hard_e = row("Hard (barra):", "hard")
+        soft_e = row("Soft (avisa):", "soft")
+        _spent = budget.counted_spend(self._store)
+        spent_lbl = Gtk.Label(xalign=0, label=f"Gasto contado agora: ${_spent:.4f}")
+        spent_lbl.add_css_class("dim-label")
+        box.append(spent_lbl)
+        btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, halign=Gtk.Align.END)
+        zerar = Gtk.Button(label="Zerar gasto")
+
+        def do_zerar(_b):
+            budget.reset_budget(self._store)
+            self._budget_notified = False
+            spent_lbl.set_text("Gasto contado agora: $0.0000")
+            self._refresh_fleet_hud()
+
+        zerar.connect("clicked", do_zerar)
+        salvar = Gtk.Button(label="Salvar")
+        salvar.add_css_class("suggested-action")
+
+        def do_salvar(_b):
+            self._store.set_ui("budget_hard", hard_e.get_text().strip())
+            self._store.set_ui("budget_soft", soft_e.get_text().strip())
+            self._budget_notified = False  # rearma o aviso
+            self._refresh_fleet_hud()
+            dlg.close()
+
+        salvar.connect("clicked", do_salvar)
+        btns.append(zerar)
+        btns.append(salvar)
+        box.append(btns)
+        dlg.set_child(box)
+        dlg.present()
 
     def _anomaly_tick(self) -> bool:
         """Vigilância ATIVA (Etapa 4): rajada de recrutamentos bloqueados → kill-switch
