@@ -49,11 +49,16 @@ Classificação: ✅ **já coberto** (vira argumento de posicionamento) · 🔨 
 
 ## 4. Anti-padrões a NÃO implementar (🛡️)
 
-- **Kanban de sessões (Fase 5-A2 do docs/10)** — já flagrado como cargo-cult pelo Fable; o Windsurf agora confirma: "Kanban de agentes = jeito mais bonito de assistir falhas" + fricção pra dev solo. Manter cortado.
-- **"Orchestration theater"** — qualquer painel novo só entra se apoiado em delegação verificável (que já temos); nunca UI antes de confiabilidade.
-- **Escalar N agentes antes de resolver review** — P12: além de ~3-5 agentes o gargalo é o humano; "mais nós" sem UX de review é regressão disfarçada de feature.
-- **Auto-atualizar/embutir o CLI do agente** (Jean #460, superset baixando o próprio OpenCode) — sempre usar o CLI do usuário; no máximo reportar versão em diagnóstico.
-- **Dependência externa embutida pra features cosméticas** (dmux/OpenRouter) — gera revolta e forks.
+> **Formalizado [2026-07-04]:** revisão adversarial do Fable separou estas guardas por durabilidade.
+> As duas de **fronteira com o runtime/dependências** (auto-atualizar CLI + dependência externa
+> cosmética) viraram **ADR-24** (imutável). As outras três (kanban, N-scale, theater) ficaram como
+> notas datadas no `docs/10` — priorização/lema/escopo de UI **podem evoluir**, então não viram ADR.
+
+- **Kanban de sessões (Fase 5-A2 do docs/10)** — já flagrado como cargo-cult pelo Fable; o Windsurf agora confirma: "Kanban de agentes = jeito mais bonito de assistir falhas" + fricção pra dev solo. Manter cortado. → **docs/10 Fase 5-A2 marcado CUT.**
+- **"Orchestration theater"** — qualquer painel novo só entra se apoiado em delegação verificável (que já temos); nunca UI antes de confiabilidade. → **docs/10 Fase 5, princípio de design.**
+- **Escalar N agentes antes de resolver review** — P12: além de ~3-5 agentes o gargalo é o humano; "mais nós" sem UX de review é regressão disfarçada de feature. → **docs/10 Fase 6-A3, nota de sequenciamento.**
+- **Auto-atualizar/embutir o CLI do agente** (Jean #460, superset baixando o próprio OpenCode) — sempre usar o CLI do usuário; no máximo reportar versão em diagnóstico. → **ADR-24 (a).**
+- **Dependência externa embutida pra features cosméticas** (dmux/OpenRouter) — gera revolta e forks. → **ADR-24 (b).**
 - **Cadência (P13):** o nicho pune abandono em semanas (Crystal, claude-squad, Maestro OSS) — releases pequenos e regulares valem mais que features grandes espaçadas; e validar padrões de concorrente antes de copiar (pode estar morto).
 
 ## 5. Recomendação de sequência (proposta, decisão é do usuário)

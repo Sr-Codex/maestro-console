@@ -34,14 +34,27 @@
 
 ## Fase 5 — Fluxo de trabalho com agentes
 - **A1** Diff/review por agente + comitar (git no workspace do nó).
-- **A2** Kanban de sessões (colunas por estado, reusa idle/busy/blocked/done).
+- ~~**A2** Kanban de sessões (colunas por estado, reusa idle/busy/blocked/done).~~ **CORTADO
+  [2026-07-04]** — a pesquisa de dores (`docs/23` cap. 38, Windsurf 2.0) confirmou o anti-padrão
+  "orchestration theater": um kanban de agentes vira "um jeito mais bonito de assistir estados de
+  falha" + fricção pra dev solo (abre no board, não no editor). Dev solo com meia dúzia de nós numa
+  1280×720 já vê os estados no próprio canvas (estado por nó, v0.52-53). *Não é ADR* (pode reviver
+  se o alvo mudar — CM5/tela maior/muitos nós). Ver `docs/24` §4.
 - **B4** Snippets/prompts salvos (gaveta reutilizável; evolui as routines).
 > "Less typing, more directing": revisar e dirigir o trabalho dos agentes.
+> **Princípio de design [2026-07-04, pesquisa docs/22-24]:** UI nova de orquestração só entra
+> apoiada em **confiabilidade** (delegação verificável via envelope/ledger, ADR-2/7/17) — nunca
+> "painel bonito sobre agentes que não se pode confiar" (o *orchestration theater* do `docs/23`).
 
 ## Fase 6 — Escala (aproveita o CM5 16GB)
 - **A3** Espalhar 1 tarefa p/ N agentes ("manager view" / preset de time enxuto), teto configurável.
 - **B3** Floating pane / scratchpad (terminal sobreposto, descartável).
 > Viável com o CM5; rodar um time de verdade em paralelo.
+> **Nota de sequenciamento [2026-07-04, pesquisa docs/22-24]:** o A3 (encorajar N agentes em
+> paralelo) só depois da **UX de review por nó** (A1/Fase 4). Motivo: P12 do `docs/23` — o review
+> humano é o gargalo real; além de ~3-5 agentes o trabalho empilha não-revisado ("mais lento que
+> rodar menos"). *Não confundir* com otimizar o canvas pra muitos nós (render/RAM), que é ganho
+> legítimo independente e não é barrado por isto. Ver `docs/24` §4.
 
 ## Fase 7 — Pesados (engenharia avançada, por último)
 - **B1** Blocos de comando (Warp-like) — depende de integração de shell OSC 133 no VTE.
