@@ -40,6 +40,26 @@ humano" — timeout configurável + guard de ociosidade). Trade-off: resume rel�
 (re-ingestão de tokens a cada ciclo) e auto-unload arrisca matar nó que o usuário ia usar já já.
 Status: 🧊 icebox.
 
+### 2026-07-03 — Novos candidatos vindos da pesquisa de dores da concorrência (análise cruzada)
+Da análise `docs/24-analise-dores-vs-app.md`
+(cruzamento dos 2 relatórios de dores — Maestri + 29 concorrentes — com o STATUS v0.55.0). Itens
+NOVOS que não estavam na fila (os já existentes — reattach órfãos, FIFO, briefing, modo compacto,
+profiles, nerd fonts — foram PROMOVIDOS em prioridade lá, não duplicados aqui):
+- **Budget cap: pausa graciosa + notificação + retomada 1-clique** ao esgotar o teto — dor validada
+  (RunMaestro #235: run de 24h parado 4h em silêncio; Cursor sem guardrails). Extensão do Bloco D
+  (docs/20 §4 já previa). 🧊
+- **Paste/drag de imagem pro nó** — dor em 5+ concorrentes (supacode, AoE, Maestro OSS, Clave com
+  caminho temp deletado): screenshot do clipboard → salvar em arquivo estável do workspace e colar
+  o caminho; drag de arquivo → caminho estável. Verificar comportamento atual do VTE primeiro. 🧊
+- **Teste de runtime de teclado internacional** (dead keys/acentos PT-BR + CJK) no VTE — dor em 4
+  concorrentes; provavelmente já funciona, mas PROVAR e registrar (público PT-BR). 🧊
+- **Perfis com diretório de config isolado por nó** (conta Claude trabalho × pessoal simultâneas —
+  dor Clave #22, ninguém entrega) — ampliação do item "Profiles de agente" já na fila. 🧊
+- **Guardas de projeto (não-features)**: manter kanban de sessões cortado (Windsurf confirma
+  "orchestration theater"); nunca auto-atualizar/embutir CLI do agente (Jean #460); não escalar
+  N agentes antes de UX de review (P12). 🧊 (regras, avaliar incorporar no AGENTS.md quando
+  fizer sentido)
+
 ### 2026-07-02 — Paralelizar implementação de features independentes com sub-agentes
 Usar o `Agent` tool (`isolation: "worktree"`, cada sub-agente numa cópia isolada do repo) ou o
 `Workflow` tool (fan-out mais estruturado, só com pedido explícito do usuário) pra implementar
