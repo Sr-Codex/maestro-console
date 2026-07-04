@@ -4171,10 +4171,11 @@ class CanvasWindow:
             return
         dlg = Gtk.Window(title="Limites — gasto do fleet ($) e RAM por nó")
         dlg.set_modal(True)
+        dlg.set_default_size(380, -1)  # sem isto, o label wrap estica a janela p/ tela cheia
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         for m in ("top", "bottom", "start", "end"):
             getattr(box, f"set_margin_{m}")(14)
-        hint = Gtk.Label(xalign=0, wrap=True, label=(
+        hint = Gtk.Label(xalign=0, wrap=True, max_width_chars=44, label=(
             "Teto de gasto dos agentes (USD). Vazio = sem teto. No HARD, os runs mediados param "
             "até você zerar. SOFT (só aviso) vazio = 75% do hard. O contador só sobe — o agente "
             "não consegue baixá-lo; zere você aqui."))
@@ -4194,7 +4195,7 @@ class CanvasWindow:
 
         hard_e = row("Hard (barra):", "hard")
         soft_e = row("Soft (avisa):", "soft")
-        ram_hint = Gtk.Label(xalign=0, wrap=True, label=(
+        ram_hint = Gtk.Label(xalign=0, wrap=True, max_width_chars=44, label=(
             "RAM por nó (MB): notifica quando a árvore de um nó passar do limiar — "
             "considere ⏏ descarregar. Vazio = desligado. Re-arma abaixo de 90% do limiar."))
         ram_hint.add_css_class("dim-label")
