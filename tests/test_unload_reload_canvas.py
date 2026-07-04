@@ -38,6 +38,7 @@ def _win(store, tmp_path, nid, term, *, kind="agent", base="claude"):
     w.frames = {nid: SimpleNamespace(_term=term, _base_argv=["/bin/bash"])}
     w._mon = {}
     w._mon_alerted = set()
+    w._ram_alerted = set()  # Bloco D
     w._node_state = {}
     w._focused_nid = None
     w.heads = {}

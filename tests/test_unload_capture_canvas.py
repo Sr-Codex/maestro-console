@@ -87,6 +87,7 @@ def test_close_node_limpa_sessao_persistida(tmp_path, monkeypatch):
     # setup mínimo p/ _close_node rodar a limpeza e retornar cedo (nó sem frame):
     w._set_node_monitor = lambda *_a, **_k: None
     w._mon_alerted = set()
+    w._ram_alerted = set()  # Bloco D
     w._sock_server = None
     w._agent_nids = set()
     w._recruited_by = {}

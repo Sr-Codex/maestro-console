@@ -35,6 +35,7 @@ def _win(store, tmp_path, nid, term):
     w.frames = {nid: SimpleNamespace(_term=term, _base_argv=["/bin/bash"])}
     w._mon = {nid: {"handler": None, "quiet_id": None}}  # monitor "ligado" (sem GTK)
     w._mon_alerted = {nid}
+    w._ram_alerted = set()  # Bloco D: alerta de RAM (unload/close limpam)
     w._node_state = {}
     w.heads = {}
     w.plane = SimpleNamespace(queue_draw=lambda: None)

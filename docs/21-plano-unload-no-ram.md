@@ -128,3 +128,103 @@
 - Congelar (SIGSTOP/freezer) e CRIU — descartados (§3.4/§3.5).
 - `swappiness`/`zram writeback` — alavanca de **sistema**, separada (regras de boot/kernel do
   uConsole em `/home/kali/AGENTS.md`; não é feature do app).
+
+## 8. Story D — plano cirúrgico (badge de RAM + indicador "descarregado")
+
+> Escrito 2026-07-04, após A′+B+C entregues e testados ao vivo. Revisão adversarial do
+> Fable: ver §8.5.
+
+### 8.1 Objetivo
+Fechar o loop **medir → decidir → descarregar → retomar**: hoje o usuário descarrega "no
+chute". (a) **Badge de RAM por nó** no header (padrão do medidor de custo F1); (b) **estado
+visual "descarregado"** de verdade (hoje o nó morto fica "idle" — indistinguível de um vivo
+ocioso no card e no minimapa).
+
+### 8.2 O que já existe (reusar, não reinventar)
+- **Método de medição VALIDADO ao vivo** (investigação 2026-07-03): `/proc/<pid>/smaps_rollup`
+  — RSS (visto), **PSS (fatia real)**, **Private (piso garantido a liberar no kill)**. Números
+  reais: claude ≈ 232-447 RSS / 175-350 PSS / 156-323 Private (MB).
+- **Árvore do nó**: `term._child_pid` é o bwrap; filhos via `/proc/<pid>/task/*/children`
+  (recursivo). `--unshare-pid` não esconde os filhos do host.
+- **Padrão de badge**: `head._cost` + `.node-cost` (10px discreto) + `_fmt_cost`/
+  `_refresh_node_cost` (F1). O D espelha com `head._ram` + `.node-ram` + `_fmt_ram`/
+  `_refresh_node_ram`.
+- **Padrão de estado**: `set_node_state` + `STATE_COLORS`/`_STATE_ICON` (Lucide pré-colorido
+  `maestro-state-<st>`)/`_STATE_PT` + minimapa pinta pela cor do estado.
+- **Padrão de tick**: `GLib.timeout_add_seconds` (routines 30s, attention 10s).
+
+### 8.3 Decisões (v2 — CORRIGIDAS pela revisão adversarial do Fable, §8.5)
+1. **Métrica do badge = PSS** (peso real; a soma dos PSS da frota ≈ uso real total).
+   Tooltip com **2 números** (não 3): "peso real (PSS) X MB · liberável ao descarregar
+   (Private) Z MB" — RSS não muda nenhuma decisão do usuário.
+2. **Worker THREAD daemon (tick 10s) + `GLib.idle_add` só pra setar labels** — main loop
+   nunca mede. Motivo (Fable): a árvore real de um nó é 3-6 processos (bwrap→bash→claude+
+   filhos node/MCP); 8 nós ≈ 25-50 reads de `smaps_rollup`/tick, e o rollup varre TODAS as
+   VMAs no kernel (claude ~400MB tem milhares) → ~100-150ms de jank por tick no CM4 se
+   fosse na main loop. Precedente idêntico no próprio arquivo: `usage_bus` marshalado
+   (canvas.py:450-452). O worker relê `term._child_pid` A CADA passada (nunca cacheia a
+   árvore — respawn no meio do tick mede o processo novo ou nada, nunca um estranho).
+3. **"Descarregado" é CAMADA DE VISTA, NÃO estado da máquina.** Furo achado pelo Fable:
+   um nó descarregado **continua recebendo trabalho headless pelos cabos** (o orquestrador
+   spawna `claude -p` próprio, não usa o PTY) — `_on_step_ts`/`_refresh_attention` chamam
+   `set_node_state(busy/idle/...)` direto e **apagariam um estado "unloaded" silenciosamente**.
+   Solução: a RENDERIZAÇÃO deriva — `set_node_state` (e o init do dot) mostram eject/rótulo
+   "descarregado" quando `s == "idle" and _node_unloaded(nid)`. Máquina intocada (nada em
+   `STATE_COLORS`/`ATTENTION_VISUAL_STATES`/attention/web); busy headless aparece como busy
+   (correto); ao voltar a idle o eject reaparece sozinho; zero transição nova.
+4. **Ícone: copiar/recolorir do lucide-static À MÃO** (não existe pipeline/script — os 6
+   SVGs são copiados e recoloridos manualmente, conferido no git log). **Lucide NÃO tem
+   "eject"** → autorar um eject trivial (triângulo+barra) pra manter consistência com o ⏏
+   da ação, ou usar `moon`; decidir na implementação. Tabelas de estado vivem em **3
+   lugares** — `canvas._STATE_GLYPH/_STATE_ICON/_STATE_PT`, `state.STATE_ACTIVITY` (rótulo
+   E3; sem entrada o status fica vazio) e `agents.STATE_COLORS` — com a camada-de-vista,
+   só os rótulos/ícone locais ganham entrada; `STATE_COLORS` fica INTOCADO.
+5. **Módulo novo sem GTK** `maestro/engine/proc_ram.py` (`tree_pids(root)` via
+   `/proc/<pid>/task/*/children` — exige CONFIG_PROC_CHILDREN, ok no kernel 6.12 do device;
+   `tree_ram(root) -> (rss, pss, private)`), unit-testável no venv contra árvore REAL
+   spawnada (bash+sleep filhos). PID morto entre listdir e read → retorno parcial silencioso.
+6. **Badge do nó descarregado = vazio, zerado NO PRÓPRIO `_unload_node`** (não esperar o
+   próximo tick — 10s de número velho é mentira temporária).
+7. **Notificação de RAM configurável (pedido do usuário, 2026-07-04):** limiar X MB
+   **GLOBAL por-nó** (caso de uso real do CM4: "nó passou de 500MB → considere descarregar");
+   por-nó no ⚙ e total-da-frota CORTADOS (YAGNI — Fable). Persistido em `ui_state`;
+   UI no diálogo do 💰 que vira "Limites" ($ e RAM) — **documentar a dual-persistência**
+   (budget no store, RAM no ui_state) pra ninguém "unificar" depois. Ao cruzar: `notify()`
+   + css `.node-ram-high` no badge. **Anti-flapping: HISTERESE** — notificação re-arma só
+   abaixo de **0.9·X** (o css pode seguir o limiar exato; só a notificação usa histerese).
+   Input: MB inteiro; "" = off (default); parse inválido = off, nunca crash.
+
+### 8.4 Riscos conhecidos (mitigação no desenho)
+- smaps_rollup de processo que morreu entre o listdir e o read → `ProcessLookupError`/
+  `FileNotFoundError` silenciosos (best-effort, nunca levanta).
+- **Minimapa NÃO pinta pela cor do estado** (claim v1 era FALSA — só recolore nós em
+  `ATTENTION_VISUAL_STATES`; o resto é azulado fixo): a distinção de descarregado exige
+  **branch explícito no `_mm_items`** (`_node_unloaded` → cinza apagado).
+- **Nó shell** (bash ocioso ≈ 3-5MB): badge aparece em todo nó com filho vivo — informação
+  barata e consistente; documentado como decisão (não bug).
+- **`_close_node` limpa o estado do worker de RAM** (dict de medições/alertas) — classe de
+  bug de id reciclado já conhecida no projeto.
+- Web UI (`canvas.js` tem `COLORS` próprio já divergente, sem "waiting") — dívida
+  PRÉ-EXISTENTE, não tocar neste bloco.
+
+**Critérios numéricos do teste vivo (aceite):**
+(a) trabalho na main thread por tick < 5ms (só `set_text`); (b) duração da medição no
+worker logada e < 300ms com 4+ nós claude reais no CM4; (c) badge vs `smem`/`ps` do mesmo
+processo: divergência ≤ 10%; (d) cruzar o limiar notifica 1x; oscilar ±5% em volta do
+limiar NÃO re-notifica (histerese provada); (e) reabrir o app com nó descarregado →
+dot/badge/minimapa corretos sem processo.
+
+### 8.5 Revisão adversarial (Fable) — resultado (2026-07-04)
+- **Item 1 SUSTENTADO** (ajuste: tooltip com 2 números, RSS cortado).
+- **Item 2 DERRUBADO** → worker thread + idle_add (conta refeita: 25-50 reads/tick,
+  ~100-150ms de jank na main loop do CM4).
+- **Item 3 DERRUBADO** → camada de vista, não estado: handoff headless num nó descarregado
+  sobrescreveria o estado "unloaded" silenciosamente (`_on_step_ts` chama `set_node_state`
+  direto — verificado no código). A alternativa é estritamente melhor: zero consumidor novo.
+- **Item 4 AJUSTADO**: premissa "mesmo pipeline" era falsa (SVGs copiados à mão); lucide
+  não tem eject; 3 tabelas de estado mapeadas.
+- **Itens 5/6 SUSTENTADOS** (com contrato de PID-morto e zerar badge no unload).
+- **Item 7 SUSTENTADO no global; AJUSTADO**: histerese 0.9·X contra flapping (furo
+  confirmado); por-nó e frota cortados (YAGNI); dual-persistência documentada.
+- **Furos adicionais incorporados** (§8.4): minimapa (claim falsa), nó shell, PID
+  reciclado no tick, critérios numéricos do teste vivo, limpeza no `_close_node`.
