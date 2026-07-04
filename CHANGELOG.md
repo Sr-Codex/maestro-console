@@ -3,9 +3,32 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
-## [0.56.0] — feat: unload de nó — Blocos A′+B (captura de sessão + ação "Descarregar")
-Stories A′ e B do plano `docs/21` ("unload de nó" p/ liberar RAM no CM4, item #3 do `docs/15`),
-acumuladas na mesma branch (decisão do usuário: 1 PR pra feature; blocos C/D seguem nela).
+## [0.56.0] — feat: unload de nó — Blocos A′+B+C (captura, "Descarregar" e "Retomar")
+Stories A′, B e C do plano `docs/21` ("unload de nó" p/ liberar RAM no CM4, item #3 do
+`docs/15`), acumuladas na mesma branch (decisão do usuário: 1 PR pra feature; D segue nela).
+
+### Bloco C — retomar (reload resume-aware) + startup SEM spawn
+- **Retomar = clique no TERMINAL do nó descarregado, ou ⏏ de novo** (a cápsula vira toggle).
+  O gesto fica no terminal, NÃO no frame: reposicionar o card pelo header nunca ressuscita o
+  nó. Hint no terminal morto ensina o caminho (`UNLOADED_HINT`, escrito no unload e no startup).
+- **Respawn resume-aware ONE-SHOT** (`_reload_node`/`_resume_argv`): **claude** retoma com
+  `--resume <sessão capturada no A′>` (flags do adapter TOML, `{id}` substituído); **codex**
+  retoma via `codex resume` (PICKER do CLI — não há captura por-workspace; sem flags de
+  permissão, que o subcomando não aceita — precedente do headless). `agent_argv` ganhou
+  `resume_session` (docstring documenta o contrato one-shot).
+- **Semântica DECIDIDA (não descoberta): "Retomar" = resume; "Reiniciar" = do zero.** O argv
+  de resume NUNCA muta `_base_argv` (docs/21 §3.6 — o argv natural é reusado pelos ~8
+  gatilhos de respawn); o respawn normal segue com o argv natural e limpa a flag.
+- **Startup sem spawn (o maior ganho de RAM):** nó com flag `unloaded` persistida NASCE sem
+  processo (`_make_node_term` → `_dead_terminal`) — reabrir o app não ressuscita N agentes;
+  o estado salvo nunca vira mentira visual ("abre igual fechou").
+- **Edges tratados:** `command` custom manda no nó (bypassa resume — §4-C); shell/sem captura
+  volta do zero; flag mentirosa com processo VIVO só corrige o estado (não empilha spawn);
+  monitor de atividade religa pela PREFERÊNCIA persistida (o unload só desliga o runtime),
+  com `skip` do banner de spawn (não vira falso "parou"). Auditoria: evento `reload` (ADR-17).
+- **Testes:** argv de resume provado contra os perfis REAIS dos TOML (venv, 4 testes) +
+  fluxo completo no canvas com métodos reais e fronteiras mockadas (gi, 7 testes: resume
+  claude/codex/custom/sem-sessão, no-op, startup-sem-spawn, toggle ⏏).
 
 ### Bloco B — ação "Descarregar" (⏏ na cápsula contextual do nó)
 - **SIGKILL direto, sem 3º estado** (ADR-23): revisão adversarial do Fable provou por spike de

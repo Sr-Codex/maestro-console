@@ -386,6 +386,17 @@ def make_terminal(argv: list[str], cwd: str | None = None,
     return term
 
 
+# unload (Bloco C): hint mostrado no terminal de um nó descarregado (sem processo)
+UNLOADED_HINT = "[maestro] ⏏ descarregado — clique no terminal (ou ⏏) pra retomar"
+
+
+def _dead_terminal() -> Vte.Terminal:
+    """Terminal SEM filho (nó descarregado nasce assim no startup — unload, Bloco C)."""
+    term = Vte.Terminal()
+    term.feed(f"\r\n  {UNLOADED_HINT}\r\n".encode())
+    return term
+
+
 class _Plane(Gtk.Fixed):
     """Gtk.Fixed que desenha os cabos (handoffs) atrás dos nós, no snapshot."""
 
@@ -1069,7 +1080,8 @@ class CanvasWindow:
         edt.add_css_class("note-ctx-btn")
         bar.append(edt)
         unl = self._fab_button(
-            "media-eject-symbolic", "⏏", "Descarregar (libera a RAM; o card fica p/ retomar)",
+            "media-eject-symbolic", "⏏",
+            "Descarregar (libera a RAM; o card fica) — descarregado, retoma",
             self._ctx_unload_node)
         unl.add_css_class("note-ctx-btn")
         bar.append(unl)
@@ -2025,7 +2037,11 @@ class CanvasWindow:
 
     def _ctx_unload_node(self) -> None:
         nid = self._sel_nid()
-        if nid is not None:
+        if nid is None:
+            return
+        if self._node_unloaded(nid):  # Bloco C: ⏏ num nó já descarregado = retomar
+            self._reload_node(nid)
+        else:
             self._confirm_unload(nid)
 
     def _ctx_close_node(self) -> None:
@@ -2117,10 +2133,7 @@ class CanvasWindow:
         head._drag_nid = nid
         self.heads[nid] = head
         frame._base_argv = argv  # argv "natural" (shell/agente) p/ o respawn voltar a ele
-        term = make_terminal(  # comando/cwd/env por-nó (Fase 3)
-            self._effective_argv(nid, argv),
-            self.model.node_cfg(nid, "cwd") or None,
-            self._node_envv(nid))
+        term = self._make_node_term(nid, argv)  # comando/cwd/env por-nó (Fase 3)
         frame._term = term  # ref p/ remover de self.terms ao fechar o nó
         term._respawn_state = "idle"  # state machine do respawn (hardening defensivo)
         term._respawn_pending = False
@@ -2131,6 +2144,13 @@ class CanvasWindow:
         fc.connect("enter", lambda _c, n=nid: self._on_term_focus(n))  # clicar/focar = selecionar
         fc.connect("leave", lambda _c, n=nid: self._on_term_unfocus(n))  # monitorar só desfocado
         term.add_controller(fc)  # rastreia o terminal em foco (fechar via Ctrl+Shift+W)
+        # unload (Bloco C): clique no TERMINAL de um nó descarregado = retomar. No terminal
+        # (não no frame): o frame inclui o header de arrasto — reposicionar o card pelo
+        # header não pode ressuscitar o nó. _reload_node é no-op se não estiver descarregado.
+        rl = Gtk.GestureClick()
+        rl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        rl.connect("pressed", lambda _g, _n, _x, _y, n=nid: self._reload_node(n))
+        term.add_controller(rl)
         # seleção em QUALQUER clique no card (fase CAPTURE = antes do VTE consumir; não claima,
         # então o terminal/arraste seguem). Cobre re-clicar um card já focado (foco-enter só
         # dispara em MUDANÇA de foco, então sozinho falhava ao re-selecionar após clicar fora).
@@ -3301,6 +3321,73 @@ class CanvasWindow:
         """True se o nó está descarregado (processo morto de propósito; card fica)."""
         return bool(self.model.node_cfg(nid, "unloaded"))
 
+    def _make_node_term(self, nid: str, argv: list[str]):
+        """Terminal do nó no `_add_node`. Nó com flag 'unloaded' NASCE SEM processo
+        (Bloco C — aqui mora o maior ganho de RAM: reabrir o app não ressuscita N
+        agentes; o estado persistido nunca vira mentira visual)."""
+        if self._node_unloaded(nid):
+            return _dead_terminal()
+        return make_terminal(
+            self._effective_argv(nid, argv),
+            self.model.node_cfg(nid, "cwd") or None,
+            self._node_envv(nid))
+
+    def _resume_argv(self, nid: str) -> list[str] | None:
+        """argv ONE-SHOT de retomada do nó, ou None se retomar não se aplica (o reload
+        cai no spawn normal): comando custom manda no nó (edge do docs/21 §4-C), shell
+        não tem sessão, e claude sem sessão capturada não tem o que retomar. codex
+        (modo subcommand) SEMPRE retoma via picker do CLI — o humano escolhe (§5)."""
+        if self.model.node_cfg(nid, "command").strip():
+            return None
+        base = self._agent_base(nid)
+        prof = installed_agents().get(base) if base else None
+        if prof is None or not self._ask_bus_dir:
+            return None
+        if prof.session_mode == "subcommand":
+            sid = ""  # codex: `resume` sem id = picker (não há captura por-workspace)
+        else:
+            sid = self._node_session(nid)
+            if not sid:
+                return None
+        return agent_argv(prof, str(self._node_ws(nid)), node=nid,
+                          ask_bus_dir=self._ask_bus_dir,
+                          auto_approve=self._node_auto_approve(nid),
+                          resume_session=sid)
+
+    def _reload_node(self, nid: str) -> None:
+        """Retoma um nó descarregado (unload — Bloco C): respawn RESUME-aware.
+
+        O argv de resume é ONE-SHOT — `_base_argv` NUNCA é mutado (docs/21 §3.6: o argv
+        natural é reusado pelos ~8 gatilhos de respawn). Semântica decidida na story:
+        **"Retomar" = resume da sessão capturada; "Reiniciar" = começar do ZERO** (o
+        respawn normal segue usando o argv natural e limpa a flag)."""
+        if not self._node_unloaded(nid):
+            return  # no-op: o gesto de clique no terminal dispara isto em qualquer nó
+        frame = self.frames.get(nid)
+        term = getattr(frame, "_term", None) if frame is not None else None
+        if term is None or getattr(term, "_destroyed", False):
+            return
+        if getattr(term, "_child_pid", None):  # flag mentiu (processo vivo): não empilha
+            self.model.clear_node_cfg(nid, "unloaded")  # spawn — só corrige o estado
+            return
+        argv = self._resume_argv(nid)
+        resumed = argv is not None
+        if argv is None:  # sem sessão/custom/shell → volta do zero com o argv natural
+            argv = self._node_argv(nid)
+        cwd = self.model.node_cfg(nid, "cwd") or None
+        if cwd and not os.path.isdir(cwd):  # espelha _do_respawn (M6)
+            cwd = None
+        self.model.clear_node_cfg(nid, "unloaded")
+        # religa o monitor pela PREFERÊNCIA persistida (o unload só desligou o runtime)
+        self._set_node_monitor(nid, self._monitor_default_on(nid))
+        if nid in self._mon:
+            self._mon[nid]["skip"] = True  # banner do spawn não vira falso "parou" (M1)
+        term.reset(True, True)
+        _spawn_into(term, argv, cwd, self._node_envv(nid))
+        self._audit("reload", node=nid, resume=resumed)
+        self._refresh_fleet_hud()
+        self.plane.queue_draw()
+
     def _unload_node(self, nid: str) -> None:
         """Descarrega o nó (unload — Bloco B): captura a sessão (A′), mata o processo SEM
         respawnar e persiste a flag 'unloaded' (o card fica; retomar = Bloco C).
@@ -3324,6 +3411,7 @@ class CanvasWindow:
             GLib.source_remove(src)
             term._respawn_force_src = None
         killed = self._signal_child(term, signal.SIGKILL)  # bwrap colapsa a árvore
+        term.feed(f"\r\n  {UNLOADED_HINT}\r\n".encode())  # ensina como retomar (Bloco C)
         self.model.set_node_cfg(nid, "unloaded", "1")  # persiste: "abre igual fechou"
         self.set_node_state(nid, "idle")  # sai de qualquer estado de atenção
         self._audit("unload", node=nid, killed=bool(killed))

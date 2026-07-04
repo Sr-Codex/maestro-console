@@ -104,7 +104,13 @@
   resume — verificar se o `--resume` **mantém ou forka** o session-id. (A captura resolve os dois
   casos por design; o spike só documenta o comportamento.)
 - **Interativo vs `-p`:** spike provou `-p`; confirmar no 1º nó interativo real (alta confiança).
-- **Re-ingestão no resume:** oferecer no unload a escolha **"esquecer" (barato) vs "retomar"**?
+- ✅ **Re-ingestão no resume (DECIDIDO na story C):** sem diálogo extra — **"Retomar" = resume;
+  "Reiniciar" = "esquecer"** (o respawn normal já usa o argv natural e limpa a flag). Dois
+  caminhos que já existem na UI; um 3º prompt seria cerimônia.
+- ✅ **Semântica do restart pós-resume (DECIDIDO na story C):** o argv de resume é ONE-SHOT
+  (nunca muta `_base_argv`) → "Reiniciar" SEMPRE começa do zero. Sem mudança silenciosa.
+- ✅ **Gatilho do reload (DECIDIDO na story C):** clique no **terminal** do nó descarregado
+  (não no frame — arrastar pelo header não pode ressuscitar) + ⏏ da cápsula vira toggle.
 - **codex + cwd:** o picker do `codex resume` não separa nós sozinho; o humano separa. Documentar.
 - **Escopo:** F separada; **não** encadear com "reattach de órfãos pós-crash" (item vizinho no
   `docs/15`).

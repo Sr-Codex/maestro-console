@@ -37,6 +37,7 @@ def agent_argv(
     node: str | None = None,
     ask_bus_dir: str | None = None,
     auto_approve: bool = False,
+    resume_session: str | None = None,
 ) -> list[str]:
     """argv do agente INTERATIVO (binário sem -p) confinado por bwrap.
 
@@ -49,6 +50,13 @@ def agent_argv(
     MAESTRO_NODE/MAESTRO_ASK_BUS/MAESTRO_BIN — habilita ``maestro-ask``/``maestri``
     de dentro do sandbox. **NUNCA** montar o ``<bus>`` inteiro (conteria as boxes
     irmãs → spoofing); a segurança vem da AUSÊNCIA do mount das outras boxes.
+
+    ``resume_session`` (unload — Bloco C): argv ONE-SHOT de retomada — o chamador NÃO
+    deve persisti-lo como argv base (docs/21 §3.6). Modo "flag" (claude): anexa os
+    flags de resume do adapter com o id capturado (``--resume <id>``). Modo
+    "subcommand" (codex): ``<cli> resume`` abre o PICKER do CLI (não há captura
+    por-workspace; o humano escolhe) e NÃO anexa flags de permissão — o subcomando
+    resume não os aceita (mesmo precedente do headless em ``adapters/base.py``).
     """
     shared = []
     setenv = {}
@@ -69,7 +77,13 @@ def agent_argv(
     # auto_approve: anexa as flags de "sem prompt" do CLI (só quando o nó pede; o
     # confinamento real é o bwrap — ADR-6). Flags declaradas no [interactive] do TOML.
     launch = profile.cmd[0]
-    if auto_approve and profile.interactive_auto_approve:
+    resume_subcmd = resume_session is not None and profile.session_mode == "subcommand"
+    if resume_subcmd:
+        launch += " resume"  # picker do CLI (codex); sem flags de permissão (não aceita)
+    elif resume_session and profile.session_resume:
+        flags = [a.replace("{id}", resume_session) for a in profile.session_resume]
+        launch += " " + " ".join(shlex.quote(a) for a in flags)
+    if auto_approve and profile.interactive_auto_approve and not resume_subcmd:
         launch += " " + " ".join(shlex.quote(a) for a in profile.interactive_auto_approve)
     inner = ["/bin/bash", "-c", f"{launch}; exec /bin/bash -i"]
     return sandbox_wrap(

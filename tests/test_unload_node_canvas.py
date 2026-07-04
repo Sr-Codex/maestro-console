@@ -23,6 +23,7 @@ def _term(pid=None, state="idle", pending=False):
         _child_pid=pid, _pidfd=None, _respawn_state=state,
         _respawn_pending=pending, _respawn_force_src=None, _destroyed=False,
         reset=lambda *_a: None,
+        feed=lambda *_a: None,  # Bloco C: o unload escreve o hint de retomada no terminal
     )
 
 
