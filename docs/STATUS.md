@@ -1,6 +1,6 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-03 · v0.55.0**.
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-04 · v0.56.0**.
 > **Fontes de verdade canônicas:** [`CHANGELOG.md`](../CHANGELOG.md) (histórico completo
 > v0.1.0→v0.55.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..22). Este arquivo resume o
 > estado; em caso de divergência, o CHANGELOG/ADR mandam. Os artefatos em `_bmad-output/`
@@ -94,6 +94,22 @@
 - **Budget cap** (Bloco D, v0.55.0, ADR-22): teto de $ que avisa (soft) e barra (hard) o gasto;
   contador monotônico host-side (anti-laundering), barra no `delegate`, HUD + config/reset (botão 💰).
 
+### Unload de nó — liberar RAM no CM4 (v0.56.0, Blocos A′+B+C+D), ver [`docs/21-plano-unload-no-ram.md`](21-plano-unload-no-ram.md) + ADR-23
+- **Ciclo completo medir→decidir→descarregar→retomar**, rota kill-and-resume por CAPTURA de
+  sessão (Congelar/CRIU descartados; injeção de `--session-id` fixo derrubada pelo Fable).
+- **A′ (captura):** JSONL mais novo no dir de projeto exclusivo do nó (`_node_ws`) → chave
+  própria `nodecfg_{nid}_session` no `ui_state` (NÃO a tabela `sessions` do F1); limpa no ✕.
+- **B (⏏ Descarregar):** cápsula contextual; confirmação sempre (guard `tui_busy` reforça);
+  SIGKILL direto (ADR-23: bwrap não repassa SIGTERM) + anti-race do respawn em voo; flag
+  `unloaded` persiste ("abre igual fechou").
+- **C (Retomar):** clique no terminal morto (hint ensina) ou ⏏ de novo; claude `--resume
+  <capturada>`, codex via picker; argv ONE-SHOT (nunca muta `_base_argv`) → **"Reiniciar" =
+  do zero**; **startup sem spawn** (nó descarregado nasce sem processo — o maior ganho).
+- **D (visibilidade):** badge de RAM por nó (PSS + tooltip com Private; árvore via
+  `engine/proc_ram.py` em worker thread, jamais na main loop — revisão Fable §8.5); vista
+  "descarregado" derivada (idle+flag → ⏏; sem estado novo na máquina); minimapa cinza;
+  **limiar de notificação de RAM configurável** no 💰 "Limites" (histerese 0.9×X anti-flapping).
+
 ## O que NÃO está feito (lacunas conhecidas)
 - **F1 completo** (v0.52→0.55): medidor + budget cap entregues. Extensões possíveis: teto por-linhagem,
   estimativa pré-turno, teto de tokens p/ Codex sem preço (ver docs/20 §4).
@@ -109,7 +125,8 @@
 ## Stack / device
 - **Linux aarch64** (Kali) no **ClockworkPi uConsole / CM4**; **Python ≥3.11**.
 - Canvas: **GTK4 + VTE-gtk4** (PyGObject), python do sistema. Engine: venv.
-- **513 testes** (pytest, +12 skip) + live opt-in (bwrap: socket-em-sandbox, drill do kill-switch); lint **ruff**.
+- **541 testes** (pytest, +16 skip; os gi rodam no python do sistema) + live opt-in (bwrap:
+  socket-em-sandbox, drill do kill-switch); lint **ruff**.
 
 ## Como navegar a documentação
 - **Estado atual:** este arquivo. · **Histórico de versões:** `CHANGELOG.md`. · **Decisões:** `docs/ADR.md`.

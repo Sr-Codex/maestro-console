@@ -67,6 +67,7 @@ from ..engine.notes import (  # noqa: E402
     md_wrap_toggle,
     note_to_file,
 )
+from ..engine.proc_ram import alert_step, parse_limit_mb, tree_ram_mb  # noqa: E402
 from ..engine.roles import (  # noqa: E402
     discover_roles,
     install_role_block,
@@ -75,6 +76,7 @@ from ..engine.roles import (  # noqa: E402
     save_role_library,
     write_role_sidecar,
 )
+from ..engine.session_capture import newest_session_id  # noqa: E402
 from ..engine.state.store import Store  # noqa: E402
 from ..engine.team_templates import (  # noqa: E402
     BUILTIN_TEAM_TEMPLATES,
@@ -385,6 +387,17 @@ def make_terminal(argv: list[str], cwd: str | None = None,
     return term
 
 
+# unload (Bloco C): hint mostrado no terminal de um nó descarregado (sem processo)
+UNLOADED_HINT = "[maestro] ⏏ descarregado — clique no terminal (ou ⏏) pra retomar"
+
+
+def _dead_terminal() -> Vte.Terminal:
+    """Terminal SEM filho (nó descarregado nasce assim no startup — unload, Bloco C)."""
+    term = Vte.Terminal()
+    term.feed(f"\r\n  {UNLOADED_HINT}\r\n".encode())
+    return term
+
+
 class _Plane(Gtk.Fixed):
     """Gtk.Fixed que desenha os cabos (handoffs) atrás dos nós, no snapshot."""
 
@@ -498,6 +511,8 @@ class CanvasWindow:
         self._node_state: dict[str, str] = {}  # estado ATUAL por nó (atenção ∪ visual + minimapa)
         self._mon: dict[str, dict] = {}  # monitorar atividade por-nó (Fase 4): handler/quiet/active
         self._mon_alerted: set[str] = set()  # nós com alerta de atenção ativo (limpa ao focar)
+        self._ram_alerted: set[str] = set()  # nós acima do limiar de RAM (histerese — Bloco D)
+        self._ram_stop: threading.Event | None = None  # sinal de parada do ram watcher
         self._selected: tuple[str, str] | None = None  # (kind, id) selecionado (borda azul)
         self._note_editing: str | None = None  # nota em edição in-place (formata ao sair)
         self._ptr_over: tuple[str, str] | None = None  # (kind,id) sob o cursor (roteio do scroll)
@@ -650,6 +665,8 @@ class CanvasWindow:
             ".node-status { font-size: 10px; color: #9399b2; margin: 0 6px; }",
             # F1: custo/tokens no header — mesmo padrão discreto do status
             ".node-cost { font-size: 10px; color: #9399b2; margin: 0 4px; }",
+            ".node-ram { font-size: 10px; color: #9399b2; margin: 0 4px; }",
+            ".node-ram-high { color: #ef4444; font-weight: bold; }",  # acima do limiar (D)
             # B2: rodapé que ensina os atalhos (Zellij-like)
             ".hintbar { font-size: 10px; color: #9399b2; padding: 2px 8px;"
             " background-color: #181825; border-top: 1px solid #313244; }",
@@ -917,7 +934,7 @@ class CanvasWindow:
                 "process-stop-symbolic", "⛔", "Parar TODOS os agentes (kill-switch)",
                 self._confirm_kill_all, css="fab-stop"))
             bar.append(self._fab_button(  # F1 Bloco D: teto de gasto ($)
-                "wallet-symbolic", "💰", "Budget: teto de gasto dos agentes",
+                "wallet-symbolic", "💰", "Limites: gasto dos agentes ($) e RAM por nó",
                 self._budget_dialog))
         # — config de software / features globais —
         add("folder-symbolic", "📁", "Árvore de arquivos", "filetree")
@@ -1067,6 +1084,12 @@ class CanvasWindow:
             self._ctx_edit_node)
         edt.add_css_class("note-ctx-btn")
         bar.append(edt)
+        unl = self._fab_button(
+            "media-eject-symbolic", "⏏",
+            "Descarregar (libera a RAM; o card fica) — descarregado, retoma",
+            self._ctx_unload_node)
+        unl.add_css_class("note-ctx-btn")
+        bar.append(unl)
         dele = self._fab_button(
             "user-trash-symbolic", "🗑", "Fechar terminal (remove do canvas)",
             self._ctx_close_node)
@@ -2017,6 +2040,15 @@ class CanvasWindow:
         if nid is not None:
             self._focus_node(nid)
 
+    def _ctx_unload_node(self) -> None:
+        nid = self._sel_nid()
+        if nid is None:
+            return
+        if self._node_unloaded(nid):  # Bloco C: ⏏ num nó já descarregado = retomar
+            self._reload_node(nid)
+        else:
+            self._confirm_unload(nid)
+
     def _ctx_close_node(self) -> None:
         nid = self._sel_nid()
         if nid is not None:
@@ -2095,6 +2127,10 @@ class CanvasWindow:
         cost.add_css_class("node-cost")  # mesmo padrão discreto do .node-status (10px)
         head._cost = cost
         head.append(cost)
+        ram = Gtk.Label(label="")  # Bloco D: RAM da árvore do nó (PSS, via worker thread)
+        ram.add_css_class("node-ram")  # mesmo padrão discreto do .node-cost
+        head._ram = ram
+        head.append(ram)
         nclose = Gtk.Button(label="✕")
         nclose.set_has_frame(False)
         nclose.set_tooltip_text("fechar este terminal (remove do canvas nesta sessão)")
@@ -2106,10 +2142,7 @@ class CanvasWindow:
         head._drag_nid = nid
         self.heads[nid] = head
         frame._base_argv = argv  # argv "natural" (shell/agente) p/ o respawn voltar a ele
-        term = make_terminal(  # comando/cwd/env por-nó (Fase 3)
-            self._effective_argv(nid, argv),
-            self.model.node_cfg(nid, "cwd") or None,
-            self._node_envv(nid))
+        term = self._make_node_term(nid, argv)  # comando/cwd/env por-nó (Fase 3)
         frame._term = term  # ref p/ remover de self.terms ao fechar o nó
         term._respawn_state = "idle"  # state machine do respawn (hardening defensivo)
         term._respawn_pending = False
@@ -2120,6 +2153,13 @@ class CanvasWindow:
         fc.connect("enter", lambda _c, n=nid: self._on_term_focus(n))  # clicar/focar = selecionar
         fc.connect("leave", lambda _c, n=nid: self._on_term_unfocus(n))  # monitorar só desfocado
         term.add_controller(fc)  # rastreia o terminal em foco (fechar via Ctrl+Shift+W)
+        # unload (Bloco C): clique no TERMINAL de um nó descarregado = retomar. No terminal
+        # (não no frame): o frame inclui o header de arrasto — reposicionar o card pelo
+        # header não pode ressuscitar o nó. _reload_node é no-op se não estiver descarregado.
+        rl = Gtk.GestureClick()
+        rl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        rl.connect("pressed", lambda _g, _n, _x, _y, n=nid: self._reload_node(n))
+        term.add_controller(rl)
         # seleção em QUALQUER clique no card (fase CAPTURE = antes do VTE consumir; não claima,
         # então o terminal/arraste seguem). Cobre re-clicar um card já focado (foco-enter só
         # dispara em MUDANÇA de foco, então sozinho falhava ao re-selecionar após clicar fora).
@@ -2135,6 +2175,8 @@ class CanvasWindow:
         term.set_size_request(int(sz[0]), int(sz[1]))
         self.terms.append(term)
         self.frames[nid] = frame  # registra antes de aplicar a fonte (lookup em _apply_node_font)
+        if self._node_unloaded(nid):  # nasceu descarregado (Bloco C): dot/status refletem já
+            self.set_node_state(nid, "idle")  # camada de vista (idle+flag → eject)
         self._apply_node_font(nid)  # fonte por-nó/global + escala (persistido)
         ncolor = self.model.node_cfg(nid, "color")  # cor accent persistida (Fase 1)
         if ncolor:
@@ -2314,6 +2356,9 @@ class CanvasWindow:
             self._sock_server.remove_node(nid)
         self._agent_nids.discard(nid)  # sai do fleet
         self._recruited_by.pop(nid, None)  # sai da linhagem
+        self.model.clear_node_cfg(nid, "session")  # unload A′: id órfão não herda sessão morta
+        self.model.clear_node_cfg(nid, "unloaded")  # unload B: nem a flag de descarregado
+        self._ram_alerted.discard(nid)  # unload D: id reciclado não herda alerta de RAM
         base = self._agent_base(nid)  # desregistra a INSTÂNCIA do controller (libera o id)
         if self.controller is not None and base is not None and nid != base:
             try:
@@ -2843,6 +2888,8 @@ class CanvasWindow:
             if st in ATTENTION_VISUAL_STATES:  # realce: nó que precisa de você vira a cor do estado
                 h = STATE_COLORS.get(st, "#f59e0b").lstrip("#")
                 col = tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+            elif self._node_unloaded(nid):  # descarregado: cinza apagado (Bloco D — o
+                col = (0.35, 0.37, 0.42)  # minimapa NÃO pinta por estado; branch explícito)
             else:
                 col = (0.55, 0.60, 0.85)  # nós: azulado (padrão)
             items.append((bx, by, nw, nh, col))
@@ -3031,6 +3078,9 @@ class CanvasWindow:
             cwd = None
         if nid in self._mon:  # M1: o BANNER do restart não deve virar falso "parou"
             self._mon[nid]["skip"] = True
+        if self._node_unloaded(nid):  # respawnou → não está mais descarregado
+            self.model.clear_node_cfg(nid, "unloaded")
+            self.set_node_state(nid, self._node_state.get(nid, "idle"))  # tira a vista ⏏
         term.reset(True, True)  # limpa tela + scrollback p/ um restart limpo
         _spawn_into(term, self._node_argv(nid), cwd, self._node_envv(nid))
         return False  # idle one-shot
@@ -3159,6 +3209,84 @@ class CanvasWindow:
         lbl.set_tooltip_text(
             f"{u.input_tokens + u.output_tokens} tokens acumulados · ${u.cost_usd:.4f}")
 
+    # -- Bloco D: RAM por nó (worker thread; docs/21 §8) --
+    @staticmethod
+    def _fmt_ram(pss_mb: float) -> str:
+        """Rótulo curto do badge de RAM: '312 MB' / '1.2 GB'; '' quando nada medido."""
+        if pss_mb <= 0:
+            return ""
+        if pss_mb >= 1024:
+            return f"{pss_mb / 1024:.1f} GB"
+        return f"{pss_mb:.0f} MB"
+
+    def _ram_limit_mb(self) -> int:
+        """Limiar de notificação de RAM (MB) persistido; 0 = desligado (default)."""
+        st = getattr(self, "_store", None)
+        return parse_limit_mb(st.get_ui("ram_limit_mb") if st is not None else None)
+
+    def _set_ram_label(self, nid: str, text: str, *, high: bool,
+                       tooltip: str | None = None) -> None:
+        head = self.heads.get(nid)
+        lbl = getattr(head, "_ram", None) if head is not None else None
+        if lbl is None:
+            return
+        lbl.set_text(text)
+        if tooltip is not None:
+            lbl.set_tooltip_text(tooltip)
+        if high:
+            lbl.add_css_class("node-ram-high")
+        else:
+            lbl.remove_css_class("node-ram-high")
+
+    def start_ram_watcher(self, interval: int = 10) -> None:
+        """Worker de RAM por nó: mede a árvore de cada nó com filho vivo em THREAD
+        (smaps_rollup varre as VMAs no kernel — JAMAIS na main loop do CM4; revisão do
+        Fable, docs/21 §8.5) e marshala só o set_text via idle_add (padrão usage_bus).
+        Relê `_child_pid` a cada passada — nunca cacheia a árvore entre ticks (respawn
+        no meio do tick mede o processo novo ou nada, nunca um estranho)."""
+        self._ram_stop = threading.Event()
+
+        def _loop():
+            while not self._ram_stop.wait(interval):
+                try:
+                    pids = {nid: getattr(getattr(f, "_term", None), "_child_pid", None)
+                            for nid, f in list(self.frames.items())}
+                    t0 = time.monotonic()
+                    res = {nid: tree_ram_mb(pid) for nid, pid in pids.items() if pid}
+                    dt = time.monotonic() - t0
+                    if dt > 0.3:  # critério de aceite (b) do plano: logar quando estourar
+                        _log.warning("ram watcher: medição levou %.0fms", dt * 1000)
+                    GLib.idle_add(self._apply_ram, res)
+                except Exception as exc:  # nunca derruba o worker
+                    _log.debug("ram watcher: %s", exc)
+
+        t = threading.Thread(target=_loop, daemon=True, name="ram-watcher")
+        self._ram_thread = t
+        t.start()
+
+    def _apply_ram(self, res: dict) -> bool:
+        """Aplica UMA passada de medição na UI (main thread, só set_text — <5ms).
+        Limiar: css segue o limiar exato; a NOTIFICAÇÃO usa histerese 0.9×X
+        (anti-flapping — docs/21 §8.3-7)."""
+        limit = self._ram_limit_mb()
+        for nid, (_rss, pss, private) in res.items():
+            if nid not in self.frames or self._node_unloaded(nid):
+                continue  # fechou/descarregou entre a medição e o apply
+            high = bool(limit) and pss >= limit
+            tip = (f"peso real (PSS) {pss:.0f} MB · "
+                   f"liberável ao descarregar (Private) {private:.0f} MB")
+            self._set_ram_label(nid, self._fmt_ram(pss), high=high, tooltip=tip)
+            alerted, fire = alert_step(nid in self._ram_alerted, pss, limit)
+            if alerted:
+                self._ram_alerted.add(nid)
+            else:
+                self._ram_alerted.discard(nid)
+            if fire:
+                name = self.model.node_name(nid, nid)
+                notify(f"maestro: {name} usando {pss:.0f} MB",
+                       f"acima do limiar de {limit} MB — considere ⏏ descarregar")
+        return False  # idle one-shot
+
     def set_node_state(self, nid: str, state: str) -> None:
         """Estado do nó vira um ÍCONE Lucide (pré-colorido) no cabeçalho — cor+forma+tooltip. UI-1.
         Rastreia o estado em `_node_state` (fonte p/ a atenção ∪ visual e o realce no minimapa) e,
@@ -3169,12 +3297,24 @@ class CanvasWindow:
         head = self.heads.get(nid)
         dot = getattr(head, "_dot", None) if head is not None else None
         if dot is not None:
-            if hasattr(dot, "set_from_icon_name"):  # Gtk.Image (produção)
-                dot.set_from_icon_name(_STATE_ICON.get(s, _STATE_ICON["idle"]))
-            dot.set_tooltip_text(_STATE_PT.get(s, s))
-            st_lbl = getattr(head, "_status", None)  # E3: status proativo ("fazendo X")
-            if st_lbl is not None:
-                st_lbl.set_text(state_activity(s))
+            # "descarregado" é CAMADA DE VISTA sobre idle+flag, NÃO estado da máquina
+            # (docs/21 §8.3-3/Fable): um handoff headless num nó descarregado seta busy
+            # por cima (correto — o cabo trabalha sem o PTY) e, ao voltar a idle, o
+            # eject reaparece sozinho. Nada muda em STATE_COLORS/attention/web.
+            if s == "idle" and self._node_unloaded(nid):
+                if hasattr(dot, "set_from_icon_name"):  # Gtk.Image (produção)
+                    dot.set_from_icon_name("maestro-state-unloaded")
+                dot.set_tooltip_text("descarregado (clique no terminal p/ retomar)")
+                st_lbl = getattr(head, "_status", None)
+                if st_lbl is not None:
+                    st_lbl.set_text("descarregado")
+            else:
+                if hasattr(dot, "set_from_icon_name"):  # Gtk.Image (produção)
+                    dot.set_from_icon_name(_STATE_ICON.get(s, _STATE_ICON["idle"]))
+                dot.set_tooltip_text(_STATE_PT.get(s, s))
+                st_lbl = getattr(head, "_status", None)  # E3: status proativo
+                if st_lbl is not None:
+                    st_lbl.set_text(state_activity(s))
         # atenção ∪ visual: só recomputa quando a transição envolve um estado de atenção
         # (evita varrer o Store a cada toggle idle↔busy de handoff — barato no CM4).
         if prev in ATTENTION_VISUAL_STATES or s in ATTENTION_VISUAL_STATES:
@@ -3267,6 +3407,164 @@ class CanvasWindow:
     def _node_ws(self, nid: str):
         base_home = Path(self._ask_bus_dir).parent
         return Workspace(str(base_home / "workspaces")).path(nid)
+
+    # -- ciclo de vida da sessão do nó (unload — Bloco A′) --
+    def _capture_node_session(self, nid: str) -> str | None:
+        """Lê o JSONL mais novo no dir de projeto exclusivo do nó (`_node_ws`) e persiste o
+        session-id capturado em `nodecfg_{nid}_session` (ui_state → sobrevive a restart).
+        Chave PRÓPRIA do canvas — NÃO a tabela `sessions` do orquestrador (evita colidir com
+        o medidor/budget F1). Retorna o id capturado, ou None se o nó ainda não gravou sessão."""
+        sid = newest_session_id(self._node_ws(nid))
+        if sid:
+            self.model.set_node_cfg(nid, "session", sid)
+        return sid
+
+    def _node_session(self, nid: str) -> str:
+        """Session-id persistido do nó (capturado), ou "" se nenhum. Base do reload (Bloco C)."""
+        return self.model.node_cfg(nid, "session")
+
+    def _node_unloaded(self, nid: str) -> bool:
+        """True se o nó está descarregado (processo morto de propósito; card fica)."""
+        return bool(self.model.node_cfg(nid, "unloaded"))
+
+    def _make_node_term(self, nid: str, argv: list[str]):
+        """Terminal do nó no `_add_node`. Nó com flag 'unloaded' NASCE SEM processo
+        (Bloco C — aqui mora o maior ganho de RAM: reabrir o app não ressuscita N
+        agentes; o estado persistido nunca vira mentira visual)."""
+        if self._node_unloaded(nid):
+            return _dead_terminal()
+        return make_terminal(
+            self._effective_argv(nid, argv),
+            self.model.node_cfg(nid, "cwd") or None,
+            self._node_envv(nid))
+
+    def _resume_argv(self, nid: str) -> list[str] | None:
+        """argv ONE-SHOT de retomada do nó, ou None se retomar não se aplica (o reload
+        cai no spawn normal): comando custom manda no nó (edge do docs/21 §4-C), shell
+        não tem sessão, e claude sem sessão capturada não tem o que retomar. codex
+        (modo subcommand) SEMPRE retoma via picker do CLI — o humano escolhe (§5)."""
+        if self.model.node_cfg(nid, "command").strip():
+            return None
+        base = self._agent_base(nid)
+        prof = installed_agents().get(base) if base else None
+        if prof is None or not self._ask_bus_dir:
+            return None
+        if prof.session_mode == "subcommand":
+            sid = ""  # codex: `resume` sem id = picker (não há captura por-workspace)
+        else:
+            sid = self._node_session(nid)
+            if not sid:
+                return None
+        return agent_argv(prof, str(self._node_ws(nid)), node=nid,
+                          ask_bus_dir=self._ask_bus_dir,
+                          auto_approve=self._node_auto_approve(nid),
+                          resume_session=sid)
+
+    def _reload_node(self, nid: str) -> None:
+        """Retoma um nó descarregado (unload — Bloco C): respawn RESUME-aware.
+
+        O argv de resume é ONE-SHOT — `_base_argv` NUNCA é mutado (docs/21 §3.6: o argv
+        natural é reusado pelos ~8 gatilhos de respawn). Semântica decidida na story:
+        **"Retomar" = resume da sessão capturada; "Reiniciar" = começar do ZERO** (o
+        respawn normal segue usando o argv natural e limpa a flag)."""
+        if not self._node_unloaded(nid):
+            return  # no-op: o gesto de clique no terminal dispara isto em qualquer nó
+        frame = self.frames.get(nid)
+        term = getattr(frame, "_term", None) if frame is not None else None
+        if term is None or getattr(term, "_destroyed", False):
+            return
+        if getattr(term, "_child_pid", None):  # flag mentiu (processo vivo): não empilha
+            self.model.clear_node_cfg(nid, "unloaded")  # spawn — só corrige o estado
+            return
+        argv = self._resume_argv(nid)
+        resumed = argv is not None
+        if argv is None:  # sem sessão/custom/shell → volta do zero com o argv natural
+            argv = self._node_argv(nid)
+        cwd = self.model.node_cfg(nid, "cwd") or None
+        if cwd and not os.path.isdir(cwd):  # espelha _do_respawn (M6)
+            cwd = None
+        self.model.clear_node_cfg(nid, "unloaded")
+        # religa o monitor pela PREFERÊNCIA persistida (o unload só desligou o runtime)
+        self._set_node_monitor(nid, self._monitor_default_on(nid))
+        if nid in self._mon:
+            self._mon[nid]["skip"] = True  # banner do spawn não vira falso "parou" (M1)
+        term.reset(True, True)
+        _spawn_into(term, argv, cwd, self._node_envv(nid))
+        self.set_node_state(nid, self._node_state.get(nid, "idle"))  # tira a vista ⏏ (D)
+        self._audit("reload", node=nid, resume=resumed)
+        self._refresh_fleet_hud()
+        self.plane.queue_draw()
+
+    def _unload_node(self, nid: str) -> None:
+        """Descarrega o nó (unload — Bloco B): captura a sessão (A′), mata o processo SEM
+        respawnar e persiste a flag 'unloaded' (o card fica; retomar = Bloco C).
+
+        SIGKILL direto (espelha _kill_all_agents), não a escalada SIGTERM→SIGKILL do
+        respawn: dentro do bwrap o SIGTERM NEM CHEGA ao CLI (ADR-23) — a escalada seria
+        ilusão. A conversa já está no JSONL do disco; o kill não a perde."""
+        frame = self.frames.get(nid)
+        term = getattr(frame, "_term", None) if frame is not None else None
+        if term is None:
+            return
+        self._capture_node_session(nid)  # A′: persiste a sessão viva ANTES de matar
+        self._set_node_monitor(nid, False)  # senão a morte vira falso "é sua vez"
+        self._mon_alerted.discard(nid)
+        # anti-race (revisão Fable): um respawn em voo ("killing"/pending) faria o
+        # _on_child_exited RESSUSCITAR o nó logo após o unload — zera antes do kill.
+        term._respawn_state = "idle"
+        term._respawn_pending = False
+        src = getattr(term, "_respawn_force_src", None)
+        if src:
+            GLib.source_remove(src)
+            term._respawn_force_src = None
+        killed = self._signal_child(term, signal.SIGKILL)  # bwrap colapsa a árvore
+        term.feed(f"\r\n  {UNLOADED_HINT}\r\n".encode())  # ensina como retomar (Bloco C)
+        self.model.set_node_cfg(nid, "unloaded", "1")  # persiste: "abre igual fechou"
+        self.set_node_state(nid, "idle")  # sai de atenção; vista idle+flag → eject (D)
+        self._set_ram_label(nid, "", high=False)  # zera JÁ (10s de número velho = mentira)
+        self._ram_alerted.discard(nid)
+        self._audit("unload", node=nid, killed=bool(killed))
+        self._refresh_fleet_hud()
+        self.plane.queue_draw()
+
+    @staticmethod
+    def _unload_msg(busy: bool) -> str:
+        """Texto da confirmação do descarregar (puro, testável). Confirmação SEMPRE —
+        `tui_busy` tem falso negativo (tela scrollada/prompt de permissão), então o
+        guard reforça o aviso quando ocupado, mas nunca substitui a confirmação."""
+        base = ("Mata o processo pra liberar RAM. O card fica no canvas e a\n"
+                "conversa é retomada ao recarregar (a sessão já está no disco).")
+        if busy:
+            return ("⚠ O agente parece estar TRABALHANDO — descarregar agora\n"
+                    "interrompe o turno em voo (o retomar devolve só o que já\n"
+                    "foi gravado; o que o turno já fez no workspace FICA).\n\n" + base)
+        return base
+
+    def _confirm_unload(self, nid: str) -> None:
+        """Confirmação do descarregar (ação destrutiva p/ o turno em voo)."""
+        frame = self.frames.get(nid)
+        term = getattr(frame, "_term", None) if frame is not None else None
+        if term is None:
+            return
+        busy = tui_busy(self._term_text(term))
+        name = self.model.node_name(nid, nid)
+        dlg, box = self._dialog(f"⏏ Descarregar {name}")
+        msg = Gtk.Label(label=self._unload_msg(busy))
+        msg.set_wrap(True)
+        msg.set_xalign(0.0)
+        box.append(msg)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.set_halign(Gtk.Align.END)
+        cancel = Gtk.Button(label="Cancelar")
+        cancel.connect("clicked", lambda _b: dlg.destroy())
+        go = Gtk.Button(label="⏏ Descarregar")
+        if busy:
+            go.add_css_class("destructive-action")
+        go.connect("clicked", lambda _b: (self._unload_node(nid), dlg.destroy()))
+        row.append(cancel)
+        row.append(go)
+        box.append(row)
+        dlg.present()
 
     # -- Responsabilidades (roles) por terminal (Fase 5) --
     @staticmethod
@@ -3865,27 +4163,31 @@ class CanvasWindow:
             self._budget_notified = False
 
     def _budget_dialog(self, *_a) -> None:
-        """Config do teto (hard/soft $) + zerar. SÓ o host mexe (nunca comando de agente)."""
+        """Config dos LIMITES — teto de gasto (hard/soft $) + limiar de RAM por nó (MB) —
+        e zerar. SÓ o host mexe (nunca comando de agente). Dual-persistência de
+        PROPÓSITO: budget = contador no store (ADR-22, monotônico); limiar de RAM =
+        `ui_state` (config de UI, "abre igual fechou") — não "unificar"."""
         if self._store is None:
             return
-        dlg = Gtk.Window(title="Budget — teto de gasto do fleet")
+        dlg = Gtk.Window(title="Limites — gasto do fleet ($) e RAM por nó")
         dlg.set_modal(True)
+        dlg.set_default_size(380, -1)  # sem isto, o label wrap estica a janela p/ tela cheia
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         for m in ("top", "bottom", "start", "end"):
             getattr(box, f"set_margin_{m}")(14)
-        hint = Gtk.Label(xalign=0, wrap=True, label=(
+        hint = Gtk.Label(xalign=0, wrap=True, max_width_chars=44, label=(
             "Teto de gasto dos agentes (USD). Vazio = sem teto. No HARD, os runs mediados param "
             "até você zerar. SOFT (só aviso) vazio = 75% do hard. O contador só sobe — o agente "
             "não consegue baixá-lo; zere você aqui."))
         hint.add_css_class("dim-label")
         box.append(hint)
 
-        def row(label, key):
+        def row(label, key, placeholder="$"):
             r = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             r.append(Gtk.Label(label=label))
             e = Gtk.Entry()
             e.set_max_width_chars(8)
-            e.set_placeholder_text("$")
+            e.set_placeholder_text(placeholder)
             e.set_text(self._store.get_ui(f"budget_{key}") or "")
             r.append(e)
             box.append(r)
@@ -3893,6 +4195,19 @@ class CanvasWindow:
 
         hard_e = row("Hard (barra):", "hard")
         soft_e = row("Soft (avisa):", "soft")
+        ram_hint = Gtk.Label(xalign=0, wrap=True, max_width_chars=44, label=(
+            "RAM por nó (MB): notifica quando a árvore de um nó passar do limiar — "
+            "considere ⏏ descarregar. Vazio = desligado. Re-arma abaixo de 90% do limiar."))
+        ram_hint.add_css_class("dim-label")
+        box.append(ram_hint)
+        ram_r = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        ram_r.append(Gtk.Label(label="RAM por nó (avisa):"))
+        ram_e = Gtk.Entry()
+        ram_e.set_max_width_chars(8)
+        ram_e.set_placeholder_text("MB")
+        ram_e.set_text(self._store.get_ui("ram_limit_mb") or "")
+        ram_r.append(ram_e)
+        box.append(ram_r)
         _spent = budget.counted_spend(self._store)
         spent_lbl = Gtk.Label(xalign=0, label=f"Gasto contado agora: ${_spent:.4f}")
         spent_lbl.add_css_class("dim-label")
@@ -3913,6 +4228,8 @@ class CanvasWindow:
         def do_salvar(_b):
             self._store.set_ui("budget_hard", hard_e.get_text().strip())
             self._store.set_ui("budget_soft", soft_e.get_text().strip())
+            self._store.set_ui("ram_limit_mb", ram_e.get_text().strip())  # parse no uso
+            self._ram_alerted.clear()  # limiar mudou → rearma os alertas de RAM
             self._budget_notified = False  # rearma o aviso
             self._refresh_fleet_hud()
             dlg.close()
@@ -6954,6 +7271,7 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         GLib.timeout_add(80, win._fit_view)  # centraliza a vista no conteúdo (viewport já com tamanho real)
         state["win"] = win  # ref p/ re-ativação idempotente (W5)
         win.start_ask_watcher()  # poll do mailbox dos cabos interativos (ADR-11)
+        win.start_ram_watcher()  # badge de RAM por nó em worker thread (unload — Bloco D)
         # tick in-app do scheduler: dispara routines vencidas enquanto aberto (V10-S4)
         GLib.timeout_add_seconds(30, win._routines_tick)
         # attention: realça/notifica o que precisa de você (V11-S1)
@@ -6964,6 +7282,8 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         win = state.get("win")  # F7: encerra o servidor de socket (fecha listeners, unlink)
         if win is not None and getattr(win, "_sock_server", None) is not None:
             win._sock_server.stop()
+        if win is not None and getattr(win, "_ram_stop", None) is not None:
+            win._ram_stop.set()  # encerra o worker de RAM (daemon; set é só higiene)
         st = state.get("store")
         if st is not None:
             st.close()

@@ -3,6 +3,101 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.56.0] — feat: unload de nó — Blocos A′+B+C+D (a feature completa)
+Stories A′, B, C e D do plano `docs/21` ("unload de nó" p/ liberar RAM no CM4, item #3 do
+`docs/15`), acumuladas na mesma branch (decisão do usuário: 1 PR pra feature inteira).
+Fecha o loop **medir → decidir → descarregar → retomar**.
+
+### Bloco D — badge de RAM + vista "descarregado" + limiar de notificação (plano §8, revisado pelo Fable)
+- **Badge de RAM por nó** no header (padrão do medidor de custo F1): PSS ("peso real") +
+  tooltip com Private ("liberável ao descarregar"). Medição da ÁRVORE inteira do nó
+  (bwrap→bash→CLI+filhos) via `/proc/<pid>/smaps_rollup` — módulo novo **`engine/proc_ram.py`**
+  (sem GTK, testado contra árvore REAL spawnada).
+- **Worker THREAD (tick 10s) + `idle_add` só pro set_text** — decisão da revisão adversarial
+  do Fable (§8.5): o rollup varre as VMAs no kernel; medir na main loop custaria ~100-150ms
+  de jank por tick no CM4. Relê `_child_pid` a cada passada (respawn no meio do tick nunca
+  mede um processo estranho); mede só nós com filho vivo; loga medição >300ms (critério (b)).
+- **Vista "descarregado" SEM estado novo na máquina** (achado do Fable): um handoff headless
+  num nó descarregado seta busy por cima (`_on_step_ts`) e apagaria um estado "unloaded" —
+  então a RENDERIZAÇÃO deriva de idle+flag: dot vira ⏏ (ícone `maestro-state-unloaded`,
+  autoral estilo lucide — lucide não tem eject), status "descarregado", tooltip ensina a
+  retomar; busy headless aparece como busy (correto) e o ⏏ volta sozinho no idle.
+  `STATE_COLORS`/attention/web INTOCADOS. Minimapa: branch explícito (cinza apagado).
+- **Notificação de RAM configurável (pedido do usuário):** limiar X MB global por-nó no
+  diálogo do 💰, que virou **"Limites"** ($ e RAM juntos; dual-persistência de propósito —
+  budget no store/ADR-22, limiar em `ui_state`). Ao cruzar: notificação desktop + badge
+  vermelho (`.node-ram-high`). **Anti-flapping por HISTERESE**: re-arma só abaixo de 0.9×X
+  (css segue o limiar exato; só a notificação usa histerese). "" = desligado; parse inválido
+  = off, nunca crash. Trocar o limiar re-arma os alertas.
+- Higiene: `_unload_node` zera o badge JÁ (sem esperar tick) e some do alerta; `_close_node`
+  limpa o alerta (id reciclado não herda); shutdown encerra o worker.
+- **Testes:** 5 no venv (árvore real de processos + histerese pura + parse) e 6 gi (vista no
+  dot através de busy→idle, badge/css/notificação com histerese em fluxo real, medição
+  atrasada de nó descarregado/fechado ignorada, minimapa cinza, unload zera na hora).
+
+### Bloco C — retomar (reload resume-aware) + startup SEM spawn
+- **Retomar = clique no TERMINAL do nó descarregado, ou ⏏ de novo** (a cápsula vira toggle).
+  O gesto fica no terminal, NÃO no frame: reposicionar o card pelo header nunca ressuscita o
+  nó. Hint no terminal morto ensina o caminho (`UNLOADED_HINT`, escrito no unload e no startup).
+- **Respawn resume-aware ONE-SHOT** (`_reload_node`/`_resume_argv`): **claude** retoma com
+  `--resume <sessão capturada no A′>` (flags do adapter TOML, `{id}` substituído); **codex**
+  retoma via `codex resume` (PICKER do CLI — não há captura por-workspace; sem flags de
+  permissão, que o subcomando não aceita — precedente do headless). `agent_argv` ganhou
+  `resume_session` (docstring documenta o contrato one-shot).
+- **Semântica DECIDIDA (não descoberta): "Retomar" = resume; "Reiniciar" = do zero.** O argv
+  de resume NUNCA muta `_base_argv` (docs/21 §3.6 — o argv natural é reusado pelos ~8
+  gatilhos de respawn); o respawn normal segue com o argv natural e limpa a flag.
+- **Startup sem spawn (o maior ganho de RAM):** nó com flag `unloaded` persistida NASCE sem
+  processo (`_make_node_term` → `_dead_terminal`) — reabrir o app não ressuscita N agentes;
+  o estado salvo nunca vira mentira visual ("abre igual fechou").
+- **Edges tratados:** `command` custom manda no nó (bypassa resume — §4-C); shell/sem captura
+  volta do zero; flag mentirosa com processo VIVO só corrige o estado (não empilha spawn);
+  monitor de atividade religa pela PREFERÊNCIA persistida (o unload só desliga o runtime),
+  com `skip` do banner de spawn (não vira falso "parou"). Auditoria: evento `reload` (ADR-17).
+- **Testes:** argv de resume provado contra os perfis REAIS dos TOML (venv, 4 testes) +
+  fluxo completo no canvas com métodos reais e fronteiras mockadas (gi, 7 testes: resume
+  claude/codex/custom/sem-sessão, no-op, startup-sem-spawn, toggle ⏏).
+
+### Bloco B — ação "Descarregar" (⏏ na cápsula contextual do nó)
+- **SIGKILL direto, sem 3º estado** (ADR-23): revisão adversarial do Fable provou por spike de
+  runtime que **o bwrap não repassa SIGTERM ao filho** — a "escalada graciosa" do respawn nunca
+  entregou um SIGTERM ao CLI de agente; um estado `"unloading"` com escalada compraria
+  complexidade em troca de nada. A conversa já está no JSONL do disco antes do kill.
+- **Fix anti-race (achado da revisão):** o unload zera `_respawn_state`/`_respawn_pending` e
+  cancela o timeout ANTES do SIGKILL — senão um respawn em voo faria `_on_child_exited`
+  **ressuscitar** o nó recém-descarregado. Race provada e fechada em teste.
+- **Guard de ociosidade = confirmação SEMPRE** (reforçada quando `tui_busy`): falso negativo do
+  busy (tela scrollada/prompt de permissão) degrada pra 1 clique a mais, nunca pra kill
+  silencioso; bloquear quando ocupado mataria o caso nº 1 (agente travado comendo RAM).
+- **Ciclo completo da flag `unloaded`** (`node_cfg`, persiste — "abre igual fechou"): setada no
+  unload; limpa em `_do_respawn` (ponto único dos ~8 gatilhos de respawn — "descarregado" nunca
+  mente com processo vivo) e no `_close_node` (id reciclado não nasce descarregado).
+- No unload: captura a sessão (A′) ANTES de matar, desliga o monitor de atividade (sem falso
+  "é sua vez"), sai de estado de atenção, audita (`unload` na trilha ADR-17) e atualiza o HUD.
+- **Testes** (`test_unload_node_canvas.py`): kill de **processo REAL** (SIGKILL verificado),
+  race reproduzida com `_on_child_exited` real (com e sem o fix), flag em respawn/close,
+  texto do guard. 542 testes (532 `.venv` + 10 canvas), ruff limpo no que tocou.
+
+### Bloco A′ — ciclo de vida da sessão por CAPTURA (plumbing, sem mudança visual)
+- **Captura, não injeção** (correção do Fable ao plano): em vez de injetar um `--session-id` fixo
+  (que quebraria no 2º respawn — argv reusado em ~8 gatilhos — e colidiria com o medidor F1),
+  lemos o **JSONL mais novo** no dir de projeto EXCLUSIVO do nó (`~/.claude/projects/<slug do
+  workspace>/`) → é a sessão viva. Novo módulo gi-free `maestro/engine/session_capture.py`.
+- **Slug provado contra a fonte real:** o encoding do dir de projeto do Claude (todo não-alfanumérico
+  → `-`) foi validado em teste contra os dirs REAIS de `~/.claude/projects` (não só round-trip
+  sintético) — evita a classe de bug "unit test verde mas a fonte real emite outro formato".
+- **Persistência em chave PRÓPRIA do canvas:** `_capture_node_session(nid)` grava em
+  `nodecfg_{nid}_session` (`ui_state`, sobrevive a restart) via `CanvasModel.set_node_cfg` —
+  **NÃO** na tabela `sessions` do orquestrador (evita colidir com medidor/budget F1). Getter
+  `_node_session(nid)` (base do reload — Bloco C).
+- **Limpeza no `_close_node`:** ao fechar o nó, `clear_node_cfg(nid, "session")` apaga a linha
+  (novos `Store.delete_ui` + `CanvasModel.clear_node_cfg`) → um nid reciclado não herda a sessão
+  de um nó morto (classe de bug de id órfão já conhecida no projeto).
+- **Testes:** `test_session_capture.py` (slug vs dirs reais, JSONL mais novo por mtime, dir
+  vazio/inexistente, isolamento por-nó, delete idempotente) + `test_unload_capture_canvas.py`
+  (captura/persistência/getter e o **wiring REAL do `_close_node`**). 536 testes (532 `.venv` + 4
+  canvas no python do sistema), ruff limpo no que tocou.
+
 ## [0.55.0] — feat: F1 Bloco D — budget cap (o "limitador") — controle de segurança do ADR-17
 Fecha o F1 e o requisito do **ADR-17** ("budget por custo real de tokens"): um teto de $ que avisa
 (soft) e barra (hard) o gasto dos agentes. Plano `docs/20`, **revisado adversarialmente pelo Fable 5**

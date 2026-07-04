@@ -26,6 +26,20 @@ Fora esses pontos, a fila fica parada — não interromper uma tarefa em andamen
 
 ## Fila
 
+### 2026-07-04 — Auto-unload pós-tarefa: nó descarregado "acorda" pro cabo e volta a dormir sozinho
+Ideia do usuário (durante o Bloco D do unload, `docs/21`): nó descarregado que recebe tarefa via
+cabo executa o trabalho e **volta a ficar descarregado automaticamente** ao terminar — a menos que
+tenha sido o USUÁRIO quem o acordou (clique no terminal / ⏏). "Descarregado" vira estado *pegajoso*
+pra automação: trabalho delegado nunca deixa o nó permanentemente vivo comendo RAM; só ação humana
+explícita "liga de verdade". Nota técnica: o handoff via cabo JÁ roda headless (`claude -p` próprio,
+morre ao fim do turno — o PTY não ressuscita), então o núcleo da ideia é **formalizar o contrato**:
+(a) delegação em nó descarregado nunca respawna o PTY; (b) a flag `unloaded` + camada de vista
+(eject) sobrevivem ao ciclo busy→idle do handoff; (c) só clique humano limpa a flag. O pedaço
+genuinamente NOVO: **auto-unload por ociosidade de nós VIVOS** ("suspender após X min sem uso
+humano" — timeout configurável + guard de ociosidade). Trade-off: resume relê o transcript
+(re-ingestão de tokens a cada ciclo) e auto-unload arrisca matar nó que o usuário ia usar já já.
+Status: 🧊 icebox.
+
 ### 2026-07-03 — Novos candidatos vindos da pesquisa de dores da concorrência (análise cruzada)
 Da análise `docs/24-analise-dores-vs-app.md`
 (cruzamento dos 2 relatórios de dores — Maestri + 29 concorrentes — com o STATUS v0.55.0). Itens
