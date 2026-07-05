@@ -76,6 +76,7 @@ from ..engine.roles import (  # noqa: E402
     save_role_library,
     write_role_sidecar,
 )
+from ..engine.orphans import detect_orphans  # noqa: E402
 from ..engine.session_capture import newest_session_id  # noqa: E402
 from ..engine.state.store import Store  # noqa: E402
 from ..engine.team_templates import (  # noqa: E402
@@ -2358,6 +2359,7 @@ class CanvasWindow:
         self._recruited_by.pop(nid, None)  # sai da linhagem
         self.model.clear_node_cfg(nid, "session")  # unload A′: id órfão não herda sessão morta
         self.model.clear_node_cfg(nid, "unloaded")  # unload B: nem a flag de descarregado
+        self.model.clear_node_cfg(nid, "orphan")  # reattach R2: id reciclado não nasce órfão
         self._ram_alerted.discard(nid)  # unload D: id reciclado não herda alerta de RAM
         base = self._agent_base(nid)  # desregistra a INSTÂNCIA do controller (libera o id)
         if self.controller is not None and base is not None and nid != base:
@@ -3080,6 +3082,7 @@ class CanvasWindow:
             self._mon[nid]["skip"] = True
         if self._node_unloaded(nid):  # respawnou → não está mais descarregado
             self.model.clear_node_cfg(nid, "unloaded")
+            self.model.clear_node_cfg(nid, "orphan")  # reattach R2: revivido → não é mais órfão
             self.set_node_state(nid, self._node_state.get(nid, "idle"))  # tira a vista ⏏
         term.reset(True, True)  # limpa tela + scrollback p/ um restart limpo
         _spawn_into(term, self._node_argv(nid), cwd, self._node_envv(nid))
@@ -3427,6 +3430,14 @@ class CanvasWindow:
         """True se o nó está descarregado (processo morto de propósito; card fica)."""
         return bool(self.model.node_cfg(nid, "unloaded"))
 
+    def _node_orphan(self, nid: str) -> bool:
+        """True se o nó é um órfão de crash pendente de recuperação (docs/25 §4-R2).
+
+        Órfão carrega `unloaded=1` (reusa dormência/reload) MAIS esta flag `orphan` própria,
+        que o distingue de um descarregado-de-propósito e sobrevive a boots até o usuário
+        resolver (Reanexar/Novo/Arquivar limpam ambas)."""
+        return bool(self.model.node_cfg(nid, "orphan"))
+
     def _make_node_term(self, nid: str, argv: list[str]):
         """Terminal do nó no `_add_node`. Nó com flag 'unloaded' NASCE SEM processo
         (Bloco C — aqui mora o maior ganho de RAM: reabrir o app não ressuscita N
@@ -3475,6 +3486,7 @@ class CanvasWindow:
             return
         if getattr(term, "_child_pid", None):  # flag mentiu (processo vivo): não empilha
             self.model.clear_node_cfg(nid, "unloaded")  # spawn — só corrige o estado
+            self.model.clear_node_cfg(nid, "orphan")  # reattach R2: vivo → não é órfão
             return
         argv = self._resume_argv(nid)
         resumed = argv is not None
@@ -3484,6 +3496,7 @@ class CanvasWindow:
         if cwd and not os.path.isdir(cwd):  # espelha _do_respawn (M6)
             cwd = None
         self.model.clear_node_cfg(nid, "unloaded")
+        self.model.clear_node_cfg(nid, "orphan")  # reattach R2: reanexado → não é mais órfão
         # religa o monitor pela PREFERÊNCIA persistida (o unload só desligou o runtime)
         self._set_node_monitor(nid, self._monitor_default_on(nid))
         if nid in self._mon:
@@ -7225,6 +7238,10 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
             if not roster:
                 roster = [{"nid": "shell-1", "kind": "shell", "base": None}]
             model.set_node_roster(roster)
+        # Reattach (docs/25 §4-R2): se o run anterior crashou, marca nós-agente com transcript
+        # no disco como órfãos (unloaded + flag `orphan`) ANTES de montar os cards → nascem sem
+        # processo (RAM zero); o usuário escolhe Reanexar/Novo/Arquivar (R3).
+        detect_orphans(model, roster, state.get("crashed", False), f"{base}/workspaces")
         nodes = []
         for spec in roster:
             nid = spec.get("nid")
