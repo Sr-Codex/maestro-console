@@ -5,52 +5,17 @@ substituídas (spawn de PTY `_spawn_into`, catálogo `installed_agents`, widget 
 Perfis dos adapters são os REAIS (TOML) — nada de profile sintético.
 """
 
-from types import SimpleNamespace
-
 import pytest
 
 pytest.importorskip("gi")  # canvas usa PyGObject; o .venv é gi-free → python do sistema
-from maestro.engine.adapters.base import load_profiles  # noqa: E402
+from canvas_harness import patch_agents as _patch_agents  # noqa: E402
+from canvas_harness import term as _term  # noqa: E402
+from canvas_harness import win as _win  # noqa: E402
+
 from maestro.engine.sandbox import bwrap_available  # noqa: E402
 from maestro.engine.state.store import Store  # noqa: E402
-from maestro.native.canvas import CanvasWindow  # noqa: E402
-from maestro.native.state import CanvasModel  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not bwrap_available(), reason="bwrap ausente")
-
-
-def _term(pid=None):
-    return SimpleNamespace(
-        _child_pid=pid, _pidfd=None, _respawn_state="idle", _respawn_pending=False,
-        _respawn_force_src=None, _destroyed=False,
-        reset=lambda *_a: None, feed=lambda *_a: None,
-        connect=lambda *_a, **_k: 1,  # _set_node_monitor religa o contents-changed
-        disconnect=lambda *_a: None,
-    )
-
-
-def _win(store, tmp_path, nid, term, *, kind="agent", base="claude"):
-    w = CanvasWindow.__new__(CanvasWindow)  # sem __init__ → não cria GTK
-    w.model = CanvasModel(store)
-    w.model.set_node_roster([{"nid": nid, "kind": kind, "base": base}])
-    w._ask_bus_dir = str(tmp_path / "askbus")  # _node_ws → tmp/workspaces/<nid>
-    (tmp_path / "askbus").mkdir(exist_ok=True)
-    w.frames = {nid: SimpleNamespace(_term=term, _base_argv=["/bin/bash"])}
-    w._mon = {}
-    w._mon_alerted = set()
-    w._ram_alerted = set()  # Bloco D
-    w._node_state = {}
-    w._focused_nid = None
-    w.heads = {}
-    w.plane = SimpleNamespace(queue_draw=lambda: None)
-    return w
-
-
-def _patch_agents(monkeypatch, *bases):
-    """installed_agents() do canvas → perfis REAIS do TOML, sem exigir binário no PATH."""
-    profs = load_profiles()
-    monkeypatch.setattr("maestro.native.canvas.installed_agents",
-                        lambda: {b: profs[b] for b in bases})
 
 
 def test_reload_retoma_claude_com_resume_oneshot(tmp_path, monkeypatch):
@@ -167,7 +132,7 @@ def test_make_node_term_descarregado_nasce_sem_spawn(tmp_path, monkeypatch):
     dead, made = object(), object()
     with Store(tmp_path / "m.db") as store:
         w = _win(store, tmp_path, nid, _term())
-        monkeypatch.setattr("maestro.native.canvas._dead_terminal", lambda: dead)
+        monkeypatch.setattr("maestro.native.canvas._dead_terminal", lambda *_a: dead)
         monkeypatch.setattr("maestro.native.canvas.make_terminal",
                             lambda *a, **k: made)
         w.model.set_node_cfg(nid, "unloaded", "1")
