@@ -390,12 +390,15 @@ def make_terminal(argv: list[str], cwd: str | None = None,
 
 # unload (Bloco C): hint mostrado no terminal de um nó descarregado (sem processo)
 UNLOADED_HINT = "[maestro] ⏏ descarregado — clique no terminal (ou ⏏) pra retomar"
+# reattach (R3): hint de um nó órfão de crash (recuperável) — distingue do descarregado
+ORPHAN_HINT = ("[maestro] ⚠ recuperável — este nó caiu num crash; "
+               "⏏ retoma a sessão · ✧ novo · 🗑 arquiva")
 
 
-def _dead_terminal() -> Vte.Terminal:
-    """Terminal SEM filho (nó descarregado nasce assim no startup — unload, Bloco C)."""
+def _dead_terminal(hint: str = UNLOADED_HINT) -> Vte.Terminal:
+    """Terminal SEM filho (nó dorme assim no startup — unload C / reattach R3)."""
     term = Vte.Terminal()
-    term.feed(f"\r\n  {UNLOADED_HINT}\r\n".encode())
+    term.feed(f"\r\n  {hint}\r\n".encode())
     return term
 
 
@@ -1091,6 +1094,16 @@ class CanvasWindow:
             self._ctx_unload_node)
         unl.add_css_class("note-ctx-btn")
         bar.append(unl)
+        # reattach R3: "Novo agente" — só aparece em nó ÓRFÃO (começa do zero, descarta o
+        # transcript do crash). Visibilidade alternada em _update_ctx.
+        new = self._fab_button(
+            "document-new-symbolic", "✧",
+            "Novo agente (começa do zero — descarta a sessão do crash)",
+            self._ctx_new_agent)
+        new.add_css_class("note-ctx-btn")
+        new.set_visible(False)
+        bar.append(new)
+        self._ctx_new_btn = new
         dele = self._fab_button(
             "user-trash-symbolic", "🗑", "Fechar terminal (remove do canvas)",
             self._ctx_close_node)
@@ -2050,6 +2063,19 @@ class CanvasWindow:
         else:
             self._confirm_unload(nid)
 
+    def _ctx_new_agent(self) -> None:
+        """Reattach R3: "Novo agente" num nó órfão — começa do ZERO, descartando o
+        transcript do crash. `_do_respawn` spawna o argv natural (sem --resume) e limpa
+        as flags unloaded/orphan. Só faz sentido em nó órfão (o botão só aparece nele)."""
+        nid = self._sel_nid()
+        if nid is None or not self._node_orphan(nid):
+            return
+        self.model.clear_node_cfg(nid, "session")  # descarta a sessão do crash (não retomar depois)
+        self._do_respawn(nid)  # spawn do zero (argv natural); limpa unloaded+orphan
+        new = getattr(self, "_ctx_new_btn", None)  # não é mais órfão → esconde o "Novo"
+        if new is not None:
+            new.set_visible(False)
+
     def _ctx_close_node(self) -> None:
         nid = self._sel_nid()
         if nid is not None:
@@ -2061,7 +2087,11 @@ class CanvasWindow:
         self._update_note_ctx()
         bar = getattr(self, "_node_ctx_bar", None)
         if bar is not None:
-            bar.set_visible(bool(self._selected) and self._selected[0] == "node")
+            is_node = bool(self._selected) and self._selected[0] == "node"
+            bar.set_visible(is_node)
+            new = getattr(self, "_ctx_new_btn", None)  # reattach R3: "Novo" só em nó órfão
+            if new is not None:
+                new.set_visible(is_node and self._node_orphan(self._selected[1]))
 
     def _draw_cur_color(self, _area, cr, w, h) -> None:
         """Desenha a bolinha da cor ATUAL no botão de cor da pílula."""
@@ -2176,7 +2206,9 @@ class CanvasWindow:
         term.set_size_request(int(sz[0]), int(sz[1]))
         self.terms.append(term)
         self.frames[nid] = frame  # registra antes de aplicar a fonte (lookup em _apply_node_font)
-        if self._node_unloaded(nid):  # nasceu descarregado (Bloco C): dot/status refletem já
+        if self._node_orphan(nid):  # nasceu ÓRFÃO de crash (reattach R3): âmbar + entra no ⚠
+            self.set_node_state(nid, "waiting")  # estado de atenção (dot/tooltip "recuperável")
+        elif self._node_unloaded(nid):  # nasceu descarregado (Bloco C): dot/status refletem já
             self.set_node_state(nid, "idle")  # camada de vista (idle+flag → eject)
         self._apply_node_font(nid)  # fonte por-nó/global + escala (persistido)
         ncolor = self.model.node_cfg(nid, "color")  # cor accent persistida (Fase 1)
@@ -3304,7 +3336,14 @@ class CanvasWindow:
             # (docs/21 §8.3-3/Fable): um handoff headless num nó descarregado seta busy
             # por cima (correto — o cabo trabalha sem o PTY) e, ao voltar a idle, o
             # eject reaparece sozinho. Nada muda em STATE_COLORS/attention/web.
-            if s == "idle" and self._node_unloaded(nid):
+            if self._node_orphan(nid):  # reattach R3: ÓRFÃO de crash precede a vista descarregado
+                if hasattr(dot, "set_from_icon_name"):  # âmbar (reusa o ícone de atenção)
+                    dot.set_from_icon_name("maestro-state-waiting")
+                dot.set_tooltip_text("recuperável — caiu num crash (⏏ retoma · ✧ novo · 🗑 arquiva)")
+                st_lbl = getattr(head, "_status", None)
+                if st_lbl is not None:
+                    st_lbl.set_text("recuperável")
+            elif s == "idle" and self._node_unloaded(nid):
                 if hasattr(dot, "set_from_icon_name"):  # Gtk.Image (produção)
                     dot.set_from_icon_name("maestro-state-unloaded")
                 dot.set_tooltip_text("descarregado (clique no terminal p/ retomar)")
@@ -3443,7 +3482,7 @@ class CanvasWindow:
         (Bloco C — aqui mora o maior ganho de RAM: reabrir o app não ressuscita N
         agentes; o estado persistido nunca vira mentira visual)."""
         if self._node_unloaded(nid):
-            return _dead_terminal()
+            return _dead_terminal(ORPHAN_HINT if self._node_orphan(nid) else UNLOADED_HINT)
         return make_terminal(
             self._effective_argv(nid, argv),
             self.model.node_cfg(nid, "cwd") or None,
