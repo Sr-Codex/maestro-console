@@ -178,7 +178,7 @@ R1 (dirty-flag **enxuto** + handler de sinal) → R2 (detecção via `dirty ∧ 
 session-no-disco` + flag `orphan` própria) → R3 (UX de atenção + 3 ações que limpam `orphan`).
 **R4 (worktree) fora deste PR.** Acumular numa branch (`feat/reattach-orfaos-pos-crash`), 1 PR pra
 feature (como o unload), bump 1× no fim + ADR curto (o dirty-flag/handler de sinal é decisão
-arquitetural de ciclo de vida — candidato a ADR-25). Cada story com teste (gi-free onde der; canvas
+arquitetural de ciclo de vida — **ADR-25**). Cada story com teste (gi-free onde der; canvas
 via `CanvasWindow.__new__` + mock de `_spawn_into`/`installed_agents`, molde de
 `test_unload_reload_canvas.py`).
 
@@ -204,7 +204,7 @@ via `CanvasWindow.__new__` + mock de `_spawn_into`/`installed_agents`, molde de
 
 ## 9. Próximo passo
 Validar este plano (v2) com o usuário → virar stories R1..R3 (R4 depois). A fundação (dirty-flag +
-handler de sinal + flag `orphan`) provavelmente vira **ADR-25** (decisão de ciclo de vida).
+handler de sinal + flag `orphan`) virou **ADR-25** (decisão de ciclo de vida, 2026-07-05).
 
 ## 10. Revisão adversarial (Fable) — resultado (2026-07-05)
 Rodada sobre a v1 do plano; achou **4 correções pontuais, nenhum furo de fundação** (a abordagem
