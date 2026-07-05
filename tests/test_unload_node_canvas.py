@@ -13,33 +13,17 @@ from types import SimpleNamespace
 import pytest
 
 pytest.importorskip("gi")  # canvas usa PyGObject; o .venv é gi-free → python do sistema
+from canvas_harness import term as _term  # noqa: E402
+from canvas_harness import win as _base_win  # noqa: E402
+
 from maestro.engine.state.store import Store  # noqa: E402
 from maestro.native.canvas import CanvasWindow  # noqa: E402
-from maestro.native.state import CanvasModel  # noqa: E402
-
-
-def _term(pid=None, state="idle", pending=False):
-    return SimpleNamespace(
-        _child_pid=pid, _pidfd=None, _respawn_state=state,
-        _respawn_pending=pending, _respawn_force_src=None, _destroyed=False,
-        reset=lambda *_a: None,
-        feed=lambda *_a: None,  # Bloco C: o unload escreve o hint de retomada no terminal
-    )
 
 
 def _win(store, tmp_path, nid, term):
-    w = CanvasWindow.__new__(CanvasWindow)  # sem __init__ → não cria GTK
-    w.model = CanvasModel(store)
-    w._ask_bus_dir = str(tmp_path / "askbus")  # _node_ws → tmp/workspaces/<nid>
-    (tmp_path / "askbus").mkdir(exist_ok=True)
-    w.frames = {nid: SimpleNamespace(_term=term, _base_argv=["/bin/bash"])}
-    w._mon = {nid: {"handler": None, "quiet_id": None}}  # monitor "ligado" (sem GTK)
-    w._mon_alerted = {nid}
-    w._ram_alerted = set()  # Bloco D: alerta de RAM (unload/close limpam)
-    w._node_state = {}
-    w.heads = {}
-    w.plane = SimpleNamespace(queue_draw=lambda: None)
-    return w
+    """Wrapper do harness com o estado específico do unload-node: sem roster, monitor "ligado"."""
+    return _base_win(store, tmp_path, nid, term, roster=False,
+                     mon={nid: {"handler": None, "quiet_id": None}}, mon_alerted={nid})
 
 
 def test_unload_mata_processo_real_sem_respawn(tmp_path, monkeypatch):

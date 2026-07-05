@@ -110,7 +110,7 @@
   "descarregado" derivada (idle+flag → ⏏; sem estado novo na máquina); minimapa cinza;
   **limiar de notificação de RAM configurável** no 💰 "Limites" (histerese 0.9×X anti-flapping).
 
-### Reattach de nós órfãos pós-crash (v0.57.0, R1+R2+R3), ver [`docs/25-plano-reattach-orfaos.md`](25-plano-reattach-orfaos.md)
+### Reattach de nós órfãos pós-crash (v0.57.0, R1+R2+R3), ver [`docs/25-plano-reattach-orfaos.md`](25-plano-reattach-orfaos.md) + ADR-25
 - **Dor P2** (a mais universal do nicho, `docs/23-24`): crash do app ≠ perder trabalho. Completa o
   ciclo do unload (unload = de propósito; reattach = recuperar de um crash). Plano revisado pelo Fable.
 - **R1 (sentinela de crash):** `engine/crash_flag.py` — dirty-flag `ui_state["dirty_run"]` (durável
