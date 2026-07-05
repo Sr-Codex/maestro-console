@@ -67,6 +67,7 @@ from ..engine.notes import (  # noqa: E402
     md_wrap_toggle,
     note_to_file,
 )
+from ..engine.orphans import detect_orphans  # noqa: E402
 from ..engine.proc_ram import alert_step, parse_limit_mb, tree_ram_mb  # noqa: E402
 from ..engine.roles import (  # noqa: E402
     discover_roles,
@@ -76,7 +77,6 @@ from ..engine.roles import (  # noqa: E402
     save_role_library,
     write_role_sidecar,
 )
-from ..engine.orphans import detect_orphans  # noqa: E402
 from ..engine.session_capture import newest_session_id  # noqa: E402
 from ..engine.state.store import Store  # noqa: E402
 from ..engine.team_templates import (  # noqa: E402
