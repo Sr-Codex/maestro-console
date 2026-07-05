@@ -124,7 +124,10 @@ Team Templates/líder, Maestro mode, bwrap):
   sessão; Congelar/CRIU descartados). Pronto pra virar stories.
 - **Recuperação/reattach + "arquivar em vez de fechar"** — ao abrir, detectar nós/worktrees órfãos
   (pós-crash) e oferecer reanexar / novo agente no worktree / arquivar. Casa com "abre igual fechou"
-  e com os Floors já existentes. 🧊
+  e com os Floors já existentes. ✅ **ENTREGUE 2026-07-05 (v0.57.0, R1+R2+R3)** — plano
+  `docs/25-plano-reattach-orfaos.md` (revisado pelo Fable). Detecção de nó-agente órfão (crash ∧
+  ¬descarregado ∧ transcript-no-disco) → âmbar "recuperável" + Reanexar/Novo/Arquivar. **Restou:**
+  reconciliação de git worktree órfão (R4, adiada — 2º PR/backlog).
 - **Fila FIFO de follow-ups por nó/cabo** — empilhar instruções enquanto o agente roda, reordenar,
   cancelar; enviar ao VTE só quando pronto. Maestro mode enfileira sem perder mensagem. 🧊
 - **Briefing persistente por grupo/template** — `brief.md` de "objetivo/decisões/contexto" injetado

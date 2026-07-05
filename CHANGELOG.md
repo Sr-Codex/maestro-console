@@ -3,6 +3,43 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.57.0] — feat: reattach de nós órfãos pós-crash — R1+R2+R3
+Stories R1, R2 e R3 do plano `docs/25` (item do backlog, dor **P2** da pesquisa `docs/23-24` — a
+mais universal do nicho). Completa o ciclo de vida aberto pelo unload: **unload** = descarregar de
+propósito; **reattach** = recuperar o que ficou órfão de um **crash**. Reaproveita a maquinaria do
+unload (flag dormente, `_reload_node` resume-aware, `newest_session_id` relê o JSONL do disco). 1 PR
+pra feature (R4 = worktree órfão ficou fora, decisão do Fable). Plano revisado adversarialmente pelo
+Fable (4 correções, núcleo mais simples — `docs/25` §10).
+
+### R3 — visual "recuperável" (âmbar) + ação "Novo agente" (escolhas de UI do usuário)
+- Nó órfão nasce **distinto** do descarregado-de-propósito: estado `waiting` (âmbar; entra no
+  contador **⚠**) com dot/tooltip "recuperável" que **precede** a vista "descarregado" no
+  `set_node_state`; hint próprio no terminal (`ORPHAN_HINT`).
+- **3 ações** na cápsula contextual do nó órfão: **Reanexar** (⏏, já reusava `_reload_node` →
+  `--resume`), **Novo agente** (✧, botão que só aparece em órfão → `_ctx_new_agent` descarta a
+  sessão do crash e faz `_do_respawn` do ZERO), **Arquivar** (🗑 → `_close_node`, preserva o
+  workspace). Todas limpam a flag `orphan`.
+
+### R2 — detecção no boot + flag `orphan` própria
+- `maestro/engine/orphans.py` (gi-free): `detect_orphans` — critério **crash ∧ agente ∧
+  ¬descarregado-de-propósito ∧ transcript-no-disco**. Órfão recebe `unloaded=1` (reusa dormência +
+  `_reload_node` sem tocar na parte delicada) MAIS `orphan=1` (flag própria/persistida que o
+  distingue e sobrevive a boots — exigência do Fable). Chamado no boot antes de montar os cards →
+  nasce dormente (RAM zero). `orphan` é limpa junto de `unloaded` em todo revival/close.
+
+### R1 — sentinela de crash (dirty-flag + handler de sinal)
+- `maestro/engine/crash_flag.py` (gi-free): `check_and_arm`/`disarm` sobre `ui_state["dirty_run"]`
+  (durável via WAL) — distingue fechamento limpo de crash.
+- **Handler `SIGTERM/SIGHUP → app.quit()`** (correção crítica do Fable): sem ele, logout/
+  desligamento do sistema (fechar a tampa do uConsole) deixaria a flag suja e todo boot marcaria
+  "crash", degradando o "abre igual fechou". Sobra só SIGKILL/OOM/power-loss como crash real.
+- Premissa "1 instância por vez" (decisão do usuário) — sem `flock`.
+
+### Testes
+- **552** no venv (+17 skip; `crash_flag` 5 + `orphans` 6, gi-free) + **runtime real** no python do
+  sistema (canvas via `__new__`): "Reanexar" retoma com `--resume` e limpa as flags; "Novo agente"
+  começa do zero e descarta a sessão. Ruff no baseline.
+
 ## [0.56.0] — feat: unload de nó — Blocos A′+B+C+D (a feature completa)
 Stories A′, B, C e D do plano `docs/21` ("unload de nó" p/ liberar RAM no CM4, item #3 do
 `docs/15`), acumuladas na mesma branch (decisão do usuário: 1 PR pra feature inteira).
