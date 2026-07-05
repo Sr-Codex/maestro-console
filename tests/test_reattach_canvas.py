@@ -67,3 +67,27 @@ def test_novo_agente_orfao_comeca_do_zero_e_limpa_flags(tmp_path, monkeypatch):
         assert w.model.node_cfg(nid, "session") == ""  # sessão do crash descartada
         assert w._node_orphan(nid) is False
         assert w._node_unloaded(nid) is False
+
+
+def test_tooltips_da_capsula_cientes_do_estado(tmp_path):
+    """O ⏏ é um toggle: num nó VIVO descarrega (libera RAM), num ÓRFÃO reataca. O tooltip
+    tem de refletir isso — senão o ⏏ num órfão diria 'libera RAM' e enganaria (achado do
+    usuário). Idem 🗑: em órfão é 'Arquivar' (preserva o trabalho), não 'Fechar/remove'."""
+    with Store(tmp_path / "m.db") as store:
+        w = _win(store, tmp_path, "claude", None)  # sem terminal; só a cápsula
+        w.edges = None                    # pula o botão conectar
+        w._update_note_ctx = lambda: None  # stub (não é o foco)
+        w._build_node_ctx()               # monta a cápsula real (seta _ctx_unl/new/del_btn)
+        w._selected = ("node", "claude")
+
+        w._update_ctx()  # nó VIVO
+        assert "Descarregar" in w._ctx_unl_btn.get_tooltip_text()
+        assert "Fechar" in w._ctx_del_btn.get_tooltip_text()
+        assert w._ctx_new_btn.get_visible() is False  # ✧ só em órfão
+
+        w.model.set_node_cfg("claude", "orphan", "1")
+        w.model.set_node_cfg("claude", "unloaded", "1")
+        w._update_ctx()  # ÓRFÃO
+        assert "Reanexar" in w._ctx_unl_btn.get_tooltip_text()
+        assert "Arquivar" in w._ctx_del_btn.get_tooltip_text()
+        assert w._ctx_new_btn.get_visible() is True

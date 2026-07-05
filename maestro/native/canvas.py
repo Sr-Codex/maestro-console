@@ -1094,6 +1094,7 @@ class CanvasWindow:
             self._ctx_unload_node)
         unl.add_css_class("note-ctx-btn")
         bar.append(unl)
+        self._ctx_unl_btn = unl  # ⏏ é toggle: _update_ctx ajusta o tooltip ao estado do nó
         # reattach R3: "Novo agente" — só aparece em nó ÓRFÃO (começa do zero, descarta o
         # transcript do crash). Visibilidade alternada em _update_ctx.
         new = self._fab_button(
@@ -1109,6 +1110,7 @@ class CanvasWindow:
             self._ctx_close_node)
         dele.add_css_class("note-ctx-btn")
         bar.append(dele)
+        self._ctx_del_btn = dele  # 🗑: em órfão vira "Arquivar" (o trabalho no disco fica)
         self._node_ctx_bar = bar
         return bar
 
@@ -2092,6 +2094,21 @@ class CanvasWindow:
             new = getattr(self, "_ctx_new_btn", None)  # reattach R3: "Novo" só em nó órfão
             if new is not None:
                 new.set_visible(is_node and self._node_orphan(self._selected[1]))
+            unl = getattr(self, "_ctx_unl_btn", None)  # ⏏ é toggle — tooltip ciente do estado
+            if unl is not None and is_node:
+                nid = self._selected[1]
+                if self._node_orphan(nid):  # órfão de crash: ⏏ RECUPERA (não descarrega)
+                    unl.set_tooltip_text("Reanexar — retomar a sessão do crash (⏏)")
+                elif self._node_unloaded(nid):  # descarregado de propósito: ⏏ religa
+                    unl.set_tooltip_text("Retomar — religa o processo descarregado (⏏)")
+                else:  # nó vivo: ⏏ descarrega
+                    unl.set_tooltip_text("Descarregar — libera a RAM; o card fica (⏏ retoma)")
+            dele = getattr(self, "_ctx_del_btn", None)  # 🗑: em órfão é "Arquivar" (não apaga)
+            if dele is not None and is_node:
+                if self._node_orphan(self._selected[1]):
+                    dele.set_tooltip_text("Arquivar — fecha o card; o trabalho no disco fica")
+                else:
+                    dele.set_tooltip_text("Fechar terminal (remove do canvas)")
 
     def _draw_cur_color(self, _area, cr, w, h) -> None:
         """Desenha a bolinha da cor ATUAL no botão de cor da pílula."""
