@@ -33,7 +33,7 @@ gi.require_version("Vte", "3.91")
 gi.require_version("Pango", "1.0")
 from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Pango, Vte  # noqa: E402
 
-from ..engine import budget  # noqa: E402
+from ..engine import budget, crash_flag  # noqa: E402
 from ..engine.ask_bus import (  # noqa: E402
     ASK_MAX_PROMPT_BYTES,
     AskBusError,
@@ -67,6 +67,7 @@ from ..engine.notes import (  # noqa: E402
     md_wrap_toggle,
     note_to_file,
 )
+from ..engine.orphans import detect_orphans  # noqa: E402
 from ..engine.proc_ram import alert_step, parse_limit_mb, tree_ram_mb  # noqa: E402
 from ..engine.roles import (  # noqa: E402
     discover_roles,
@@ -389,12 +390,15 @@ def make_terminal(argv: list[str], cwd: str | None = None,
 
 # unload (Bloco C): hint mostrado no terminal de um nó descarregado (sem processo)
 UNLOADED_HINT = "[maestro] ⏏ descarregado — clique no terminal (ou ⏏) pra retomar"
+# reattach (R3): hint de um nó órfão de crash (recuperável) — distingue do descarregado
+ORPHAN_HINT = ("[maestro] ⚠ recuperável — este nó caiu num crash; "
+               "⏏ retoma a sessão · ✧ novo · 🗑 arquiva")
 
 
-def _dead_terminal() -> Vte.Terminal:
-    """Terminal SEM filho (nó descarregado nasce assim no startup — unload, Bloco C)."""
+def _dead_terminal(hint: str = UNLOADED_HINT) -> Vte.Terminal:
+    """Terminal SEM filho (nó dorme assim no startup — unload C / reattach R3)."""
     term = Vte.Terminal()
-    term.feed(f"\r\n  {UNLOADED_HINT}\r\n".encode())
+    term.feed(f"\r\n  {hint}\r\n".encode())
     return term
 
 
@@ -1090,6 +1094,16 @@ class CanvasWindow:
             self._ctx_unload_node)
         unl.add_css_class("note-ctx-btn")
         bar.append(unl)
+        # reattach R3: "Novo agente" — só aparece em nó ÓRFÃO (começa do zero, descarta o
+        # transcript do crash). Visibilidade alternada em _update_ctx.
+        new = self._fab_button(
+            "document-new-symbolic", "✧",
+            "Novo agente (começa do zero — descarta a sessão do crash)",
+            self._ctx_new_agent)
+        new.add_css_class("note-ctx-btn")
+        new.set_visible(False)
+        bar.append(new)
+        self._ctx_new_btn = new
         dele = self._fab_button(
             "user-trash-symbolic", "🗑", "Fechar terminal (remove do canvas)",
             self._ctx_close_node)
@@ -2049,6 +2063,19 @@ class CanvasWindow:
         else:
             self._confirm_unload(nid)
 
+    def _ctx_new_agent(self) -> None:
+        """Reattach R3: "Novo agente" num nó órfão — começa do ZERO, descartando o
+        transcript do crash. `_do_respawn` spawna o argv natural (sem --resume) e limpa
+        as flags unloaded/orphan. Só faz sentido em nó órfão (o botão só aparece nele)."""
+        nid = self._sel_nid()
+        if nid is None or not self._node_orphan(nid):
+            return
+        self.model.clear_node_cfg(nid, "session")  # descarta a sessão do crash (não retomar depois)
+        self._do_respawn(nid)  # spawn do zero (argv natural); limpa unloaded+orphan
+        new = getattr(self, "_ctx_new_btn", None)  # não é mais órfão → esconde o "Novo"
+        if new is not None:
+            new.set_visible(False)
+
     def _ctx_close_node(self) -> None:
         nid = self._sel_nid()
         if nid is not None:
@@ -2060,7 +2087,11 @@ class CanvasWindow:
         self._update_note_ctx()
         bar = getattr(self, "_node_ctx_bar", None)
         if bar is not None:
-            bar.set_visible(bool(self._selected) and self._selected[0] == "node")
+            is_node = bool(self._selected) and self._selected[0] == "node"
+            bar.set_visible(is_node)
+            new = getattr(self, "_ctx_new_btn", None)  # reattach R3: "Novo" só em nó órfão
+            if new is not None:
+                new.set_visible(is_node and self._node_orphan(self._selected[1]))
 
     def _draw_cur_color(self, _area, cr, w, h) -> None:
         """Desenha a bolinha da cor ATUAL no botão de cor da pílula."""
@@ -2175,7 +2206,9 @@ class CanvasWindow:
         term.set_size_request(int(sz[0]), int(sz[1]))
         self.terms.append(term)
         self.frames[nid] = frame  # registra antes de aplicar a fonte (lookup em _apply_node_font)
-        if self._node_unloaded(nid):  # nasceu descarregado (Bloco C): dot/status refletem já
+        if self._node_orphan(nid):  # nasceu ÓRFÃO de crash (reattach R3): âmbar + entra no ⚠
+            self.set_node_state(nid, "waiting")  # estado de atenção (dot/tooltip "recuperável")
+        elif self._node_unloaded(nid):  # nasceu descarregado (Bloco C): dot/status refletem já
             self.set_node_state(nid, "idle")  # camada de vista (idle+flag → eject)
         self._apply_node_font(nid)  # fonte por-nó/global + escala (persistido)
         ncolor = self.model.node_cfg(nid, "color")  # cor accent persistida (Fase 1)
@@ -2358,6 +2391,7 @@ class CanvasWindow:
         self._recruited_by.pop(nid, None)  # sai da linhagem
         self.model.clear_node_cfg(nid, "session")  # unload A′: id órfão não herda sessão morta
         self.model.clear_node_cfg(nid, "unloaded")  # unload B: nem a flag de descarregado
+        self.model.clear_node_cfg(nid, "orphan")  # reattach R2: id reciclado não nasce órfão
         self._ram_alerted.discard(nid)  # unload D: id reciclado não herda alerta de RAM
         base = self._agent_base(nid)  # desregistra a INSTÂNCIA do controller (libera o id)
         if self.controller is not None and base is not None and nid != base:
@@ -3080,6 +3114,7 @@ class CanvasWindow:
             self._mon[nid]["skip"] = True
         if self._node_unloaded(nid):  # respawnou → não está mais descarregado
             self.model.clear_node_cfg(nid, "unloaded")
+            self.model.clear_node_cfg(nid, "orphan")  # reattach R2: revivido → não é mais órfão
             self.set_node_state(nid, self._node_state.get(nid, "idle"))  # tira a vista ⏏
         term.reset(True, True)  # limpa tela + scrollback p/ um restart limpo
         _spawn_into(term, self._node_argv(nid), cwd, self._node_envv(nid))
@@ -3301,7 +3336,14 @@ class CanvasWindow:
             # (docs/21 §8.3-3/Fable): um handoff headless num nó descarregado seta busy
             # por cima (correto — o cabo trabalha sem o PTY) e, ao voltar a idle, o
             # eject reaparece sozinho. Nada muda em STATE_COLORS/attention/web.
-            if s == "idle" and self._node_unloaded(nid):
+            if self._node_orphan(nid):  # reattach R3: ÓRFÃO de crash precede a vista descarregado
+                if hasattr(dot, "set_from_icon_name"):  # âmbar (reusa o ícone de atenção)
+                    dot.set_from_icon_name("maestro-state-waiting")
+                dot.set_tooltip_text("recuperável — caiu num crash (⏏ retoma · ✧ novo · 🗑 arquiva)")
+                st_lbl = getattr(head, "_status", None)
+                if st_lbl is not None:
+                    st_lbl.set_text("recuperável")
+            elif s == "idle" and self._node_unloaded(nid):
                 if hasattr(dot, "set_from_icon_name"):  # Gtk.Image (produção)
                     dot.set_from_icon_name("maestro-state-unloaded")
                 dot.set_tooltip_text("descarregado (clique no terminal p/ retomar)")
@@ -3427,12 +3469,20 @@ class CanvasWindow:
         """True se o nó está descarregado (processo morto de propósito; card fica)."""
         return bool(self.model.node_cfg(nid, "unloaded"))
 
+    def _node_orphan(self, nid: str) -> bool:
+        """True se o nó é um órfão de crash pendente de recuperação (docs/25 §4-R2).
+
+        Órfão carrega `unloaded=1` (reusa dormência/reload) MAIS esta flag `orphan` própria,
+        que o distingue de um descarregado-de-propósito e sobrevive a boots até o usuário
+        resolver (Reanexar/Novo/Arquivar limpam ambas)."""
+        return bool(self.model.node_cfg(nid, "orphan"))
+
     def _make_node_term(self, nid: str, argv: list[str]):
         """Terminal do nó no `_add_node`. Nó com flag 'unloaded' NASCE SEM processo
         (Bloco C — aqui mora o maior ganho de RAM: reabrir o app não ressuscita N
         agentes; o estado persistido nunca vira mentira visual)."""
         if self._node_unloaded(nid):
-            return _dead_terminal()
+            return _dead_terminal(ORPHAN_HINT if self._node_orphan(nid) else UNLOADED_HINT)
         return make_terminal(
             self._effective_argv(nid, argv),
             self.model.node_cfg(nid, "cwd") or None,
@@ -3475,6 +3525,7 @@ class CanvasWindow:
             return
         if getattr(term, "_child_pid", None):  # flag mentiu (processo vivo): não empilha
             self.model.clear_node_cfg(nid, "unloaded")  # spawn — só corrige o estado
+            self.model.clear_node_cfg(nid, "orphan")  # reattach R2: vivo → não é órfão
             return
         argv = self._resume_argv(nid)
         resumed = argv is not None
@@ -3484,6 +3535,7 @@ class CanvasWindow:
         if cwd and not os.path.isdir(cwd):  # espelha _do_respawn (M6)
             cwd = None
         self.model.clear_node_cfg(nid, "unloaded")
+        self.model.clear_node_cfg(nid, "orphan")  # reattach R2: reanexado → não é mais órfão
         # religa o monitor pela PREFERÊNCIA persistida (o unload só desligou o runtime)
         self._set_node_monitor(nid, self._monitor_default_on(nid))
         if nid in self._mon:
@@ -7207,6 +7259,10 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         project_dir = ws_meta.project_dir if (ws_meta and ws_meta.project_dir) else None
         controller, st = build_controller(db_path=reg.db_path(cur))  # DB isolado por workspace
         state["store"] = st
+        # Sentinela de crash (docs/25 §4-R1): lê se o run anterior fechou limpo e re-arma a
+        # flag p/ este run. `crashed` alimenta a detecção de nós órfãos (R2). Premissa "1
+        # instância por vez" (decisão do usuário 2026-07-05) — sem flock.
+        state["crashed"] = crash_flag.check_and_arm(st)
         # um terminal de AGENTE interativo (sandbox bwrap) por CLI instalado
         ws = Workspace(f"{base}/workspaces")
         ask_bus_dir = f"{base}/ask-bus"
@@ -7221,6 +7277,10 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
             if not roster:
                 roster = [{"nid": "shell-1", "kind": "shell", "base": None}]
             model.set_node_roster(roster)
+        # Reattach (docs/25 §4-R2): se o run anterior crashou, marca nós-agente com transcript
+        # no disco como órfãos (unloaded + flag `orphan`) ANTES de montar os cards → nascem sem
+        # processo (RAM zero); o usuário escolhe Reanexar/Novo/Arquivar (R3).
+        detect_orphans(model, roster, state.get("crashed", False), f"{base}/workspaces")
         nodes = []
         for spec in roster:
             nid = spec.get("nid")
@@ -7286,8 +7346,21 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
             win._ram_stop.set()  # encerra o worker de RAM (daemon; set é só higiene)
         st = state.get("store")
         if st is not None:
+            crash_flag.disarm(st)  # fechamento LIMPO: limpa a dirty-flag (docs/25 §4-R1)
             st.close()
 
     app.connect("activate", on_activate)
     app.connect("shutdown", on_shutdown)
+
+    # Correção crítica do Fable (docs/25 §3.1): `shutdown` do GTK NÃO dispara em SIGTERM/SIGHUP
+    # (desligamento/logout do sistema, fechar a tampa do uConsole). Sem isto, cada saída dessas
+    # deixaria a dirty-flag suja → todo boot seguinte marcaria "crash" e degradaria o "abre igual
+    # fechou". Traduzir esses sinais em `quit()` faz o shutdown limpo rodar. Sobra só
+    # SIGKILL/OOM/power-loss como "sujo" — que é exatamente o crash que se quer detectar.
+    def _on_term_signal(*_a):
+        app.quit()
+        return GLib.SOURCE_REMOVE
+
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, _on_term_signal)
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGHUP, _on_term_signal)
     app.run([])

@@ -1,6 +1,6 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-04 · v0.56.0**.
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-05 · v0.57.0**.
 > **Fontes de verdade canônicas:** [`CHANGELOG.md`](../CHANGELOG.md) (histórico completo
 > v0.1.0→v0.55.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..22). Este arquivo resume o
 > estado; em caso de divergência, o CHANGELOG/ADR mandam. Os artefatos em `_bmad-output/`
@@ -109,6 +109,20 @@
   `engine/proc_ram.py` em worker thread, jamais na main loop — revisão Fable §8.5); vista
   "descarregado" derivada (idle+flag → ⏏; sem estado novo na máquina); minimapa cinza;
   **limiar de notificação de RAM configurável** no 💰 "Limites" (histerese 0.9×X anti-flapping).
+
+### Reattach de nós órfãos pós-crash (v0.57.0, R1+R2+R3), ver [`docs/25-plano-reattach-orfaos.md`](25-plano-reattach-orfaos.md)
+- **Dor P2** (a mais universal do nicho, `docs/23-24`): crash do app ≠ perder trabalho. Completa o
+  ciclo do unload (unload = de propósito; reattach = recuperar de um crash). Plano revisado pelo Fable.
+- **R1 (sentinela de crash):** `engine/crash_flag.py` — dirty-flag `ui_state["dirty_run"]` (durável
+  via WAL) distingue fechamento limpo de crash; **handler `SIGTERM/SIGHUP → quit`** (correção do
+  Fable) impede que logout/desligamento vire falso-crash. Premissa "1 instância" (sem flock).
+- **R2 (detecção):** `engine/orphans.py` — no boot, órfão = **crash ∧ agente ∧ ¬descarregado ∧
+  transcript-no-disco** → recebe `unloaded=1` (reusa dormência/reload) + flag **`orphan`** própria
+  (distingue de descarregado-de-propósito; sobrevive a boots); nasce dormente (RAM zero).
+- **R3 (recuperação):** órfão **âmbar** (estado `waiting` → entra no ⚠) com tooltip/hint
+  "recuperável"; 3 ações na cápsula — **Reanexar** (⏏ → `--resume`), **Novo agente** (✧, só em
+  órfão → do zero, descarta a sessão), **Arquivar** (🗑, preserva o workspace). Todas limpam `orphan`.
+- **Fora de escopo (decidido):** R4 (reconciliação de git worktree órfão) — 2º PR/backlog.
 
 ## O que NÃO está feito (lacunas conhecidas)
 - **F1 completo** (v0.52→0.55): medidor + budget cap entregues. Extensões possíveis: teto por-linhagem,
