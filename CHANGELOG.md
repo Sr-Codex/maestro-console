@@ -3,6 +3,18 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.57.1] — fix(reattach): tooltips da cápsula cientes do estado (⏏ e 🗑)
+Achado do usuário ao testar o reattach no aparelho: o **⏏ é um toggle** (num nó vivo
+*descarrega/libera RAM*; num órfão *reataca*), mas o tooltip era **fixo** em "Descarregar
+(libera a RAM)" — enganoso num órfão (você leria "libera RAM" e clicaria esperando isso, mas
+ele reataca). Agora `_update_ctx` ajusta o tooltip ao estado do nó selecionado:
+- **⏏** — vivo: "Descarregar — libera a RAM"; descarregado: "Retomar — religa o processo";
+  **órfão: "Reanexar — retomar a sessão do crash"**.
+- **🗑** — em órfão vira **"Arquivar — o trabalho no disco fica"** (antes "Fechar/remove do
+  canvas", que podia assustar como se apagasse o trabalho do crash); nó normal inalterado.
+- Teste de regressão em runtime real (`test_reattach_canvas.py`) prova os 3 estados. Nenhuma
+  mudança de comportamento dos botões — só o texto. 552 no venv, 3 nos de canvas; ruff no baseline.
+
 ## [0.57.0] — feat: reattach de nós órfãos pós-crash — R1+R2+R3
 Stories R1, R2 e R3 do plano `docs/25` (item do backlog, dor **P2** da pesquisa `docs/23-24` — a
 mais universal do nicho). Completa o ciclo de vida aberto pelo unload: **unload** = descarregar de
