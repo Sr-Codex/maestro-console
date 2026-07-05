@@ -3,6 +3,14 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.57.2] — feat(reattach): os 3 botões de recuperação ficam âmbar em nó órfão
+Pedido do usuário: reforçar que "tem algo pendente precisando de ação". Quando o nó
+selecionado é **órfão**, os 3 botões de recuperação da cápsula (**⏏ Reanexar · ✧ Novo ·
+🗑 Arquivar**) ganham a cor **âmbar** (`#f9e2af`, a mesma da atenção/⚠ e do budget soft) via a
+classe CSS `.orphan-action`, alternada em `_update_ctx`. Nó vivo/descarregado-de-propósito
+segue com a cor normal. Teste de regressão em runtime real cobre os 3 estados (vivo → sem
+âmbar; órfão → os 3 âmbar; recuperado → volta ao normal). 552 no venv; ruff no baseline.
+
 ## [0.57.1] — fix(reattach): tooltips da cápsula cientes do estado (⏏ e 🗑)
 Achado do usuário ao testar o reattach no aparelho: o **⏏ é um toggle** (num nó vivo
 *descarrega/libera RAM*; num órfão *reataca*), mas o tooltip era **fixo** em "Descarregar

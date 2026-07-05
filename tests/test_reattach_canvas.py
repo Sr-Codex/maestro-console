@@ -84,6 +84,8 @@ def test_tooltips_da_capsula_cientes_do_estado(tmp_path):
         assert "Descarregar" in w._ctx_unl_btn.get_tooltip_text()
         assert "Fechar" in w._ctx_del_btn.get_tooltip_text()
         assert w._ctx_new_btn.get_visible() is False  # ✧ só em órfão
+        for b in (w._ctx_unl_btn, w._ctx_new_btn, w._ctx_del_btn):  # vivo: sem âmbar
+            assert b.has_css_class("orphan-action") is False
 
         w.model.set_node_cfg("claude", "orphan", "1")
         w.model.set_node_cfg("claude", "unloaded", "1")
@@ -91,3 +93,5 @@ def test_tooltips_da_capsula_cientes_do_estado(tmp_path):
         assert "Reanexar" in w._ctx_unl_btn.get_tooltip_text()
         assert "Arquivar" in w._ctx_del_btn.get_tooltip_text()
         assert w._ctx_new_btn.get_visible() is True
+        for b in (w._ctx_unl_btn, w._ctx_new_btn, w._ctx_del_btn):  # órfão: os 3 âmbar
+            assert b.has_css_class("orphan-action") is True
