@@ -713,6 +713,9 @@ class CanvasWindow:
             # 2ª pílula (contexto da nota): menor que a principal, com mais respiro
             ".note-ctx-bar { border-radius: 16px; padding: 3px 9px; }",
             ".note-ctx-btn { min-width: 26px; min-height: 26px; padding: 2px; font-size: 12px; }",
+            # reattach: em nó ÓRFÃO os 3 botões de recuperação (⏏ ✧ 🗑) ficam âmbar (mesma
+            # cor da atenção/⚠) — sinaliza "ação pendente aqui". Alternado em _update_ctx.
+            ".orphan-action { color: #f9e2af; }",
             # botão M ativo (modo "ver"): borda quadrada + leve realce; inativo = transparente
             ".note-md-on { border: 1px solid rgba(255,255,255,0.65); border-radius: 4px;"
             " background-color: rgba(255,255,255,0.14); }",
@@ -2109,6 +2112,11 @@ class CanvasWindow:
                     dele.set_tooltip_text("Arquivar — fecha o card; o trabalho no disco fica")
                 else:
                     dele.set_tooltip_text("Fechar terminal (remove do canvas)")
+            # órfão: os 3 botões de recuperação (⏏ ✧ 🗑) ficam ÂMBAR (sinaliza ação pendente)
+            orphan = is_node and self._node_orphan(self._selected[1])
+            for b in (unl, new, dele):
+                if b is not None:
+                    (b.add_css_class if orphan else b.remove_css_class)("orphan-action")
 
     def _draw_cur_color(self, _area, cr, w, h) -> None:
         """Desenha a bolinha da cor ATUAL no botão de cor da pílula."""
