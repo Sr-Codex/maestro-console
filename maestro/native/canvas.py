@@ -33,7 +33,7 @@ gi.require_version("Vte", "3.91")
 gi.require_version("Pango", "1.0")
 from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Pango, Vte  # noqa: E402
 
-from ..engine import budget  # noqa: E402
+from ..engine import budget, crash_flag  # noqa: E402
 from ..engine.ask_bus import (  # noqa: E402
     ASK_MAX_PROMPT_BYTES,
     AskBusError,
@@ -7207,6 +7207,10 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         project_dir = ws_meta.project_dir if (ws_meta and ws_meta.project_dir) else None
         controller, st = build_controller(db_path=reg.db_path(cur))  # DB isolado por workspace
         state["store"] = st
+        # Sentinela de crash (docs/25 §4-R1): lê se o run anterior fechou limpo e re-arma a
+        # flag p/ este run. `crashed` alimenta a detecção de nós órfãos (R2). Premissa "1
+        # instância por vez" (decisão do usuário 2026-07-05) — sem flock.
+        state["crashed"] = crash_flag.check_and_arm(st)
         # um terminal de AGENTE interativo (sandbox bwrap) por CLI instalado
         ws = Workspace(f"{base}/workspaces")
         ask_bus_dir = f"{base}/ask-bus"
@@ -7286,8 +7290,21 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
             win._ram_stop.set()  # encerra o worker de RAM (daemon; set é só higiene)
         st = state.get("store")
         if st is not None:
+            crash_flag.disarm(st)  # fechamento LIMPO: limpa a dirty-flag (docs/25 §4-R1)
             st.close()
 
     app.connect("activate", on_activate)
     app.connect("shutdown", on_shutdown)
+
+    # Correção crítica do Fable (docs/25 §3.1): `shutdown` do GTK NÃO dispara em SIGTERM/SIGHUP
+    # (desligamento/logout do sistema, fechar a tampa do uConsole). Sem isto, cada saída dessas
+    # deixaria a dirty-flag suja → todo boot seguinte marcaria "crash" e degradaria o "abre igual
+    # fechou". Traduzir esses sinais em `quit()` faz o shutdown limpo rodar. Sobra só
+    # SIGKILL/OOM/power-loss como "sujo" — que é exatamente o crash que se quer detectar.
+    def _on_term_signal(*_a):
+        app.quit()
+        return GLib.SOURCE_REMOVE
+
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, _on_term_signal)
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGHUP, _on_term_signal)
     app.run([])
