@@ -26,6 +26,16 @@ Fora esses pontos, a fila fica parada — não interromper uma tarefa em andamen
 
 ## Fila
 
+### 2026-07-05 — UX dos diálogos/cards do canvas (📋 planejada → `docs/26`)
+Gatilho: o card "Limites" (💰) abria "quase tela cheia"; usuário pediu melhorar a UX de TODOS os
+diálogos. Causa-raiz geral: label `wrap=True` sem `max_width_chars` estica a `Gtk.Window` (no GTK4
+não há clamp de janela). O card Limites já foi tapado inline (v0.56.0); ~15 labels seguem latentes
+(os `_confirm_*` são os expostos). Plano **revisado pelo Fable** (cortou clamp-de-janela e
+scroll-automático por não terem base no GTK4; rebaixou form-row/SizeGroup como YAGNI). Quick-win:
+`_hint_label` + `_confirm_dialog` + guarda de regressão no fonte (roda no CI). Plano cirúrgico
+completo em [`docs/26-plano-ux-dialogos.md`](26-plano-ux-dialogos.md). Status: 📋 planejada (aguarda
+o usuário escolher escopo: quick-win vs completo).
+
 ### 2026-07-04 — Auto-unload pós-tarefa: nó descarregado "acorda" pro cabo e volta a dormir sozinho
 Ideia do usuário (durante o Bloco D do unload, `docs/21`): nó descarregado que recebe tarefa via
 cabo executa o trabalho e **volta a ficar descarregado automaticamente** ao terminar — a menos que
