@@ -26,6 +26,15 @@ Fora esses pontos, a fila fica parada — não interromper uma tarefa em andamen
 
 ## Fila
 
+### 2026-07-08 — Emoji-como-UI ainda tofa em 2 lugares fora da FAB (mesmo bug do A1)
+Achado ao fazer o A1 (fim do tofu na FAB, v0.59.0). O device não tem fonte de emoji, então
+qualquer glifo emoji usado como UI vira caixinha ▦. A FAB/título/HUD foram resolvidos, mas
+sobraram 2 pontos: (a) o **seletor de ícone do nó** (`canvas.py:211`, grade de ~emoji 🤖🚀🐳…
+que o usuário atribui ao card) — a grade inteira tofa; migrar pra ícones bundled Lucide
+(há 264 no bundle) seria o certo; (b) o botão **"🤖 criar agente"** no diálogo de workspaces
+(`canvas.py:~5420`). Fora do escopo da Fase A (que era a FAB). Sweep único: `grep` glifos > U+2FFF
+usados como UI e trocar por bundled. Status: 🧊 icebox.
+
 ### 2026-07-08 — Cápsula contextual de Grupo (e Árvore?) — conformidade com AGENTS.md
 Da auditoria de UI (Fable, 2026-07-08). A regra do AGENTS.md pede cápsula contextual pra TODO
 elemento com config; grupos hoje só configuram por **duplo-clique → `_group_dialog`** (nome/cor/
