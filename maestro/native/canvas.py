@@ -5187,6 +5187,48 @@ class CanvasWindow:
         win.add_controller(esc)
         return win, box
 
+    @staticmethod
+    def _hint_label(text: str, chars: int = 44) -> Gtk.Label:
+        """Label de MENSAGEM de diálogo: sempre com largura máxima (`max_width_chars`).
+
+        Sem `max_width_chars`, um label `wrap=True` reporta a largura natural do texto
+        inteiro numa linha e ESTICA a Gtk.Window (no GTK4 não há clamp de janela) — a
+        causa-raiz do "diálogo abre em tela cheia". `wrap=True` faz o soft-wrap POR CIMA
+        de eventuais `\n` manuais (ex.: `_unload_msg`), sem removê-los. `chars=44` é o
+        default já usado no diálogo de Limites."""
+        lbl = Gtk.Label(label=text, wrap=True, max_width_chars=chars, xalign=0.0)
+        return lbl
+
+    def _confirm_dialog(self, title: str, msg: str, *, primary: str,
+                        on_primary, destructive: bool = False,
+                        extra=None, cancel: bool = True):
+        """Diálogo de confirmação padrão (colapsa os `_confirm_*` quase-idênticos e já
+        traz `_hint_label` → sem o bug de largura). Rodapé alinhado à direita
+        `[Cancelar?, primary]`; `destructive` → `destructive-action`, senão
+        `suggested-action`. `cancel=False` → só o primário (variante "OK/info").
+
+        `on_primary()` roda ANTES do `win.destroy()` (o callback pode contar com a janela
+        viva — ex.: fechar uma janela-pai de dentro dele). `extra` (widget ou lista) é
+        inserido entre a mensagem e o rodapé. Retorna `win` (assíncronos anexam timeout)."""
+        win, box = self._dialog(title)
+        box.append(self._hint_label(msg))
+        if extra is not None:
+            for w in (extra if isinstance(extra, (list, tuple)) else [extra]):
+                box.append(w)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.set_halign(Gtk.Align.END)
+        if cancel:
+            cancel_btn = Gtk.Button(label="Cancelar")
+            cancel_btn.connect("clicked", lambda _b: win.destroy())
+            row.append(cancel_btn)
+        prim = Gtk.Button(label=primary)
+        prim.add_css_class("destructive-action" if destructive else "suggested-action")
+        prim.connect("clicked", lambda _b: (on_primary(), win.destroy()))
+        row.append(prim)
+        box.append(row)
+        win.present()
+        return win
+
     # -- floors no canvas (V8-S5) --
     def _open_floors_dialog(self):
         if self.floors is None:
