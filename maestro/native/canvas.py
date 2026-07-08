@@ -547,7 +547,7 @@ class CanvasWindow:
         self._install_css()
         self.win = Gtk.ApplicationWindow(application=app)
         self._register_bundled_icons()  # ícones symbolic PRÓPRIOS (independem do tema do usuário)
-        self.win.set_title("maestro console 🎼 — canvas (GTK4)")
+        self.win.set_title("maestro console — canvas")  # A1: sem 🎼 (tofava) nem detalhe de impl
         self.win.set_default_size(1000, 600)
         key = Gtk.EventControllerKey()
         key.connect("key-pressed", self._on_key)
@@ -861,13 +861,22 @@ class CanvasWindow:
         except Exception:
             pass  # sem ícone próprio cai no fallback de emoji (degradação suave)
 
+    # A1: fallback BUNDLED (não emoji) — o device não tem fonte de emoji, então emoji vira tofu ▦.
+    # Cair num ícone bundled genérico mata a CLASSE do bug (qualquer nome de tema perdido no futuro
+    # não vira caixinha). O `emoji` fica só como último recurso se nem o bundled resolver.
+    _FAB_ICON_FALLBACK = "maestro-circle-help"
+
     def _fab_icon(self, icon_name: str, emoji: str) -> Gtk.Widget:
-        """Ícone symbolic (visual line-art do print) com fallback p/ emoji se o tema não tiver."""
+        """Ícone da FAB: resolve o nome pedido; se o tema não tiver, cai num ícone bundled
+        genérico (A1 — nunca emoji, que tofa neste device)."""
         try:
             disp = Gdk.Display.get_default()
             theme = Gtk.IconTheme.get_for_display(disp) if disp is not None else None
-            if theme is not None and theme.has_icon(icon_name):
-                return Gtk.Image.new_from_icon_name(icon_name)
+            if theme is not None:
+                if theme.has_icon(icon_name):
+                    return Gtk.Image.new_from_icon_name(icon_name)
+                if theme.has_icon(self._FAB_ICON_FALLBACK):
+                    return Gtk.Image.new_from_icon_name(self._FAB_ICON_FALLBACK)
         except Exception:
             pass
         return Gtk.Label(label=emoji)
@@ -921,11 +930,11 @@ class CanvasWindow:
         bar.append(self._fab_button(
             "media-playback-start-symbolic", "▶", "Executar orquestrador (rodar time)",
             cb.get("run_team"), css="fab-run", enabled="run_team" in avail))
-        add("utilities-terminal-symbolic", "🖥", "Novo terminal", "newterm")
+        add("maestro-terminal", "🖥", "Novo terminal", "newterm")  # A1: bundled (não tofava)
         add("text-x-generic-symbolic", "📝", "Nova nota", "note")
         add("list-add-symbolic", "⬚", "Novo grupo", "group")
         add("system-run-symbolic", "🧩", "Montar equipe (Team Templates)", "team")
-        add("mail-forward-symbolic", "⇄", "Disparar handoff", "handoff")
+        add("maestro-send", "⇄", "Disparar handoff", "handoff")  # A1: bundled (tema não tinha)
         # — conectar (toggle) —
         if self.edges is not None:
             self._connect_btn = Gtk.ToggleButton()
@@ -938,16 +947,17 @@ class CanvasWindow:
         # — kill-switch do fleet (ADR-17): só quando o Maestro mode é possível —
         if self._sock_server is not None:
             bar.append(self._fab_button(
-                "process-stop-symbolic", "⛔", "Parar TODOS os agentes (kill-switch)",
+                # A1: symbolic recolorível → .fab-stop pinta de vermelho (SVG cor-fixa não)
+                "maestro-circle-x-symbolic", "⛔", "Parar TODOS os agentes (kill-switch)",
                 self._confirm_kill_all, css="fab-stop"))
-            bar.append(self._fab_button(  # F1 Bloco D: teto de gasto ($)
-                "wallet-symbolic", "💰", "Limites: gasto dos agentes ($) e RAM por nó",
+            bar.append(self._fab_button(  # F1 Bloco D: teto de gasto ($) — A1: gauge bundled
+                "maestro-gauge", "💰", "Limites: gasto dos agentes ($) e RAM por nó",
                 self._budget_dialog))
         # — config de software / features globais —
         add("folder-symbolic", "📁", "Árvore de arquivos", "filetree")
         add("view-grid-symbolic", "🗂", "Workspaces", "workspaces")
         add("drive-harddisk-symbolic", "🧱", "Floors", "floors")
-        add("alarm-symbolic", "⏰", "Routines", "routines")
+        add("maestro-clock", "⏰", "Routines", "routines")  # A1: bundled (tema não tinha)
         # (tema saiu da FAB — o tema GLOBAL é definido pelo editor: aba Tema → "Aplicar a TODOS")
         # paleta de comandos (Ctrl-P)
         aa = Gtk.Button(label="Aa")
@@ -1076,7 +1086,7 @@ class CanvasWindow:
         bar.set_visible(False)
         # ações DAQUELE terminal — operam sobre self._selected no clique (a pílula é única)
         ren = self._fab_button(
-            "document-edit-symbolic", "✏", "Renomear terminal", self._ctx_rename_node)
+            "maestro-pencil", "✏", "Renomear terminal", self._ctx_rename_node)  # A1: bundled
         ren.add_css_class("note-ctx-btn")
         bar.append(ren)
         foc = self._fab_button(
@@ -1101,7 +1111,7 @@ class CanvasWindow:
         # reattach R3: "Novo agente" — só aparece em nó ÓRFÃO (começa do zero, descarta o
         # transcript do crash). Visibilidade alternada em _update_ctx.
         new = self._fab_button(
-            "document-new-symbolic", "✧",
+            "maestro-sparkles", "✧",  # A1: bundled (tema não tinha document-new-symbolic)
             "Novo agente (começa do zero — descarta a sessão do crash)",
             self._ctx_new_agent)
         new.add_css_class("note-ctx-btn")
@@ -4179,10 +4189,11 @@ class CanvasWindow:
         return lbl
 
     def _fleet_hud_text(self) -> str:
-        """Texto do HUD (puro, testável): '🤖 N/CAP · prof D · ⚠ ciclo'."""
+        """Texto do HUD (puro, testável): 'agentes N/CAP · prof D · ⚠ ciclo'. Sem emoji (A1:
+        tofava no device); ⚠ é Unicode antigo (renderiza) e fica."""
         n = self._fleet_count()
         depth = max((self._node_depth(x) for x in self._agent_nids), default=0)
-        parts = [f"🤖 {n}/{self.MAESTRO_FLEET_CAP}"]
+        parts = [f"agentes {n}/{self.MAESTRO_FLEET_CAP}"]
         if depth:
             parts.append(f"prof {depth}")
         if self.edges is not None and has_cycle(self.edges.list()):
@@ -4200,7 +4211,7 @@ class CanvasWindow:
             soft, hard = budget.budget_limits(self._store)
             if hard:
                 spent = budget.counted_spend(self._store)
-                seg = f"💰 ${spent:.2f}/${hard:.2f}"
+                seg = f"gasto ${spent:.2f}/${hard:.2f}"  # A1: sem emoji 💰 (tofava)
                 text = f"{text}  ·  {seg}" if text else seg
                 verdict = budget.budget_verdict(spent, soft, hard)
         for c in ("hud-soft", "hud-hard"):
