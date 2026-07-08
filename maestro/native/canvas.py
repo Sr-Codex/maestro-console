@@ -690,6 +690,8 @@ class CanvasWindow:
             ".fab-btn:disabled { opacity: 0.35; }",
             ".fab-run { color: #89b4fa; }",  # o play (azul)
             ".fab-stop { color: #f38ba0; }",  # kill-switch (vermelho)
+            ".fab-sep { background-color: rgba(205,214,244,0.18); "  # A3: divisória de grupo
+            "min-width: 1px; margin: 6px 4px; }",
             ".fleet-hud { background: rgba(30,30,46,0.85); color: #cdd6f4; "
             "padding: 3px 10px; border-radius: 10px; font-size: 12px; }",  # HUD do fleet
             ".fleet-hud.hud-soft { color: #f9e2af; }",  # F1-D: budget perto do teto (âmbar)
@@ -926,7 +928,12 @@ class CanvasWindow:
         def add(icon, emoji, tip, key):
             bar.append(self._fab_button(icon, emoji, tip, cb.get(key), enabled=key in avail))
 
-        # — orquestração + criação de elementos —
+        def sep():  # A3: divisória fina entre grupos da FAB (não colar tudo numa fileira só)
+            s = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+            s.add_css_class("fab-sep")
+            bar.append(s)
+
+        # — grupo 1: orquestração + criação de elementos —
         bar.append(self._fab_button(
             "media-playback-start-symbolic", "▶", "Executar orquestrador (rodar time)",
             cb.get("run_team"), css="fab-run", enabled="run_team" in avail))
@@ -935,8 +942,9 @@ class CanvasWindow:
         add("list-add-symbolic", "⬚", "Novo grupo", "group")
         add("system-run-symbolic", "🧩", "Montar equipe (Team Templates)", "team")
         add("maestro-send", "⇄", "Disparar handoff", "handoff")  # A1: bundled (tema não tinha)
-        # — conectar (toggle) —
+        # — grupo 2: conectar (toggle) —
         if self.edges is not None:
+            sep()
             self._connect_btn = Gtk.ToggleButton()
             self._connect_btn.set_child(self._fab_icon("maestro-connect-symbolic", "🔗"))
             self._connect_btn.set_has_frame(False)
@@ -944,8 +952,18 @@ class CanvasWindow:
             self._connect_btn.set_tooltip_text("ligar agentes por cabo (Ctrl+Shift+L)")
             self._connect_btn.connect("toggled", self._toggle_connect)
             bar.append(self._connect_btn)
-        # — kill-switch do fleet (ADR-17): só quando o Maestro mode é possível —
+        # — grupo 3: config de software / features globais —
+        sep()
+        add("folder-symbolic", "📁", "Árvore de arquivos", "filetree")
+        add("view-grid-symbolic", "🗂", "Workspaces", "workspaces")
+        add("drive-harddisk-symbolic", "🧱", "Floors", "floors")
+        add("maestro-clock", "⏰", "Routines", "routines")  # A1: bundled (tema não tinha)
+        # paleta de comandos — A4: ícone de comando (era "Aa", que colidia com a fonte da nota)
+        bar.append(self._fab_button("maestro-command", "⌘", "Paleta de comandos (Ctrl-P)",
+                                    self._open_palette))
+        # — grupo 4: kill-switch do fleet (ADR-17) — A3: movido pro FIM, longe da criação —
         if self._sock_server is not None:
+            sep()
             bar.append(self._fab_button(
                 # A1: symbolic recolorível → .fab-stop pinta de vermelho (SVG cor-fixa não)
                 "maestro-circle-x-symbolic", "⛔", "Parar TODOS os agentes (kill-switch)",
@@ -953,19 +971,7 @@ class CanvasWindow:
             bar.append(self._fab_button(  # F1 Bloco D: teto de gasto ($) — A1: gauge bundled
                 "maestro-gauge", "💰", "Limites: gasto dos agentes ($) e RAM por nó",
                 self._budget_dialog))
-        # — config de software / features globais —
-        add("folder-symbolic", "📁", "Árvore de arquivos", "filetree")
-        add("view-grid-symbolic", "🗂", "Workspaces", "workspaces")
-        add("drive-harddisk-symbolic", "🧱", "Floors", "floors")
-        add("maestro-clock", "⏰", "Routines", "routines")  # A1: bundled (tema não tinha)
-        # (tema saiu da FAB — o tema GLOBAL é definido pelo editor: aba Tema → "Aplicar a TODOS")
-        # paleta de comandos (Ctrl-P)
-        aa = Gtk.Button(label="Aa")
-        aa.set_has_frame(False)
-        aa.add_css_class("fab-btn")
-        aa.set_tooltip_text("Paleta de comandos (Ctrl-P)")
-        aa.connect("clicked", lambda _b: self._open_palette())
-        bar.append(aa)
+        sep()  # A3: separador antes do "⚠ N" p/ não parecer um cluster de alarme com o kill
         # atenção (status): "⚠ N" quando algo precisa de você
         self._attn_label = Gtk.Label(label="")
         self._attn_label.set_tooltip_text("precisam de você — clique p/ pular pro próximo")
