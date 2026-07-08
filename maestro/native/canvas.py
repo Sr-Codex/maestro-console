@@ -1147,7 +1147,7 @@ class CanvasWindow:
         def soon(text: str) -> Gtk.Widget:
             lb = Gtk.Label(label=f"• {text} (em breve)", xalign=0)
             lb.add_css_class("dim-label")
-            lb.set_wrap(True)
+            lb.set_wrap(True)  # wrap-exempt: Editar Terminal (dentro do ScrolledWindow)
             return lb
 
         def page(*rows: Gtk.Widget) -> Gtk.Widget:
@@ -1682,7 +1682,7 @@ class CanvasWindow:
             label="Avisa (dot 'aguardando' + notificação) quando o terminal PARA de produzir "
                   "output, estando fora de foco. Ignora 'pensando' (TUI ocupada).", xalign=0)
         hint.add_css_class("dim-label")
-        hint.set_wrap(True)
+        hint.set_wrap(True)  # wrap-exempt: Editar Terminal (dentro do ScrolledWindow)
         box.append(hint)
         trow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         trow.append(Gtk.Label(label="Tempo de quietude (s):"))
@@ -1717,7 +1717,7 @@ class CanvasWindow:
             label="Promove este AGENTE a manager: ele pode `maestri recruit/list/reassign/wire/"
                   "dismiss` p/ criar agentes conectados abaixo e atribuir papéis.", xalign=0)
         hint.add_css_class("dim-label")
-        hint.set_wrap(True)
+        hint.set_wrap(True)  # wrap-exempt: Editar Terminal (dentro do ScrolledWindow)
         box.append(hint)
 
         def apply():
@@ -1745,7 +1745,7 @@ class CanvasWindow:
                   "sendo o sandbox (bwrap) — isto só tira as confirmações. Reinicia o agente.",
             xalign=0)
         hint.add_css_class("dim-label")
-        hint.set_wrap(True)
+        hint.set_wrap(True)  # wrap-exempt: Editar Terminal (dentro do ScrolledWindow)
         box.append(hint)
 
         def apply():
@@ -5701,7 +5701,7 @@ class CanvasWindow:
         # corpo = Stack: "edit" (TextView) ↔ "view" (Label com markdown renderizado) — botão M
         view_lbl = Gtk.Label()
         view_lbl.set_use_markup(True)
-        view_lbl.set_wrap(True)
+        view_lbl.set_wrap(True)  # wrap-exempt: render de nota no canvas, não é diálogo
         view_lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         view_lbl.set_xalign(0.0)
         view_lbl.set_yalign(0.0)
