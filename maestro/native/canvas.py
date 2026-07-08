@@ -1147,7 +1147,7 @@ class CanvasWindow:
         def soon(text: str) -> Gtk.Widget:
             lb = Gtk.Label(label=f"• {text} (em breve)", xalign=0)
             lb.add_css_class("dim-label")
-            lb.set_wrap(True)
+            lb.set_wrap(True)  # wrap-exempt: Editar Terminal (dentro do ScrolledWindow)
             return lb
 
         def page(*rows: Gtk.Widget) -> Gtk.Widget:
@@ -1682,7 +1682,7 @@ class CanvasWindow:
             label="Avisa (dot 'aguardando' + notificação) quando o terminal PARA de produzir "
                   "output, estando fora de foco. Ignora 'pensando' (TUI ocupada).", xalign=0)
         hint.add_css_class("dim-label")
-        hint.set_wrap(True)
+        hint.set_wrap(True)  # wrap-exempt: Editar Terminal (dentro do ScrolledWindow)
         box.append(hint)
         trow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         trow.append(Gtk.Label(label="Tempo de quietude (s):"))
@@ -1717,7 +1717,7 @@ class CanvasWindow:
             label="Promove este AGENTE a manager: ele pode `maestri recruit/list/reassign/wire/"
                   "dismiss` p/ criar agentes conectados abaixo e atribuir papéis.", xalign=0)
         hint.add_css_class("dim-label")
-        hint.set_wrap(True)
+        hint.set_wrap(True)  # wrap-exempt: Editar Terminal (dentro do ScrolledWindow)
         box.append(hint)
 
         def apply():
@@ -1745,7 +1745,7 @@ class CanvasWindow:
                   "sendo o sandbox (bwrap) — isto só tira as confirmações. Reinicia o agente.",
             xalign=0)
         hint.add_css_class("dim-label")
-        hint.set_wrap(True)
+        hint.set_wrap(True)  # wrap-exempt: Editar Terminal (dentro do ScrolledWindow)
         box.append(hint)
 
         def apply():
@@ -3625,23 +3625,11 @@ class CanvasWindow:
             return
         busy = tui_busy(self._term_text(term))
         name = self.model.node_name(nid, nid)
-        dlg, box = self._dialog(f"⏏ Descarregar {name}")
-        msg = Gtk.Label(label=self._unload_msg(busy))
-        msg.set_wrap(True)
-        msg.set_xalign(0.0)
-        box.append(msg)
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        row.set_halign(Gtk.Align.END)
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda _b: dlg.destroy())
-        go = Gtk.Button(label="⏏ Descarregar")
-        if busy:
-            go.add_css_class("destructive-action")
-        go.connect("clicked", lambda _b: (self._unload_node(nid), dlg.destroy()))
-        row.append(cancel)
-        row.append(go)
-        box.append(row)
-        dlg.present()
+        # destructive SÓ quando busy (mata turno em voo) — reproduz o comportamento antigo.
+        self._confirm_dialog(f"⏏ Descarregar {name}", self._unload_msg(busy),
+                             primary="⏏ Descarregar",
+                             on_primary=lambda: self._unload_node(nid),
+                             destructive=busy)
 
     # -- Responsabilidades (roles) por terminal (Fase 5) --
     @staticmethod
@@ -4359,36 +4347,16 @@ class CanvasWindow:
     def _confirm_kill_all(self) -> None:
         """Confirmação do kill-switch (ação destrutiva: para TODOS os agentes)."""
         n = self._fleet_count()
-        dlg, box = self._dialog("⛔ Parar todos os agentes")
-        if n == 0:
-            box.append(Gtk.Label(label="Nenhum agente vivo para parar."))
-            ok = Gtk.Button(label="OK")
-            ok.connect("clicked", lambda _b: dlg.destroy())
-            box.append(ok)
-            dlg.present()
+        if n == 0:  # nada a parar → só informa (variante OK/info, sem Cancelar)
+            self._confirm_dialog("⛔ Parar todos os agentes",
+                                 "Nenhum agente vivo para parar.",
+                                 primary="OK", on_primary=lambda: None, cancel=False)
             return
-        msg = Gtk.Label(
-            label=f"Isso MATA o processo de {n} agente(s) e desarma o Maestro mode.\n"
-                  "O trabalho em andamento é interrompido. Religue o toggle p/ recrutar de novo.")
-        msg.set_wrap(True)
-        msg.set_xalign(0.0)
-        box.append(msg)
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        row.set_halign(Gtk.Align.END)
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda _b: dlg.destroy())
-        stop = Gtk.Button(label="⛔ Parar tudo")
-        stop.add_css_class("destructive-action")
-
-        def _do(_b):
-            dlg.destroy()
-            self._kill_all_agents()
-
-        stop.connect("clicked", _do)
-        row.append(cancel)
-        row.append(stop)
-        box.append(row)
-        dlg.present()
+        self._confirm_dialog(
+            "⛔ Parar todos os agentes",
+            f"Isso MATA o processo de {n} agente(s) e desarma o Maestro mode.\n"
+            "O trabalho em andamento é interrompido. Religue o toggle p/ recrutar de novo.",
+            primary="⛔ Parar tudo", on_primary=self._kill_all_agents, destructive=True)
 
     def _maestro_handle(self, req):
         """Worker thread: marshala o comando p/ a MAIN thread (idle_add) e espera a resposta."""
@@ -4474,12 +4442,9 @@ class CanvasWindow:
             self._apply_recruit_decision(approve, req, result, done)
             return False
 
-        msg = Gtk.Label(
-            label=f"O agente '{req.frm}' quer recrutar mais um (fleet em "
-                  f"{self._fleet_count()}/{self.MAESTRO_FLEET_CAP}). Aprovar?")
-        msg.set_wrap(True)
-        msg.set_xalign(0.0)
-        box.append(msg)
+        box.append(self._hint_label(  # _hint_label → sem o bug de largura (mantém a lógica async)
+            f"O agente '{req.frm}' quer recrutar mais um (fleet em "
+            f"{self._fleet_count()}/{self.MAESTRO_FLEET_CAP}). Aprovar?"))
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         row.set_halign(Gtk.Align.END)
         deny = Gtk.Button(label="Negar")
@@ -4563,12 +4528,9 @@ class CanvasWindow:
         preview = "\n".join(
             f"• {g.name}: " + ", ".join(m.name for m in g.members) for g in spec.groups
         )
-        msg = Gtk.Label(
-            label=f"O agente '{frm}' quer montar a equipe '{spec.name}' "
-                  f"({spec.total_members} agente(s)):\n\n{preview}\n\nMontar?")
-        msg.set_wrap(True)
-        msg.set_xalign(0.0)
-        box.append(msg)
+        box.append(self._hint_label(  # _hint_label → sem o bug de largura (mantém a lógica async)
+            f"O agente '{frm}' quer montar a equipe '{spec.name}' "
+            f"({spec.total_members} agente(s)):\n\n{preview}\n\nMontar?"))
 
         def decide(approve: bool):
             if decided["v"]:
@@ -5187,6 +5149,48 @@ class CanvasWindow:
         win.add_controller(esc)
         return win, box
 
+    @staticmethod
+    def _hint_label(text: str, chars: int = 44) -> Gtk.Label:
+        """Label de MENSAGEM de diálogo: sempre com largura máxima (`max_width_chars`).
+
+        Sem `max_width_chars`, um label `wrap=True` reporta a largura natural do texto
+        inteiro numa linha e ESTICA a Gtk.Window (no GTK4 não há clamp de janela) — a
+        causa-raiz do "diálogo abre em tela cheia". `wrap=True` faz o soft-wrap POR CIMA
+        de eventuais `\n` manuais (ex.: `_unload_msg`), sem removê-los. `chars=44` é o
+        default já usado no diálogo de Limites."""
+        lbl = Gtk.Label(label=text, wrap=True, max_width_chars=chars, xalign=0.0)
+        return lbl
+
+    def _confirm_dialog(self, title: str, msg: str, *, primary: str,
+                        on_primary, destructive: bool = False,
+                        extra=None, cancel: bool = True):
+        """Diálogo de confirmação padrão (colapsa os `_confirm_*` quase-idênticos e já
+        traz `_hint_label` → sem o bug de largura). Rodapé alinhado à direita
+        `[Cancelar?, primary]`; `destructive` → `destructive-action`, senão
+        `suggested-action`. `cancel=False` → só o primário (variante "OK/info").
+
+        `on_primary()` roda ANTES do `win.destroy()` (o callback pode contar com a janela
+        viva — ex.: fechar uma janela-pai de dentro dele). `extra` (widget ou lista) é
+        inserido entre a mensagem e o rodapé. Retorna `win` (assíncronos anexam timeout)."""
+        win, box = self._dialog(title)
+        box.append(self._hint_label(msg))
+        if extra is not None:
+            for w in (extra if isinstance(extra, (list, tuple)) else [extra]):
+                box.append(w)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.set_halign(Gtk.Align.END)
+        if cancel:
+            cancel_btn = Gtk.Button(label="Cancelar")
+            cancel_btn.connect("clicked", lambda _b: win.destroy())
+            row.append(cancel_btn)
+        prim = Gtk.Button(label=primary)
+        prim.add_css_class("destructive-action" if destructive else "suggested-action")
+        prim.connect("clicked", lambda _b: (on_primary(), win.destroy()))
+        row.append(prim)
+        box.append(row)
+        win.present()
+        return win
+
     # -- floors no canvas (V8-S5) --
     def _open_floors_dialog(self):
         if self.floors is None:
@@ -5198,6 +5202,7 @@ class CanvasWindow:
         out.set_xalign(0)
         out.set_selectable(True)
         out.set_wrap(True)
+        out.set_max_width_chars(60)  # saída dinâmica: sem isto, texto longo estica o diálogo
 
         def refresh():
             combo.remove_all()
@@ -5696,7 +5701,7 @@ class CanvasWindow:
         # corpo = Stack: "edit" (TextView) ↔ "view" (Label com markdown renderizado) — botão M
         view_lbl = Gtk.Label()
         view_lbl.set_use_markup(True)
-        view_lbl.set_wrap(True)
+        view_lbl.set_wrap(True)  # wrap-exempt: render de nota no canvas, não é diálogo
         view_lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         view_lbl.set_xalign(0.0)
         view_lbl.set_yalign(0.0)
@@ -6375,6 +6380,7 @@ class CanvasWindow:
         dlg, box = self._dialog("🧩 Montar equipe")
         lbl = Gtk.Label(label=message, xalign=0)
         lbl.set_wrap(True)
+        lbl.set_max_width_chars(60)  # mensagem de resultado (dinâmica) não pode esticar o diálogo
         box.append(lbl)
         ok = Gtk.Button(label="OK")
         ok.connect("clicked", lambda _b: dlg.destroy())
@@ -6588,6 +6594,7 @@ class CanvasWindow:
 
         err_lbl = Gtk.Label(label="", xalign=0)
         err_lbl.set_wrap(True)
+        err_lbl.set_max_width_chars(60)  # erro (dinâmico) não pode esticar o diálogo
 
         def refresh_groups():
             child = groups_box.get_first_child()
@@ -6694,6 +6701,7 @@ class CanvasWindow:
             if tpl.description:
                 desc = Gtk.Label(label=tpl.description, xalign=0)
                 desc.set_wrap(True)
+                desc.set_max_width_chars(60)  # descrição do template não pode esticar o diálogo
                 desc.add_css_class("dim-label")
                 row.append(desc)
             preview = " · ".join(
@@ -6701,6 +6709,7 @@ class CanvasWindow:
             )
             prev_lbl = Gtk.Label(label=preview, xalign=0)
             prev_lbl.set_wrap(True)
+            prev_lbl.set_max_width_chars(60)  # preview do template não pode esticar o diálogo
             prev_lbl.add_css_class("dim-label")
             row.append(prev_lbl)
             actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -7009,6 +7018,7 @@ class CanvasWindow:
         out.set_xalign(0)
         out.set_selectable(True)
         out.set_wrap(True)
+        out.set_max_width_chars(60)  # saída dinâmica: sem isto, texto longo estica o diálogo
 
         def refresh():
             combo.remove_all()

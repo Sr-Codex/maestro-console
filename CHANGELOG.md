@@ -3,6 +3,28 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.58.0] — feat(canvas): UX dos diálogos Nível 1 — fim do "diálogo abre em tela cheia"
+Plano `docs/26` (pesquisa + revisão adversarial do Fable). Causa-raiz: `Gtk.Label(wrap=True)`
+sem `max_width_chars` estica a `Gtk.Window` (no GTK4 não há clamp de janela). Entregue em 4 fases
++ fechamento, na branch `feat/ux-dialogos`.
+- **`_hint_label(text, chars=44)`**: fábrica de label de mensagem que já nasce `wrap=True` +
+  `max_width_chars` + `xalign=0`; preserva `\n` manuais (soft-wrap por cima). Cura o bug na fonte.
+- **`_confirm_dialog(title, msg, *, primary, on_primary, destructive, extra, cancel)`**: colapsa os
+  diálogos de confirmação quase-idênticos; `destructive`→`destructive-action` senão
+  `suggested-action`; `cancel=False`→só o primário (variante OK/info); retorna `win` (assíncronos
+  anexam timeout); `on_primary()` roda antes do `destroy`.
+- **Migrados** `_confirm_unload` (destructive só quando `busy`, aviso ⚠ preservado) e
+  `_confirm_kill_all` (ramo n==0 = OK-only; n>0 = destructive) para o helper.
+- **Bug de largura eliminado** também em `_hitl_recruit`/`_confirm_team_from_agent` (mensagem via
+  `_hint_label`, lógica async intacta) e nos labels de saída/erro/preview de floors, routines,
+  team-result, team-edit e lista de templates (`max_width_chars=60`).
+- **Guarda de regressão no FONTE** (`tests/test_dialog_width_guard.py`): varre `canvas.py` via AST e
+  falha se algum label de quebra ficar sem largura máxima — roda no `.venv` (sem `gi`), então é o
+  único teste do bug **coberto pelo CI**. Provada a discriminar (ruim→flag, com-max→ok, exempt→ok).
+- Testes gi dos helpers em `tests/test_dialog_helpers_canvas.py` (device/system-python).
+- **Fora (Nível 2, adiado):** migrar o card "Limites" pro helper (fullscreen já tapado inline em
+  v0.56.0), `_dialog_footer` nos form-heavy, scroll opt-in, `_confirm_materialize_team` (é formulário).
+
 ## [0.57.2] — feat(reattach): os 3 botões de recuperação ficam âmbar em nó órfão
 Pedido do usuário: reforçar que "tem algo pendente precisando de ação". Quando o nó
 selecionado é **órfão**, os 3 botões de recuperação da cápsula (**⏏ Reanexar · ✧ Novo ·

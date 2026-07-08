@@ -3,7 +3,7 @@
 > Data: 2026-07-05 · PT-BR · Origem: usuário reclamou que o card **"Limites"** (💰, gasto/RAM)
 > abre "quase tela cheia"; pediu melhorar a UX de **todos** os diálogos/cards abertos. Protocolo
 > `AGENTS.md`: analisar → planejar → **pesquisar (revisão adversarial do Fable)** → validar → codar.
-> Estado: **PLANEJADO** (revisado pelo Fable 2026-07-05; validado contra a `main` v0.57.2). Não
+> Estado: **NÍVEL 1 ENTREGUE (v0.58.0)** · Nível 2 adiado. (Revisado pelo Fable 2026-07-05; validado contra a `main` v0.57.2). Não
 > codar até o usuário puxar da fila (`docs/15`) e escolher o escopo.
 
 ## 1. Objetivo (a dor)
@@ -57,7 +57,10 @@ Correções que o Fable fez no rascunho inicial (verificadas no código):
 
 ## 4. Plano cirúrgico (blocos → stories, ranqueado)
 
-### Nível 1 — quick-win (alto valor, baixo risco) — **codar primeiro**
+### Nível 1 — quick-win (alto valor, baixo risco) — ✅ **ENTREGUE (v0.58.0, branch `feat/ux-dialogos`)**
+Fases: 1 helpers (`_hint_label`+`_confirm_dialog`) · 2 migrar `_confirm_unload`/`_confirm_kill_all` ·
+3 matar o bug nos demais labels (async + outputs) · 4 guarda de regressão no fonte (CI) · 5 fechamento.
+Falta só o **teste vivo visual no device** (largura ≤ ~600px, Esc, Enter→primário) — confirmação do usuário.
 1. **`_hint_label(text, chars=44)`** — fábrica de label de mensagem que já nasce
    `wrap=True + max_width_chars`. Aplicar nos `_confirm_*` e nos avisos "out" de floors/routines.
    **Mata o bug fullscreen onde ele ainda vive.** Menor superfície, maior retorno.

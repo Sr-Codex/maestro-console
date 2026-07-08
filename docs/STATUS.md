@@ -1,6 +1,8 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-05 · v0.57.0**.
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-08 · v0.58.0**.
+> Recente: **v0.58.0** — UX dos diálogos Nível 1 (`docs/26`): helpers `_hint_label`/`_confirm_dialog`
+> + fim do bug "diálogo abre em tela cheia" + guarda de regressão no fonte (CI).
 > **Fontes de verdade canônicas:** [`CHANGELOG.md`](../CHANGELOG.md) (histórico completo
 > v0.1.0→v0.55.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..22). Este arquivo resume o
 > estado; em caso de divergência, o CHANGELOG/ADR mandam. Os artefatos em `_bmad-output/`
@@ -139,7 +141,7 @@
 ## Stack / device
 - **Linux aarch64** (Kali) no **ClockworkPi uConsole / CM4**; **Python ≥3.11**.
 - Canvas: **GTK4 + VTE-gtk4** (PyGObject), python do sistema. Engine: venv.
-- **541 testes** (pytest, +16 skip; os gi rodam no python do sistema) + live opt-in (bwrap:
+- **554 testes** (pytest, +18 skip; os gi rodam no python do sistema) + live opt-in (bwrap:
   socket-em-sandbox, drill do kill-switch); lint **ruff**.
 
 ## Como navegar a documentação
