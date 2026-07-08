@@ -2084,8 +2084,7 @@ class CanvasWindow:
     def _ctx_close_node(self) -> None:
         nid = self._sel_nid()
         if nid is not None:
-            self._select(None)  # limpa a seleção (esconde a pílula) antes de remover o frame
-            self._close_node(nid)
+            self._confirm_close_node(nid)  # A2: confirma (o on_primary limpa a seleção + fecha)
 
     def _update_ctx(self) -> None:
         """Atualiza TODAS as pílulas contextuais conforme o elemento selecionado."""
@@ -2189,8 +2188,8 @@ class CanvasWindow:
         head.append(ram)
         nclose = Gtk.Button(label="✕")
         nclose.set_has_frame(False)
-        nclose.set_tooltip_text("fechar este terminal (remove do canvas nesta sessão)")
-        nclose.connect("clicked", lambda _b, n=nid: self._close_node(n))
+        nclose.set_tooltip_text("fechar terminal — remove do canvas DE VEZ (pede confirmação)")
+        nclose.connect("clicked", lambda _b, n=nid: self._confirm_close_node(n))
         head.append(nclose)
         # Arrastar o nó: tratado pelo gesto do PLANO (estável), NÃO por um gesto preso
         # ao próprio cabeçalho — senão a referência se move junto e dá tremor (gist
@@ -2400,6 +2399,26 @@ class CanvasWindow:
         box.append(b)
         dlg.present()
         entry.grab_focus()
+
+    def _confirm_close_node(self, nid: str) -> None:
+        """Fecha o nó COM confirmação (A2 — usado por ✕, 🗑 da cápsula e Ctrl+Shift+W: invariante
+        numa entrada só). Fechar é IRREVERSÍVEL (sai do roster → não volta ao reabrir; descarta a
+        sessão capturada → sem reattach), então confirma SEMPRE — mensagem graduada conforme o que
+        há a perder (agente vivo / sessão / órfão / descarregado). 'Confirmar sempre' evita a
+        heurística furada 'shell ocioso fecha direto' (todo shell não-descarregado tem PTY vivo)."""
+        if nid not in self.frames:
+            return
+        heavy = (nid in self._agent_nids or self._node_orphan(nid)
+                 or self._node_unloaded(nid) or bool(self.model.node_cfg(nid, "session")))
+        name = self.model.node_name(nid, nid)
+        if heavy:
+            msg = (f"Fechar '{name}' remove o card DE VEZ (não volta ao reabrir) e DESCARTA a "
+                   "sessão salva — não dá pra retomar depois; o processo do agente é morto.\n\n"
+                   "Pra só liberar RAM mantendo a retomada, use ⏏ Descarregar.")
+        else:
+            msg = f"Fechar '{name}' remove o card DE VEZ — não volta ao reabrir."
+        self._confirm_dialog(f"✕ Fechar {name}", msg, primary="✕ Fechar", destructive=True,
+                             on_primary=lambda: (self._select(None), self._close_node(nid)))
 
     def _close_node(self, nid: str) -> None:
         """Fecha o nó-terminal: ✕ REMOVE DE VEZ (sai do roster -> não volta ao reabrir).
@@ -4804,7 +4823,7 @@ class CanvasWindow:
         if ctrl and shift and keyval in (Gdk.KEY_w, Gdk.KEY_W):
             nid = self._focused_nid
             if nid and nid in self.frames:
-                self._close_node(nid)
+                self._confirm_close_node(nid)  # A2: mesma confirmação do ✕ (invariante)
             return True
         # Ctrl+Shift+A: pula pro próximo terminal que precisa de você (atenção) [A.2]
         if ctrl and shift and keyval in (Gdk.KEY_a, Gdk.KEY_A):
