@@ -3625,23 +3625,11 @@ class CanvasWindow:
             return
         busy = tui_busy(self._term_text(term))
         name = self.model.node_name(nid, nid)
-        dlg, box = self._dialog(f"⏏ Descarregar {name}")
-        msg = Gtk.Label(label=self._unload_msg(busy))
-        msg.set_wrap(True)
-        msg.set_xalign(0.0)
-        box.append(msg)
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        row.set_halign(Gtk.Align.END)
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda _b: dlg.destroy())
-        go = Gtk.Button(label="⏏ Descarregar")
-        if busy:
-            go.add_css_class("destructive-action")
-        go.connect("clicked", lambda _b: (self._unload_node(nid), dlg.destroy()))
-        row.append(cancel)
-        row.append(go)
-        box.append(row)
-        dlg.present()
+        # destructive SÓ quando busy (mata turno em voo) — reproduz o comportamento antigo.
+        self._confirm_dialog(f"⏏ Descarregar {name}", self._unload_msg(busy),
+                             primary="⏏ Descarregar",
+                             on_primary=lambda: self._unload_node(nid),
+                             destructive=busy)
 
     # -- Responsabilidades (roles) por terminal (Fase 5) --
     @staticmethod
@@ -4359,36 +4347,16 @@ class CanvasWindow:
     def _confirm_kill_all(self) -> None:
         """Confirmação do kill-switch (ação destrutiva: para TODOS os agentes)."""
         n = self._fleet_count()
-        dlg, box = self._dialog("⛔ Parar todos os agentes")
-        if n == 0:
-            box.append(Gtk.Label(label="Nenhum agente vivo para parar."))
-            ok = Gtk.Button(label="OK")
-            ok.connect("clicked", lambda _b: dlg.destroy())
-            box.append(ok)
-            dlg.present()
+        if n == 0:  # nada a parar → só informa (variante OK/info, sem Cancelar)
+            self._confirm_dialog("⛔ Parar todos os agentes",
+                                 "Nenhum agente vivo para parar.",
+                                 primary="OK", on_primary=lambda: None, cancel=False)
             return
-        msg = Gtk.Label(
-            label=f"Isso MATA o processo de {n} agente(s) e desarma o Maestro mode.\n"
-                  "O trabalho em andamento é interrompido. Religue o toggle p/ recrutar de novo.")
-        msg.set_wrap(True)
-        msg.set_xalign(0.0)
-        box.append(msg)
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        row.set_halign(Gtk.Align.END)
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda _b: dlg.destroy())
-        stop = Gtk.Button(label="⛔ Parar tudo")
-        stop.add_css_class("destructive-action")
-
-        def _do(_b):
-            dlg.destroy()
-            self._kill_all_agents()
-
-        stop.connect("clicked", _do)
-        row.append(cancel)
-        row.append(stop)
-        box.append(row)
-        dlg.present()
+        self._confirm_dialog(
+            "⛔ Parar todos os agentes",
+            f"Isso MATA o processo de {n} agente(s) e desarma o Maestro mode.\n"
+            "O trabalho em andamento é interrompido. Religue o toggle p/ recrutar de novo.",
+            primary="⛔ Parar tudo", on_primary=self._kill_all_agents, destructive=True)
 
     def _maestro_handle(self, req):
         """Worker thread: marshala o comando p/ a MAIN thread (idle_add) e espera a resposta."""
