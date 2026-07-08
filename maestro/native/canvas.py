@@ -4442,12 +4442,9 @@ class CanvasWindow:
             self._apply_recruit_decision(approve, req, result, done)
             return False
 
-        msg = Gtk.Label(
-            label=f"O agente '{req.frm}' quer recrutar mais um (fleet em "
-                  f"{self._fleet_count()}/{self.MAESTRO_FLEET_CAP}). Aprovar?")
-        msg.set_wrap(True)
-        msg.set_xalign(0.0)
-        box.append(msg)
+        box.append(self._hint_label(  # _hint_label → sem o bug de largura (mantém a lógica async)
+            f"O agente '{req.frm}' quer recrutar mais um (fleet em "
+            f"{self._fleet_count()}/{self.MAESTRO_FLEET_CAP}). Aprovar?"))
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         row.set_halign(Gtk.Align.END)
         deny = Gtk.Button(label="Negar")
@@ -4531,12 +4528,9 @@ class CanvasWindow:
         preview = "\n".join(
             f"• {g.name}: " + ", ".join(m.name for m in g.members) for g in spec.groups
         )
-        msg = Gtk.Label(
-            label=f"O agente '{frm}' quer montar a equipe '{spec.name}' "
-                  f"({spec.total_members} agente(s)):\n\n{preview}\n\nMontar?")
-        msg.set_wrap(True)
-        msg.set_xalign(0.0)
-        box.append(msg)
+        box.append(self._hint_label(  # _hint_label → sem o bug de largura (mantém a lógica async)
+            f"O agente '{frm}' quer montar a equipe '{spec.name}' "
+            f"({spec.total_members} agente(s)):\n\n{preview}\n\nMontar?"))
 
         def decide(approve: bool):
             if decided["v"]:
@@ -5208,6 +5202,7 @@ class CanvasWindow:
         out.set_xalign(0)
         out.set_selectable(True)
         out.set_wrap(True)
+        out.set_max_width_chars(60)  # saída dinâmica: sem isto, texto longo estica o diálogo
 
         def refresh():
             combo.remove_all()
@@ -6385,6 +6380,7 @@ class CanvasWindow:
         dlg, box = self._dialog("🧩 Montar equipe")
         lbl = Gtk.Label(label=message, xalign=0)
         lbl.set_wrap(True)
+        lbl.set_max_width_chars(60)  # mensagem de resultado (dinâmica) não pode esticar o diálogo
         box.append(lbl)
         ok = Gtk.Button(label="OK")
         ok.connect("clicked", lambda _b: dlg.destroy())
@@ -6598,6 +6594,7 @@ class CanvasWindow:
 
         err_lbl = Gtk.Label(label="", xalign=0)
         err_lbl.set_wrap(True)
+        err_lbl.set_max_width_chars(60)  # erro (dinâmico) não pode esticar o diálogo
 
         def refresh_groups():
             child = groups_box.get_first_child()
@@ -6704,6 +6701,7 @@ class CanvasWindow:
             if tpl.description:
                 desc = Gtk.Label(label=tpl.description, xalign=0)
                 desc.set_wrap(True)
+                desc.set_max_width_chars(60)  # descrição do template não pode esticar o diálogo
                 desc.add_css_class("dim-label")
                 row.append(desc)
             preview = " · ".join(
@@ -6711,6 +6709,7 @@ class CanvasWindow:
             )
             prev_lbl = Gtk.Label(label=preview, xalign=0)
             prev_lbl.set_wrap(True)
+            prev_lbl.set_max_width_chars(60)  # preview do template não pode esticar o diálogo
             prev_lbl.add_css_class("dim-label")
             row.append(prev_lbl)
             actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -7019,6 +7018,7 @@ class CanvasWindow:
         out.set_xalign(0)
         out.set_selectable(True)
         out.set_wrap(True)
+        out.set_max_width_chars(60)  # saída dinâmica: sem isto, texto longo estica o diálogo
 
         def refresh():
             combo.remove_all()
