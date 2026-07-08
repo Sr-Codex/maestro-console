@@ -63,7 +63,7 @@ def build_action_items(actions=()) -> list[PaletteItem]:
 # B2 — texto do rodapé que ENSINA atalhos (muda conforme o modo atual).
 _HINTS_BASE = (
     "Ctrl+P paleta · Ctrl+Shift+L conectar · Ctrl+Shift+W fechar · "
-    "Ctrl+Shift+A atenção · Ctrl+Shift+1-9 focar"
+    "Ctrl+Shift+A atenção · Ctrl+Shift+F enquadrar · Ctrl+Shift+1-9 focar"
 )
 
 

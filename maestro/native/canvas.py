@@ -910,7 +910,19 @@ class CanvasWindow:
             b.set_tooltip_text(tip)
             b.connect("clicked", lambda _b, d=dz: self._zoom(d))
             cap.append(b)
+        # A6: "enquadrar tudo" (estilo n8n) — ícone bundled (evita tofu); atalho Ctrl+Shift+F
+        fit = Gtk.Button()
+        fit.set_child(self._fab_icon("maestro-scan", "⛶"))
+        fit.set_has_frame(False)
+        fit.set_tooltip_text("Enquadrar tudo (Ctrl+Shift+F)")
+        fit.connect("clicked", lambda _b: self._fit_all())
+        cap.append(fit)
+        # label do zoom (segue Gtk.Label p/ o set_text de _apply_zoom) — A6/E2: clicável = reset
         self.zlabel = Gtk.Label(label="zoom 100%")
+        self.zlabel.set_tooltip_text("zoom atual — clique p/ 100%")
+        _zclick = Gtk.GestureClick()  # padrão do "⚠ N": clique num Label
+        _zclick.connect("released", lambda *_a: self._zoom(1.0 - (self.model.zoom() or 1.0)))
+        self.zlabel.add_controller(_zclick)
         cap.append(self.zlabel)
         return cap
 
@@ -2904,6 +2916,44 @@ class CanvasWindow:
         self._wake_cables()  # cabos restaurados caem no sag inicial ao abrir
         return False  # one-shot (GLib)
 
+    def _content_bounds(self):
+        """bbox (x0,y0,x1,y1) em coords-base de TODO o conteúdo — nós, notas, árvores E GRUPOS.
+        `None` se vazio. Reusa `_mm_items` (nós/notas/árvores) e ADICIONA os grupos, que o
+        `_mm_items` ignora (por isso ele não serve cru p/ enquadrar). Base do `_fit_all`."""
+        items, _vp = self._mm_items()
+        rects = [(i[0], i[1], i[2], i[3]) for i in items]
+        for gid, (gx, gy) in self._group_base.items():
+            gw, gh = self._group_size.get(gid, (0.0, 0.0))
+            if gw > 0 and gh > 0:
+                rects.append((gx, gy, gw, gh))
+        if not rects:
+            return None
+        return (min(r[0] for r in rects), min(r[1] for r in rects),
+                max(r[0] + r[2] for r in rects), max(r[1] + r[3] for r in rects))
+
+    def _fit_all(self, *_a) -> None:
+        """Enquadra TODO o conteúdo (zoom-to-fit + centraliza), estilo n8n. Distinto do
+        `_fit_view` (que só CENTRALIZA no zoom atual — usado no startup, e mexer nele faria o
+        boot sobrescrever o zoom salvo). Regras (revisão Fable): margem absoluta de 40px; teto
+        do fit = 1.0 (nunca amplia além de 100% — 1 nó só não vira zoom gigante); canvas vazio
+        cai no `_fit_view` (cam zerada, zoom intacto). Persiste o zoom (é ação do usuário)."""
+        b = self._content_bounds()
+        if b is None:
+            self._fit_view()
+            return
+        vw = self.scrolled.get_width() or 1
+        vh = self.scrolled.get_height() or 1
+        x0, y0, x1, y1 = b
+        bw, bh = max(x1 - x0, 1.0), max(y1 - y0, 1.0)
+        m = 40.0
+        z_fit = min((vw - 2 * m) / bw, (vh - 2 * m) / bh, 1.0)  # teto 1.0 = nunca amplia
+        self.model.set_zoom(z_fit)  # clampa [0.3, 3.0] + persiste
+        z = self.model.zoom()
+        cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+        self._cam = (vw / 2.0 - cx * z, vh / 2.0 - cy * z)
+        self._apply_zoom()  # aplica zoom + reposiciona (usa _cam) + zlabel/grid/minimapa
+        self._wake_cables()
+
     def _sel_base_center(self):
         """Centro (em coords-base) do elemento selecionado, ou None — p/ o zoom focar nele."""
         fr = self._frame_of(self._selected)
@@ -4845,6 +4895,10 @@ class CanvasWindow:
         # Ctrl+Shift+A: pula pro próximo terminal que precisa de você (atenção) [A.2]
         if ctrl and shift and keyval in (Gdk.KEY_a, Gdk.KEY_A):
             self._focus_next_attention()
+            return True
+        # Ctrl+Shift+F: enquadrar tudo (A6) — GLOBAL, antes do atalho custom por-nó (global vence)
+        if ctrl and shift and keyval in (Gdk.KEY_f, Gdk.KEY_F):
+            self._fit_all()
             return True
         # atalho CUSTOM por terminal (Fase 3): foca o nó cujo node_cfg 'shortcut' bate (prevalece
         # sobre o por-ordem). Captura/compara via Gtk.accelerator_name (mesma serialização).
