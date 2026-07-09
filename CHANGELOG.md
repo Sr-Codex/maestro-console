@@ -3,6 +3,32 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.59.0] — feat(canvas): UI do canvas Fase A — tofu, ✕ destrutivo, FAB, enquadrar
+Auditoria de UI (Fable, com screenshots reais do device) + validação adversarial do plano.
+Device é **trackball + teclado (sem touch)** — a seção "toque" da auditoria foi descartada.
+Fase A na branch `feat/ux-canvas-ui`; Fase B (legibilidade do header) e Fase C (cápsula de grupo,
+→ backlog) ficam pra depois. Ordem de ataque: A2 → A1 → A3/A4 → A6.
+- **A2 — ✕ fechar nó com confirmação:** fechar é irreversível (sai do roster + descarta a sessão
+  capturada → sem reattach) e o ✕ fica na alça de arrasto. `_confirm_close_node` confirma SEMPRE
+  (mensagem graduada p/ agente/sessão/órfão/unloaded), roteando as 3 entradas (✕, 🗑 da cápsula,
+  Ctrl+Shift+W — que fechava direto). Tooltip mentiroso corrigido.
+- **A1 — fim do tofu:** o device não tem fonte de emoji → botões que caíam no fallback emoji
+  viravam caixinha ▦. Medição (`has_icon`) revelou 5 nomes de tema Adwaita ausentes (não 2):
+  handoff, kill, routines, renomear, novo. Todos (+ terminal/Limites) agora usam ícones BUNDLED
+  Lucide; kill ganhou `maestro-circle-x-symbolic` recolorível (vermelho via `.fab-stop`); fallback
+  do `_fab_icon` virou bundled (mata a classe do bug). Título e HUD sem emoji.
+- **A3 — FAB organizada:** `Gtk.Separator` (`.fab-sep`) entre os grupos (criação | conectar |
+  config | kill); kill-switch ⛔ + Limites movidos pro FIM (longe da criação); separador antes do
+  "⚠ N".
+- **A4 — "Aa" ambíguo:** a paleta de comandos virou o ícone `maestro-command` (⌘); "Aa" (fonte)
+  fica só na nota.
+- **A6 — "enquadrar tudo" (estilo n8n):** botão ⛶ na cápsula de zoom + atalho `Ctrl+Shift+F`.
+  `_fit_all` novo (zoom-to-fit; bbox real incluindo grupos; teto 1.0; margem 40px; vazio →
+  `_fit_view`; NÃO repurposa o `_fit_view` do startup). Label do zoom clicável = reset 100%.
+- Testes: `_confirm_close_node` (gi) + guarda de largura herdada + lógica de A1/A6 provada em
+  runtime. **554 passed**; ruff baseline. Verificação VISUAL no device por screenshot; o gatilho
+  interativo do A6 (clicar/atalho reenquadrar) fica pro teste vivo do usuário.
+
 ## [0.58.0] — feat(canvas): UX dos diálogos Nível 1 — fim do "diálogo abre em tela cheia"
 Plano `docs/26` (pesquisa + revisão adversarial do Fable). Causa-raiz: `Gtk.Label(wrap=True)`
 sem `max_width_chars` estica a `Gtk.Window` (no GTK4 não há clamp de janela). Entregue em 4 fases

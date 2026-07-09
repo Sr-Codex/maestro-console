@@ -547,7 +547,7 @@ class CanvasWindow:
         self._install_css()
         self.win = Gtk.ApplicationWindow(application=app)
         self._register_bundled_icons()  # ícones symbolic PRÓPRIOS (independem do tema do usuário)
-        self.win.set_title("maestro console 🎼 — canvas (GTK4)")
+        self.win.set_title("maestro console — canvas")  # A1: sem 🎼 (tofava) nem detalhe de impl
         self.win.set_default_size(1000, 600)
         key = Gtk.EventControllerKey()
         key.connect("key-pressed", self._on_key)
@@ -690,6 +690,8 @@ class CanvasWindow:
             ".fab-btn:disabled { opacity: 0.35; }",
             ".fab-run { color: #89b4fa; }",  # o play (azul)
             ".fab-stop { color: #f38ba0; }",  # kill-switch (vermelho)
+            ".fab-sep { background-color: rgba(205,214,244,0.18); "  # A3: divisória de grupo
+            "min-width: 1px; margin: 6px 4px; }",
             ".fleet-hud { background: rgba(30,30,46,0.85); color: #cdd6f4; "
             "padding: 3px 10px; border-radius: 10px; font-size: 12px; }",  # HUD do fleet
             ".fleet-hud.hud-soft { color: #f9e2af; }",  # F1-D: budget perto do teto (âmbar)
@@ -861,13 +863,22 @@ class CanvasWindow:
         except Exception:
             pass  # sem ícone próprio cai no fallback de emoji (degradação suave)
 
+    # A1: fallback BUNDLED (não emoji) — o device não tem fonte de emoji, então emoji vira tofu ▦.
+    # Cair num ícone bundled genérico mata a CLASSE do bug (qualquer nome de tema perdido no futuro
+    # não vira caixinha). O `emoji` fica só como último recurso se nem o bundled resolver.
+    _FAB_ICON_FALLBACK = "maestro-circle-help"
+
     def _fab_icon(self, icon_name: str, emoji: str) -> Gtk.Widget:
-        """Ícone symbolic (visual line-art do print) com fallback p/ emoji se o tema não tiver."""
+        """Ícone da FAB: resolve o nome pedido; se o tema não tiver, cai num ícone bundled
+        genérico (A1 — nunca emoji, que tofa neste device)."""
         try:
             disp = Gdk.Display.get_default()
             theme = Gtk.IconTheme.get_for_display(disp) if disp is not None else None
-            if theme is not None and theme.has_icon(icon_name):
-                return Gtk.Image.new_from_icon_name(icon_name)
+            if theme is not None:
+                if theme.has_icon(icon_name):
+                    return Gtk.Image.new_from_icon_name(icon_name)
+                if theme.has_icon(self._FAB_ICON_FALLBACK):
+                    return Gtk.Image.new_from_icon_name(self._FAB_ICON_FALLBACK)
         except Exception:
             pass
         return Gtk.Label(label=emoji)
@@ -899,7 +910,19 @@ class CanvasWindow:
             b.set_tooltip_text(tip)
             b.connect("clicked", lambda _b, d=dz: self._zoom(d))
             cap.append(b)
+        # A6: "enquadrar tudo" (estilo n8n) — ícone bundled (evita tofu); atalho Ctrl+Shift+F
+        fit = Gtk.Button()
+        fit.set_child(self._fab_icon("maestro-scan", "⛶"))
+        fit.set_has_frame(False)
+        fit.set_tooltip_text("Enquadrar tudo (Ctrl+Shift+F)")
+        fit.connect("clicked", lambda _b: self._fit_all())
+        cap.append(fit)
+        # label do zoom (segue Gtk.Label p/ o set_text de _apply_zoom) — A6/E2: clicável = reset
         self.zlabel = Gtk.Label(label="zoom 100%")
+        self.zlabel.set_tooltip_text("zoom atual — clique p/ 100%")
+        _zclick = Gtk.GestureClick()  # padrão do "⚠ N": clique num Label
+        _zclick.connect("released", lambda *_a: self._zoom(1.0 - (self.model.zoom() or 1.0)))
+        self.zlabel.add_controller(_zclick)
         cap.append(self.zlabel)
         return cap
 
@@ -917,17 +940,23 @@ class CanvasWindow:
         def add(icon, emoji, tip, key):
             bar.append(self._fab_button(icon, emoji, tip, cb.get(key), enabled=key in avail))
 
-        # — orquestração + criação de elementos —
+        def sep():  # A3: divisória fina entre grupos da FAB (não colar tudo numa fileira só)
+            s = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+            s.add_css_class("fab-sep")
+            bar.append(s)
+
+        # — grupo 1: orquestração + criação de elementos —
         bar.append(self._fab_button(
             "media-playback-start-symbolic", "▶", "Executar orquestrador (rodar time)",
             cb.get("run_team"), css="fab-run", enabled="run_team" in avail))
-        add("utilities-terminal-symbolic", "🖥", "Novo terminal", "newterm")
+        add("maestro-terminal", "🖥", "Novo terminal", "newterm")  # A1: bundled (não tofava)
         add("text-x-generic-symbolic", "📝", "Nova nota", "note")
         add("list-add-symbolic", "⬚", "Novo grupo", "group")
         add("system-run-symbolic", "🧩", "Montar equipe (Team Templates)", "team")
-        add("mail-forward-symbolic", "⇄", "Disparar handoff", "handoff")
-        # — conectar (toggle) —
+        add("maestro-send", "⇄", "Disparar handoff", "handoff")  # A1: bundled (tema não tinha)
+        # — grupo 2: conectar (toggle) —
         if self.edges is not None:
+            sep()
             self._connect_btn = Gtk.ToggleButton()
             self._connect_btn.set_child(self._fab_icon("maestro-connect-symbolic", "🔗"))
             self._connect_btn.set_has_frame(False)
@@ -935,27 +964,26 @@ class CanvasWindow:
             self._connect_btn.set_tooltip_text("ligar agentes por cabo (Ctrl+Shift+L)")
             self._connect_btn.connect("toggled", self._toggle_connect)
             bar.append(self._connect_btn)
-        # — kill-switch do fleet (ADR-17): só quando o Maestro mode é possível —
-        if self._sock_server is not None:
-            bar.append(self._fab_button(
-                "process-stop-symbolic", "⛔", "Parar TODOS os agentes (kill-switch)",
-                self._confirm_kill_all, css="fab-stop"))
-            bar.append(self._fab_button(  # F1 Bloco D: teto de gasto ($)
-                "wallet-symbolic", "💰", "Limites: gasto dos agentes ($) e RAM por nó",
-                self._budget_dialog))
-        # — config de software / features globais —
+        # — grupo 3: config de software / features globais —
+        sep()
         add("folder-symbolic", "📁", "Árvore de arquivos", "filetree")
         add("view-grid-symbolic", "🗂", "Workspaces", "workspaces")
         add("drive-harddisk-symbolic", "🧱", "Floors", "floors")
-        add("alarm-symbolic", "⏰", "Routines", "routines")
-        # (tema saiu da FAB — o tema GLOBAL é definido pelo editor: aba Tema → "Aplicar a TODOS")
-        # paleta de comandos (Ctrl-P)
-        aa = Gtk.Button(label="Aa")
-        aa.set_has_frame(False)
-        aa.add_css_class("fab-btn")
-        aa.set_tooltip_text("Paleta de comandos (Ctrl-P)")
-        aa.connect("clicked", lambda _b: self._open_palette())
-        bar.append(aa)
+        add("maestro-clock", "⏰", "Routines", "routines")  # A1: bundled (tema não tinha)
+        # paleta de comandos — A4: ícone de comando (era "Aa", que colidia com a fonte da nota)
+        bar.append(self._fab_button("maestro-command", "⌘", "Paleta de comandos (Ctrl-P)",
+                                    self._open_palette))
+        # — grupo 4: kill-switch do fleet (ADR-17) — A3: movido pro FIM, longe da criação —
+        if self._sock_server is not None:
+            sep()
+            bar.append(self._fab_button(
+                # A1: symbolic recolorível → .fab-stop pinta de vermelho (SVG cor-fixa não)
+                "maestro-circle-x-symbolic", "⛔", "Parar TODOS os agentes (kill-switch)",
+                self._confirm_kill_all, css="fab-stop"))
+            bar.append(self._fab_button(  # F1 Bloco D: teto de gasto ($) — A1: gauge bundled
+                "maestro-gauge", "💰", "Limites: gasto dos agentes ($) e RAM por nó",
+                self._budget_dialog))
+        sep()  # A3: separador antes do "⚠ N" p/ não parecer um cluster de alarme com o kill
         # atenção (status): "⚠ N" quando algo precisa de você
         self._attn_label = Gtk.Label(label="")
         self._attn_label.set_tooltip_text("precisam de você — clique p/ pular pro próximo")
@@ -1076,7 +1104,7 @@ class CanvasWindow:
         bar.set_visible(False)
         # ações DAQUELE terminal — operam sobre self._selected no clique (a pílula é única)
         ren = self._fab_button(
-            "document-edit-symbolic", "✏", "Renomear terminal", self._ctx_rename_node)
+            "maestro-pencil", "✏", "Renomear terminal", self._ctx_rename_node)  # A1: bundled
         ren.add_css_class("note-ctx-btn")
         bar.append(ren)
         foc = self._fab_button(
@@ -1101,7 +1129,7 @@ class CanvasWindow:
         # reattach R3: "Novo agente" — só aparece em nó ÓRFÃO (começa do zero, descarta o
         # transcript do crash). Visibilidade alternada em _update_ctx.
         new = self._fab_button(
-            "document-new-symbolic", "✧",
+            "maestro-sparkles", "✧",  # A1: bundled (tema não tinha document-new-symbolic)
             "Novo agente (começa do zero — descarta a sessão do crash)",
             self._ctx_new_agent)
         new.add_css_class("note-ctx-btn")
@@ -2084,8 +2112,7 @@ class CanvasWindow:
     def _ctx_close_node(self) -> None:
         nid = self._sel_nid()
         if nid is not None:
-            self._select(None)  # limpa a seleção (esconde a pílula) antes de remover o frame
-            self._close_node(nid)
+            self._confirm_close_node(nid)  # A2: confirma (o on_primary limpa a seleção + fecha)
 
     def _update_ctx(self) -> None:
         """Atualiza TODAS as pílulas contextuais conforme o elemento selecionado."""
@@ -2189,8 +2216,8 @@ class CanvasWindow:
         head.append(ram)
         nclose = Gtk.Button(label="✕")
         nclose.set_has_frame(False)
-        nclose.set_tooltip_text("fechar este terminal (remove do canvas nesta sessão)")
-        nclose.connect("clicked", lambda _b, n=nid: self._close_node(n))
+        nclose.set_tooltip_text("fechar terminal — remove do canvas DE VEZ (pede confirmação)")
+        nclose.connect("clicked", lambda _b, n=nid: self._confirm_close_node(n))
         head.append(nclose)
         # Arrastar o nó: tratado pelo gesto do PLANO (estável), NÃO por um gesto preso
         # ao próprio cabeçalho — senão a referência se move junto e dá tremor (gist
@@ -2400,6 +2427,26 @@ class CanvasWindow:
         box.append(b)
         dlg.present()
         entry.grab_focus()
+
+    def _confirm_close_node(self, nid: str) -> None:
+        """Fecha o nó COM confirmação (A2 — usado por ✕, 🗑 da cápsula e Ctrl+Shift+W: invariante
+        numa entrada só). Fechar é IRREVERSÍVEL (sai do roster → não volta ao reabrir; descarta a
+        sessão capturada → sem reattach), então confirma SEMPRE — mensagem graduada conforme o que
+        há a perder (agente vivo / sessão / órfão / descarregado). 'Confirmar sempre' evita a
+        heurística furada 'shell ocioso fecha direto' (todo shell não-descarregado tem PTY vivo)."""
+        if nid not in self.frames:
+            return
+        heavy = (nid in self._agent_nids or self._node_orphan(nid)
+                 or self._node_unloaded(nid) or bool(self.model.node_cfg(nid, "session")))
+        name = self.model.node_name(nid, nid)
+        if heavy:
+            msg = (f"Fechar '{name}' remove o card DE VEZ (não volta ao reabrir) e DESCARTA a "
+                   "sessão salva — não dá pra retomar depois; o processo do agente é morto.\n\n"
+                   "Pra só liberar RAM mantendo a retomada, use ⏏ Descarregar.")
+        else:
+            msg = f"Fechar '{name}' remove o card DE VEZ — não volta ao reabrir."
+        self._confirm_dialog(f"✕ Fechar {name}", msg, primary="✕ Fechar", destructive=True,
+                             on_primary=lambda: (self._select(None), self._close_node(nid)))
 
     def _close_node(self, nid: str) -> None:
         """Fecha o nó-terminal: ✕ REMOVE DE VEZ (sai do roster -> não volta ao reabrir).
@@ -2868,6 +2915,44 @@ class CanvasWindow:
         self._reposition_all()
         self._wake_cables()  # cabos restaurados caem no sag inicial ao abrir
         return False  # one-shot (GLib)
+
+    def _content_bounds(self):
+        """bbox (x0,y0,x1,y1) em coords-base de TODO o conteúdo — nós, notas, árvores E GRUPOS.
+        `None` se vazio. Reusa `_mm_items` (nós/notas/árvores) e ADICIONA os grupos, que o
+        `_mm_items` ignora (por isso ele não serve cru p/ enquadrar). Base do `_fit_all`."""
+        items, _vp = self._mm_items()
+        rects = [(i[0], i[1], i[2], i[3]) for i in items]
+        for gid, (gx, gy) in self._group_base.items():
+            gw, gh = self._group_size.get(gid, (0.0, 0.0))
+            if gw > 0 and gh > 0:
+                rects.append((gx, gy, gw, gh))
+        if not rects:
+            return None
+        return (min(r[0] for r in rects), min(r[1] for r in rects),
+                max(r[0] + r[2] for r in rects), max(r[1] + r[3] for r in rects))
+
+    def _fit_all(self, *_a) -> None:
+        """Enquadra TODO o conteúdo (zoom-to-fit + centraliza), estilo n8n. Distinto do
+        `_fit_view` (que só CENTRALIZA no zoom atual — usado no startup, e mexer nele faria o
+        boot sobrescrever o zoom salvo). Regras (revisão Fable): margem absoluta de 40px; teto
+        do fit = 1.0 (nunca amplia além de 100% — 1 nó só não vira zoom gigante); canvas vazio
+        cai no `_fit_view` (cam zerada, zoom intacto). Persiste o zoom (é ação do usuário)."""
+        b = self._content_bounds()
+        if b is None:
+            self._fit_view()
+            return
+        vw = self.scrolled.get_width() or 1
+        vh = self.scrolled.get_height() or 1
+        x0, y0, x1, y1 = b
+        bw, bh = max(x1 - x0, 1.0), max(y1 - y0, 1.0)
+        m = 40.0
+        z_fit = min((vw - 2 * m) / bw, (vh - 2 * m) / bh, 1.0)  # teto 1.0 = nunca amplia
+        self.model.set_zoom(z_fit)  # clampa [0.3, 3.0] + persiste
+        z = self.model.zoom()
+        cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+        self._cam = (vw / 2.0 - cx * z, vh / 2.0 - cy * z)
+        self._apply_zoom()  # aplica zoom + reposiciona (usa _cam) + zlabel/grid/minimapa
+        self._wake_cables()
 
     def _sel_base_center(self):
         """Centro (em coords-base) do elemento selecionado, ou None — p/ o zoom focar nele."""
@@ -4160,10 +4245,11 @@ class CanvasWindow:
         return lbl
 
     def _fleet_hud_text(self) -> str:
-        """Texto do HUD (puro, testável): '🤖 N/CAP · prof D · ⚠ ciclo'."""
+        """Texto do HUD (puro, testável): 'agentes N/CAP · prof D · ⚠ ciclo'. Sem emoji (A1:
+        tofava no device); ⚠ é Unicode antigo (renderiza) e fica."""
         n = self._fleet_count()
         depth = max((self._node_depth(x) for x in self._agent_nids), default=0)
-        parts = [f"🤖 {n}/{self.MAESTRO_FLEET_CAP}"]
+        parts = [f"agentes {n}/{self.MAESTRO_FLEET_CAP}"]
         if depth:
             parts.append(f"prof {depth}")
         if self.edges is not None and has_cycle(self.edges.list()):
@@ -4181,7 +4267,7 @@ class CanvasWindow:
             soft, hard = budget.budget_limits(self._store)
             if hard:
                 spent = budget.counted_spend(self._store)
-                seg = f"💰 ${spent:.2f}/${hard:.2f}"
+                seg = f"gasto ${spent:.2f}/${hard:.2f}"  # A1: sem emoji 💰 (tofava)
                 text = f"{text}  ·  {seg}" if text else seg
                 verdict = budget.budget_verdict(spent, soft, hard)
         for c in ("hud-soft", "hud-hard"):
@@ -4804,11 +4890,15 @@ class CanvasWindow:
         if ctrl and shift and keyval in (Gdk.KEY_w, Gdk.KEY_W):
             nid = self._focused_nid
             if nid and nid in self.frames:
-                self._close_node(nid)
+                self._confirm_close_node(nid)  # A2: mesma confirmação do ✕ (invariante)
             return True
         # Ctrl+Shift+A: pula pro próximo terminal que precisa de você (atenção) [A.2]
         if ctrl and shift and keyval in (Gdk.KEY_a, Gdk.KEY_A):
             self._focus_next_attention()
+            return True
+        # Ctrl+Shift+F: enquadrar tudo (A6) — GLOBAL, antes do atalho custom por-nó (global vence)
+        if ctrl and shift and keyval in (Gdk.KEY_f, Gdk.KEY_F):
+            self._fit_all()
             return True
         # atalho CUSTOM por terminal (Fase 3): foca o nó cujo node_cfg 'shortcut' bate (prevalece
         # sobre o por-ordem). Captura/compara via Gtk.accelerator_name (mesma serialização).

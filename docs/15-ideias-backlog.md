@@ -26,6 +26,27 @@ Fora esses pontos, a fila fica parada — não interromper uma tarefa em andamen
 
 ## Fila
 
+### 2026-07-08 — Emoji-como-UI ainda tofa em 2 lugares fora da FAB (mesmo bug do A1)
+Achado ao fazer o A1 (fim do tofu na FAB, v0.59.0). O device não tem fonte de emoji, então
+qualquer glifo emoji usado como UI vira caixinha ▦. A FAB/título/HUD foram resolvidos, mas
+sobraram 2 pontos: (a) o **seletor de ícone do nó** (`canvas.py:211`, grade de ~emoji 🤖🚀🐳…
+que o usuário atribui ao card) — a grade inteira tofa; migrar pra ícones bundled Lucide
+(há 264 no bundle) seria o certo; (b) o botão **"🤖 criar agente"** no diálogo de workspaces
+(`canvas.py:~5420`). Fora do escopo da Fase A (que era a FAB). Sweep único: `grep` glifos > U+2FFF
+usados como UI e trocar por bundled. Status: 🧊 icebox.
+
+### 2026-07-08 — Cápsula contextual de Grupo (e Árvore?) — conformidade com AGENTS.md
+Da auditoria de UI (Fable, 2026-07-08). A regra do AGENTS.md pede cápsula contextual pra TODO
+elemento com config; grupos hoje só configuram por **duplo-clique → `_group_dialog`** (nome/cor/
+apagar), sem a pílula que nó e nota têm. **Adiado desta rodada de UI** (só Fases A+B entraram) por
+ser M/G e mexer em caminho sensível. Notas técnicas do Fable pra retomar: grupo é **cairo, não
+widget** → `_select(("group",gid))` NÃO funciona (sem frame; `.selected` não se aplica). Exige (a)
+outline de seleção desenhado no `_draw_groups_cr`; (b) hit-test de seleção em `_pan_begin` ANTES do
+`_select` (`canvas.py:2687-2813` — caminho quente de drag/resize/detach, risco médio de regressão);
+(c) `_confirm_dialog` no apagar (o `_group_dialog:6947` deleta sem confirmação — paridade com o ✕ do
+nó). Migrar nome/cor/apagar do diálogo pra pílula. Árvore de arquivo: provavelmente FORA (só tem
+posição, sem config). PR isolado, depois de A+B validadas no device. Status: 🧊 icebox.
+
 ### 2026-07-05 — UX dos diálogos/cards do canvas (📋 planejada → `docs/26`)
 Gatilho: o card "Limites" (💰) abria "quase tela cheia"; usuário pediu melhorar a UX de TODOS os
 diálogos. Causa-raiz geral: label `wrap=True` sem `max_width_chars` estica a `Gtk.Window` (no GTK4
