@@ -3,6 +3,30 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.60.0] — feat(canvas): UI do canvas Fase B — header do card em 1 linha (legibilidade)
+Continuação da rodada de UI (auditoria Fable). Plano `docs/27`, design validado por mockup HTML
+iterado com o usuário + **revisão adversarial do Fable**. Header do card do nó **redesenhado em
+UMA LINHA** (o usuário rejeitou 2 linhas), com 3 zonas: identidade à esquerda, telemetria à
+direita. Segue **Box horizontal** — então a armadilha `insert_child_after(head._dot)` que o Fable
+apontou NÃO se aplica (o dot continua filho direto). Branch `feat/ux-canvas-header`.
+- **Nome do terminal + agente à esquerda:** o nome (`node_name`) ganha `ellipsize=END` (nome
+  longo trunca com `…` e não esmaga o resto). O **papel/agente** vira o **nome numa cápsula de
+  COR FIXA** (`#45475a`) — não muda por papel nem por estado; escondida quando o nó não tem role.
+- **Estado só no dot colorido:** o texto de status ("é sua vez"/"bloqueado") sai do header (o
+  `head._status` é preservado p/ compat com `set_node_state`, mas fica fora da linha).
+- **Telemetria em chips à direita (fundo escuro, boa visibilidade):** **custo `$` e tokens viram
+  chips SEPARADOS** (nós Claude mostram os dois; Codex sem preço mostra só tokens). Cada chip
+  **some quando vazio** (`set_visible(False)` — mata o "losango fantasma" que o Fable apontou).
+  RAM anômala segue vermelha (`.node-ram-high`).
+- **Emendas do Fable incorporadas:** `set_ellipsize(END)`, chip vazio escondido, `remove_css_class`
+  na troca de classe (já no `_set_ram_label`). **Cor própria do `blocked` (proposta Fable: Mocha
+  red `#f38ba8`, texto escuro) fica para o PR seguinte** — a Web UI não tem estado `waiting`
+  (`canvas.js` mapeia `NEEDS_INPUT→blocked`), então recolorir é alinhamento semântico, unidade
+  própria (não entra nesta fatia de layout).
+- Testes: `test_header_capsule_canvas` novo (chips custo/token separados + visibilidade, cápsula
+  do agente, RAM some quando vazia) + `_Lbl` fake do `test_unload_ram` ganhou `set_visible`.
+  Suíte gi-free verde no `.venv`; canvas gi verde no python do sistema. Ruff baseline (10) mantido.
+
 ## [0.59.0] — feat(canvas): UI do canvas Fase A — tofu, ✕ destrutivo, FAB, enquadrar
 Auditoria de UI (Fable, com screenshots reais do device) + validação adversarial do plano.
 Device é **trackball + teclado (sem touch)** — a seção "toque" da auditoria foi descartada.

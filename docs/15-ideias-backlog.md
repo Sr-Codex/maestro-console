@@ -26,6 +26,18 @@ Fora esses pontos, a fila fica parada — não interromper uma tarefa em andamen
 
 ## Fila
 
+### 2026-07-09 — Cor própria do `blocked` (Fase B, PR 2) — separar do âmbar do `waiting`
+Fatiado da Fase B do header (`docs/27`, v0.60.0 fez só o LAYOUT). Hoje `waiting` e `blocked` são a
+MESMA cor âmbar `#f59e0b` (`agents.py` STATE_COLORS) — só a forma do ícone difere. Proposta do
+Fable (revisão adversarial): **`blocked` → Mocha red `#f38ba8` com texto escuro** (7.1:1, passa AA
+e sobrevive a daltonismo; melhor que `#e64553`, que falha AA e colide com `failed #ef4444`). Por
+que é PR próprio (não entrou no layout): **a Web UI não tem estado `waiting`** — `canvas.js:10`
+mapeia `NEEDS_INPUT → blocked` (âmbar), então recolorir mecanicamente inverteria a semântica na
+web. É **alinhamento semântico**, unidade coerente: tocar `agents.py` STATE_COLORS + `canvas.js`
+COLORS + `style.css` vars + recolorir o SVG `maestro-state-blocked.svg` (pré-colorido) + o fallback
+âmbar hardcoded do minimapa (`canvas.py:_mm_items`) + decidir o caso do órfão (reusa o ícone
+`maestro-state-waiting`). Status: 🧊 icebox (pronto p/ promover — o plano já está no `docs/27`).
+
 ### 2026-07-08 — Emoji-como-UI ainda tofa em 2 lugares fora da FAB (mesmo bug do A1)
 Achado ao fazer o A1 (fim do tofu na FAB, v0.59.0). O device não tem fonte de emoji, então
 qualquer glifo emoji usado como UI vira caixinha ▦. A FAB/título/HUD foram resolvidos, mas

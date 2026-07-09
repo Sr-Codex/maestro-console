@@ -665,12 +665,17 @@ class CanvasWindow:
             ".notehead { background-color: #f9e2af; color: #1e1e2e; padding: 2px 8px;"
             " border-radius: 7px 7px 0 0; }",
             ".state-dot { font-size: 9px; margin-right: 2px; }",  # estado vira um DOT
-            # E3: status proativo no card — discreto, à direita do título
-            ".node-status { font-size: 10px; color: #9399b2; margin: 0 6px; }",
-            # F1: custo/tokens no header — mesmo padrão discreto do status
-            ".node-cost { font-size: 10px; color: #9399b2; margin: 0 4px; }",
-            ".node-ram { font-size: 10px; color: #9399b2; margin: 0 4px; }",
-            ".node-ram-high { color: #ef4444; font-weight: bold; }",  # acima do limiar (D)
+            # Fase B: nome do terminal (trunca com ellipsize; leve respiro)
+            ".node-title { color: #cdd6f4; margin: 0 2px; }",
+            # Fase B: papel/agente em CÁPSULA de cor FIXA (não muda por papel nem por estado)
+            ".agent-cap { font-size: 10px; font-weight: 600; color: #cdd6f4;"
+            " background-color: #45475a; border-radius: 999px; padding: 1px 8px; margin: 0 4px; }",
+            # Fase B: telemetria em CHIPS de fundo escuro (custo/token/mem) — boa visibilidade
+            ".node-metric { font-size: 10px; color: #a6adc8; background-color: rgba(0,0,0,0.28);"
+            " border-radius: 6px; padding: 1px 6px; margin: 0 2px; }",
+            ".node-ram-high { color: #f38ba8; font-weight: bold; }",  # RAM acima do limiar (D)
+            # compat: label de status permanece definido (fica fora do header no design 1-linha)
+            ".node-status { font-size: 10px; color: #9399b2; }",
             # B2: rodapé que ensina os atalhos (Zellij-like)
             ".hintbar { font-size: 10px; color: #9399b2; padding: 2px 8px;"
             " background-color: #181825; border-top: 1px solid #313244; }",
@@ -2182,36 +2187,41 @@ class CanvasWindow:
         dot.set_tooltip_text(_STATE_PT["idle"])
         head._dot = dot
         head.append(dot)
-        badge = self.badges.get(nid)
-        if badge:  # tira colorida = badge do papel (V9-S3) — DrawingArea c/ cor arbitrária
-            sq = Gtk.DrawingArea()
-            sq.set_content_width(10)
-            col = _rgba(badge)
-
-            def _draw_badge(_area, cr, _w, _h, c=col):
-                cr.set_source_rgba(c.red, c.green, c.blue, 1.0)
-                cr.paint()
-
-            sq.set_draw_func(_draw_badge)
-            head.append(sq)
+        # Fase B: o papel/agente NÃO é mais uma tira de cor — vira NOME numa cápsula de cor fixa
+        # (ver `agent` abaixo). A cor do papel segue no accent do card via _apply_node_role.
         title = self.model.node_name(nid, title)  # nome de exibição (renomeável/persistido)
         lbl = Gtk.Label(label=f"  {title}  ")
-        lbl.set_hexpand(True)
+        lbl.add_css_class("node-title")
+        lbl.set_ellipsize(Pango.EllipsizeMode.END)  # Fase B: nome longo trunca (não esmaga o resto)
+        lbl.set_max_width_chars(22)
         frame._title_lbl = lbl
         rn = Gtk.GestureClick()
         rn.connect("pressed", self._maybe_rename, nid)  # duplo-clique no título renomeia
         lbl.add_controller(rn)
         head.append(lbl)
-        status = Gtk.Label(label="")  # E3: status proativo ("trabalhando…"/"esperando você")
-        status.add_css_class("node-status")
-        head._status = status
-        head.append(status)
-        cost = Gtk.Label(label="")  # F1: custo/tokens acumulados do agente (medidor lean)
-        cost.add_css_class("node-cost")  # mesmo padrão discreto do .node-status (10px)
+        agent = Gtk.Label(label="")  # Fase B: nome do papel/agente em CÁPSULA de cor FIXA
+        agent.add_css_class("agent-cap")
+        agent.set_visible(False)  # só aparece quando o nó tem role (via _refresh_agent_cap)
+        head._agent = agent
+        head.append(agent)
+        spacer = Gtk.Box()  # empurra a telemetria (custo/token/mem) pra direita, junto à borda
+        spacer.set_hexpand(True)
+        head.append(spacer)
+        status = Gtk.Label(label="")  # E3: status (setado por set_node_state); FORA do header no
+        head._status = status  # design de 1 linha — o estado fica só no dot (compat preservada)
+        cost = Gtk.Label(label="")  # F1: CUSTO ($) — chip; some quando zero
+        cost.add_css_class("node-metric")
+        cost.set_visible(False)
         head._cost = cost
         head.append(cost)
-        ram = Gtk.Label(label="")  # Bloco D: RAM da árvore do nó (PSS, via worker thread)
-        ram.add_css_class("node-ram")  # mesmo padrão discreto do .node-cost
+        tok = Gtk.Label(label="")  # F1: TOKENS — chip SEPARADO do custo; some quando zero
+        tok.add_css_class("node-metric")
+        tok.set_visible(False)
+        head._tok = tok
+        head.append(tok)
+        ram = Gtk.Label(label="")  # Bloco D: RAM da árvore do nó (PSS, via worker thread) — chip
+        ram.add_css_class("node-metric")
+        ram.set_visible(False)
         head._ram = ram
         head.append(ram)
         nclose = Gtk.Button(label="✕")
@@ -3330,29 +3340,40 @@ class CanvasWindow:
         head._icon = w
 
     @staticmethod
-    def _fmt_cost(u) -> str:
-        """Rótulo curto do medidor (F1): '$0.42' quando há custo; senão tokens ('12.3k tok');
-        '' quando zero. Codex sem preço aparece como tokens — honesto, não chuta custo."""
-        if getattr(u, "cost_usd", 0.0):
-            return f"${u.cost_usd:.2f}"
+    def _fmt_money(u) -> str:
+        """Chip de CUSTO (F1): '$0.42' quando há custo; '' quando zero (Codex sem preço)."""
+        c = getattr(u, "cost_usd", 0.0)
+        return f"${c:.2f}" if c else ""
+
+    @staticmethod
+    def _fmt_tokens(u) -> str:
+        """Chip de TOKENS (F1): '12.3k tok' / '840 tok'; '' quando zero."""
         tot = getattr(u, "input_tokens", 0) + getattr(u, "output_tokens", 0)
         if tot >= 1000:
             return f"{tot / 1000:.1f}k tok"
         return f"{tot} tok" if tot else ""
 
     def _refresh_node_cost(self, nid: str) -> None:
-        """Atualiza o $ do header do nó a partir do UsageLedger (F1). Chamado na criação e a
-        cada evento do usage_bus (marshalado p/ a main thread via idle_add)."""
+        """Atualiza os chips de custo/tokens do header a partir do UsageLedger (F1). Chamado na
+        criação e a cada evento do usage_bus (marshalado p/ a main thread via idle_add). Fase B:
+        custo e tokens viram chips SEPARADOS; cada um some quando vazio (`set_visible`)."""
         ctrl = self.controller
         led = getattr(ctrl, "usage_ledger", None) if ctrl is not None else None
         head = self.heads.get(nid)
-        lbl = getattr(head, "_cost", None) if head is not None else None
-        if led is None or lbl is None:
+        if led is None or head is None:
             return
         u = led.get(nid)
-        lbl.set_text(self._fmt_cost(u))
-        lbl.set_tooltip_text(
-            f"{u.input_tokens + u.output_tokens} tokens acumulados · ${u.cost_usd:.4f}")
+        money, toks = self._fmt_money(u), self._fmt_tokens(u)
+        cost = getattr(head, "_cost", None)
+        if cost is not None:
+            cost.set_text(money)
+            cost.set_visible(bool(money))
+            cost.set_tooltip_text(f"${u.cost_usd:.4f} acumulado")
+        tok = getattr(head, "_tok", None)
+        if tok is not None:
+            tok.set_text(toks)
+            tok.set_visible(bool(toks))
+            tok.set_tooltip_text(f"{u.input_tokens + u.output_tokens} tokens acumulados")
 
     # -- Bloco D: RAM por nó (worker thread; docs/21 §8) --
     @staticmethod
@@ -3376,6 +3397,7 @@ class CanvasWindow:
         if lbl is None:
             return
         lbl.set_text(text)
+        lbl.set_visible(bool(text))  # Fase B: chip some quando vazio (evita "losango fantasma")
         if tooltip is not None:
             lbl.set_tooltip_text(tooltip)
         if high:
@@ -3749,12 +3771,28 @@ class CanvasWindow:
                 return [str(wsp)]
         return []
 
+    def _refresh_agent_cap(self, nid: str, role=None) -> None:
+        """Fase B: cápsula do agente no header = NOME do papel (cor fixa). Escondida quando o nó
+        não tem role (nó shell). `role` já resolvido é aceito (evita reresolver); senão usa
+        `_node_role`. Chamada em `_apply_role_spec` (cobre criação, edição e team)."""
+        heads = getattr(self, "heads", None)
+        head = heads.get(nid) if heads else None
+        cap = getattr(head, "_agent", None) if head is not None else None
+        if cap is None:
+            return
+        if role is None:
+            role = self._node_role(nid)
+        name = (role.name if role is not None else "").strip()
+        cap.set_text(name)
+        cap.set_visible(bool(name))
+
     def _apply_role_spec(self, nid: str, role) -> None:
         """Materializa um Role JÁ RESOLVIDO (bloco marcado + sidecar + accent). `role=None`
         desatribui. Extraído de `_apply_node_role` pra quem já tem o Role em mãos e NÃO deve
         perder a instrução na resolução por nome/biblioteca (ex.: `_materialize_team`, cujo
         `AgentSpec.instruction` já vem com placeholders interpolados — resolver por
         `_node_role`/nome perderia esse texto e escreveria só o NOME como instrução)."""
+        self._refresh_agent_cap(nid, role)  # Fase B: cápsula do agente reflete o role atual
         targets = self._role_targets(nid)
         if role is None:  # desatribui: tira o bloco marcado (preserva o resto)
             for t in targets:
