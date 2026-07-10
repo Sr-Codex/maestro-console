@@ -38,7 +38,12 @@ def test_web_palette_separa_waiting_de_blocked():
     _s, css = _get_text("/static/style.css")
     assert "--waiting: #f59e0b" in css and "--blocked: #f38ba8" in css
     _s2, canvas = _get_text("/static/canvas.js")
-    assert "waiting" in canvas and 'NEEDS_INPUT: "waiting"' in canvas
+    # ambos os lados do split, p/ que NEEDS_INPUT e BLOCKED não regridam de forma independente
+    assert (
+        "waiting" in canvas
+        and 'NEEDS_INPUT: "waiting"' in canvas
+        and 'BLOCKED: "blocked"' in canvas
+    )
 
 
 def test_shell_estatico_sem_token_mesmo_em_lan():
