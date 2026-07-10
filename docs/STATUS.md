@@ -1,9 +1,12 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-08 · v0.59.0**.
-> Recente: **v0.59.0** — UI do canvas Fase A (auditoria Fable): fim do tofu na FAB (ícones
-> bundled), ✕ fechar-nó com confirmação, FAB com separadores + kill no fim, paleta com ícone,
-> "enquadrar tudo" (⛶ + Ctrl+Shift+F). **v0.58.0** — UX dos diálogos Nível 1 (`docs/26`).
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-09 · v0.60.0**.
+> Recente: **v0.60.0** — UI do canvas Fase B (`docs/27`): header do card redesenhado em UMA LINHA
+> — nome do terminal (com ellipsize) + agente em cápsula de cor fixa à esquerda; custo/token/mem
+> em chips separados (some quando vazio) à direita; estado só no dot. Cor própria do `blocked`
+> fica p/ PR seguinte. **v0.59.0** — UI do canvas Fase A (auditoria Fable): fim do tofu na FAB,
+> ✕ fechar-nó com confirmação, FAB com separadores + kill no fim, paleta com ícone, "enquadrar
+> tudo" (⛶ + Ctrl+Shift+F). **v0.58.0** — UX dos diálogos Nível 1 (`docs/26`).
 > **Fontes de verdade canônicas:** [`CHANGELOG.md`](../CHANGELOG.md) (histórico completo
 > v0.1.0→v0.55.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..22). Este arquivo resume o
 > estado; em caso de divergência, o CHANGELOG/ADR mandam. Os artefatos em `_bmad-output/`

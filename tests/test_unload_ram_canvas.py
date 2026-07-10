@@ -19,9 +19,13 @@ class _Lbl:
         self.text = ""
         self.tip = None
         self.classes = set()
+        self.visible = True
 
     def set_text(self, t):
         self.text = t
+
+    def set_visible(self, v):
+        self.visible = bool(v)
 
     def set_tooltip_text(self, t):
         self.tip = t
