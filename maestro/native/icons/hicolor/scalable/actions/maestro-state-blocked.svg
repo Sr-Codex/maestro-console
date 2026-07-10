@@ -1,4 +1,4 @@
-<!-- @license lucide-static v1.22.0 - ISC (alert-triangle) — recolorido p/ estado 'blocked' (#f59e0b) -->
+<!-- @license lucide-static v1.22.0 - ISC (alert-triangle) — recolorido p/ estado 'blocked' (#f38ba8) -->
 <svg
   class="lucide lucide-alert-triangle"
   xmlns="http://www.w3.org/2000/svg"
@@ -6,7 +6,7 @@
   height="24"
   viewBox="0 0 24 24"
   fill="none"
-  stroke="#f59e0b"
+  stroke="#f38ba8"
   stroke-width="2"
   stroke-linecap="round"
   stroke-linejoin="round"

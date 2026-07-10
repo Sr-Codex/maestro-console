@@ -32,6 +32,15 @@ def test_static_assets_servidos():
     assert s_js == 200 and "EventSource" in js
 
 
+def test_web_palette_separa_waiting_de_blocked():
+    # Web não tinha 'waiting' (NEEDS_INPUT caía em 'blocked' âmbar). PR "cor do blocked":
+    # web ganha 'waiting' (âmbar) e 'blocked' vira Mocha red — a semântica não pode inverter.
+    _s, css = _get_text("/static/style.css")
+    assert "--waiting: #f59e0b" in css and "--blocked: #f38ba8" in css
+    _s2, canvas = _get_text("/static/canvas.js")
+    assert "waiting" in canvas and 'NEEDS_INPUT: "waiting"' in canvas
+
+
 def test_shell_estatico_sem_token_mesmo_em_lan():
     """O shell (não-/api) é servido sem token (dados/controle ficam atrás de token)."""
 

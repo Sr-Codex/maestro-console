@@ -6,8 +6,8 @@
   const SVG = "http://www.w3.org/2000/svg";
   const XHTML = "http://www.w3.org/1999/xhtml";
   const svg = document.getElementById("canvas");
-  const COLORS = { idle: "#6b7280", busy: "#3b82f6", blocked: "#f59e0b", failed: "#ef4444", done: "#22c55e" };
-  const ST_MAP = { DONE: "done", BLOCKED: "blocked", FAILED: "failed", NEEDS_INPUT: "blocked" };
+  const COLORS = { idle: "#6b7280", busy: "#3b82f6", waiting: "#f59e0b", blocked: "#f38ba8", failed: "#ef4444", done: "#22c55e" };
+  const ST_MAP = { DONE: "done", BLOCKED: "blocked", FAILED: "failed", NEEDS_INPUT: "waiting" };
   const W = 240, H = 150, MAXBUF = 4000;
 
   let agents = [], route = [], pos = {};
