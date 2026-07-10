@@ -36,7 +36,7 @@ mapeia `NEEDS_INPUT → blocked` (âmbar), então recolorir mecanicamente invert
 web. É **alinhamento semântico**, unidade coerente: tocar `agents.py` STATE_COLORS + `canvas.js`
 COLORS + `style.css` vars + recolorir o SVG `maestro-state-blocked.svg` (pré-colorido) + o fallback
 âmbar hardcoded do minimapa (`canvas.py:_mm_items`) + decidir o caso do órfão (reusa o ícone
-`maestro-state-waiting`). Status: ✅ entregue — v0.61.0, branch `feat/blocked-color-mocha`
+`maestro-state-waiting`). Status: ✅ entregue — v0.61.0 (PR #72, branch `feat/blocked-color-mocha`)
 (decisões: órfão fica âmbar/`waiting`; fallback do minimapa mantido como default de estado
 desconhecido; `teams.py "reviewer"` não tocado por ser cor de papel).
 
