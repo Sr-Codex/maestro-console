@@ -3,6 +3,29 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.61.0] — feat(canvas): cor própria do `blocked` (Mocha red) — separado do âmbar do `waiting`
+Fatia PR 2 da Fase B do header (`docs/27`, `docs/15` backlog 2026-07-09). Até aqui `waiting`
+("é sua vez") e `blocked` ("bloqueado por dependência") eram a **mesma cor âmbar `#f59e0b`** — só a
+forma do ícone (⏸ vs ▲) diferia. Agora `blocked` ganha cor própria: **Mocha red `#f38ba8`**
+(proposta da revisão adversarial do Fable — 7.1:1 com texto escuro, passa AA e sobrevive a
+daltonismo; `#e64553` foi rejeitado por falhar AA e colidir com `failed #ef4444`). Cor aprovada
+pelo usuário no device (nativo + web). Branch `feat/blocked-color-mocha`.
+- **Nativo:** `agents.py` `STATE_COLORS["blocked"] → #f38ba8` (o âmbar de `waiting` fica intacto);
+  SVG do dot `maestro-state-blocked.svg` recolorido (stroke). O minimapa já resolve `blocked` pela
+  `STATE_COLORS` (vermelho automático); o fallback âmbar dele é o default de estado *desconhecido*,
+  mantido. **Órfão continua âmbar** (usa o estado `waiting` — é "recuperável/atenção", não bloqueio).
+- **Web (alinhamento semântico — armadilha que o Fable achou):** a Web UI **não tinha `waiting`**
+  (`canvas.js` mapeava `NEEDS_INPUT → blocked` âmbar). Pintar `blocked` de vermelho às cegas
+  inverteria a semântica ("é sua vez" viraria vermelho). Corrigido criando o estado `waiting` na web:
+  `style.css` ganha `--waiting: #f59e0b` (âmbar) e `--blocked` vira `#f38ba8`; `canvas.js` mapeia
+  `NEEDS_INPUT → waiting` e `BLOCKED → blocked`; `button.alt` repontado p/ `--waiting` (mantém o
+  âmbar de antes); legenda do `index.html` ganhou o dot `waiting`.
+- **NÃO tocado:** `teams.py "reviewer": #f59e0b` é cor de **papel** (hex coincidente), não de estado.
+- Testes: `test_blocked_distinto_de_waiting` (nativo — trava `blocked != waiting` e o valor Mocha) +
+  `test_web_palette_separa_waiting_de_blocked` (web servido — `--waiting`/`--blocked` no CSS e o
+  `NEEDS_INPUT: "waiting"` no canvas.js). Suíte gi-free verde no `.venv`; canvas gi verde no python
+  do sistema. Ruff baseline (11 pré-existentes) mantido — 0 erro novo.
+
 ## [0.60.0] — feat(canvas): UI do canvas Fase B — header do card em 1 linha (legibilidade)
 Continuação da rodada de UI (auditoria Fable). Plano `docs/27`, design validado por mockup HTML
 iterado com o usuário + **revisão adversarial do Fable**. Header do card do nó **redesenhado em

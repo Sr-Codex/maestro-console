@@ -1,10 +1,13 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-09 · v0.60.0**.
-> Recente: **v0.60.0** — UI do canvas Fase B (`docs/27`): header do card redesenhado em UMA LINHA
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-10 · v0.61.0**.
+> Recente: **v0.61.0** — cor própria do `blocked` (Mocha red `#f38ba8`, proposta Fable): separa
+> "bloqueado por dependência" do âmbar de `waiting` ("é sua vez") nas 3 paletas (nativo/SVG/web);
+> alinhamento semântico na web (que não tinha `waiting` → `NEEDS_INPUT` caía em `blocked`).
+> **v0.60.0** — UI do canvas Fase B (`docs/27`): header do card redesenhado em UMA LINHA
 > — nome do terminal (com ellipsize) + agente em cápsula de cor fixa à esquerda; custo/token/mem
-> em chips separados (some quando vazio) à direita; estado só no dot. Cor própria do `blocked`
-> fica p/ PR seguinte. **v0.59.0** — UI do canvas Fase A (auditoria Fable): fim do tofu na FAB,
+> em chips separados (some quando vazio) à direita; estado só no dot.
+> **v0.59.0** — UI do canvas Fase A (auditoria Fable): fim do tofu na FAB,
 > ✕ fechar-nó com confirmação, FAB com separadores + kill no fim, paleta com ícone, "enquadrar
 > tudo" (⛶ + Ctrl+Shift+F). **v0.58.0** — UX dos diálogos Nível 1 (`docs/26`).
 > **Fontes de verdade canônicas:** [`CHANGELOG.md`](../CHANGELOG.md) (histórico completo

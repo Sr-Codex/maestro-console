@@ -19,7 +19,7 @@ STATE_COLORS = {
     "idle": "#6b7280",
     "busy": "#3b82f6",
     "waiting": "#f59e0b",  # "é sua vez": agente parou esperando seu input (âmbar)
-    "blocked": "#f59e0b",
+    "blocked": "#f38ba8",  # bloqueado por dependência: Mocha red (distinto do âmbar "é sua vez")
     "failed": "#ef4444",
     "done": "#22c55e",
 }

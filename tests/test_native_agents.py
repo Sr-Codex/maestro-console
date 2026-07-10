@@ -32,3 +32,11 @@ def test_agent_argv_interativo_sob_bwrap(monkeypatch):
 
 def test_state_colors_tem_todos():
     assert set(agents.STATE_COLORS) == {"idle", "busy", "waiting", "blocked", "failed", "done"}
+
+
+def test_blocked_distinto_de_waiting():
+    # PR "cor própria do blocked": bloqueado por dependência tem cor own (Mocha red),
+    # distinta do âmbar de waiting ("é sua vez") — não podem colidir de novo.
+    assert agents.STATE_COLORS["blocked"] == "#f38ba8"
+    assert agents.STATE_COLORS["waiting"] == "#f59e0b"
+    assert agents.STATE_COLORS["blocked"] != agents.STATE_COLORS["waiting"]
