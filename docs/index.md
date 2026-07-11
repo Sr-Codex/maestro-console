@@ -14,6 +14,7 @@
 | [`14-plano-orquestracao-equipe.md`](14-plano-orquestracao-equipe.md) | **Plano cirúrgico:** orquestração de equipe — **Fases A+B+C+D entregues** (v0.47.0→v0.51.0): Team Templates + materializador (FAB), `maestri team` por linguagem natural (confirmação humana obrigatória), editor visual de templates e comportamento de líder de grupo. "Montar equipe" segue clique-pra-posicionar (v0.49.0, §13). |
 | [`uconsole.md`](uconsole.md) | Contexto do hardware (CM4) — atual. |
 | [`15-ideias-backlog.md`](15-ideias-backlog.md) | **Doc vivo:** fila de ideias capturadas durante outras tarefas — não implementadas até serem puxadas explicitamente. |
+| [`fluxograma-dev.md`](fluxograma-dev.md) | **Referência de processo:** fluxograma do fluxo de dev (BMad greenfield vs feature em projeto existente) — mermaid + [versão HTML](fluxograma-dev.html). |
 | [`../AGENTS.md`](../AGENTS.md) · [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Regras de processo (atemporais). |
 
 ## 📐 Planejamento (versionado em docs/ — espelha o `_bmad-output/` do MVP)
