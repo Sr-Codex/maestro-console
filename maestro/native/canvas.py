@@ -1213,12 +1213,8 @@ class CanvasWindow:
         ag.append(self._editor_agente_section(nid, applies))
         stack.add_titled(ag, "agente", "Agente")
 
-        # — rodapé: Cancelar / Salvar —
-        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        foot.set_halign(Gtk.Align.END)
-        foot.set_margin_top(10)
-
-        def do_save(_b=None):
+        # — rodapé (N2-item5: helper padrão + Enter→Salvar) —
+        def do_save():  # o _dialog_footer chama on_primary() e fecha depois
             nm = name.get_text().strip()
             self.model.set_node_name(nid, nm or nid)  # persiste (abre igual fechou)
             fr = self.frames.get(nid)
@@ -1227,17 +1223,10 @@ class CanvasWindow:
                 lbl.set_text(f"  {nm or nid}  ")
             for fn in applies:  # aplica+persiste cada aba (Aparência etc.)
                 fn()
-            win.destroy()
 
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda _b: win.destroy())
-        save = Gtk.Button(label="Salvar")
-        save.add_css_class("suggested-action")
-        save.connect("clicked", do_save)
-        name.connect("activate", do_save)
-        foot.append(cancel)
-        foot.append(save)
-        box.append(foot)
+        # o set_activates_default do footer no `name` substitui o antigo
+        # name.connect("activate", do_save) — senão Enter dispararia do_save DUAS vezes.
+        self._dialog_footer(win, box, primary="Salvar", on_primary=do_save)
         win.present()
         name.grab_focus()
 
@@ -1853,14 +1842,9 @@ class CanvasWindow:
             ptv.get_buffer().set_text(role.instruction)
         psc.set_child(ptv)
         box.append(psc)
-        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        foot.set_halign(Gtk.Align.END)
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda _b: win.destroy())
-        save = Gtk.Button(label="Salvar")
-        save.add_css_class("suggested-action")
-
-        def do_save(_b):
+        # N2-item5: keep_open — do_save VALIDA (early-return se nome vazio) e controla o
+        # destroy; o footer não pode fechar sozinho antes disso.
+        def do_save():
             nm = name.get_text().strip()
             if not nm:
                 return
@@ -1872,10 +1856,7 @@ class CanvasWindow:
             win.destroy()
             on_saved(nm)
 
-        save.connect("clicked", do_save)
-        foot.append(cancel)
-        foot.append(save)
-        box.append(foot)
+        self._dialog_footer(win, box, primary="Salvar", on_primary=do_save, keep_open=True)
         win.present()
         name.grab_focus()
 
@@ -4358,12 +4339,9 @@ class CanvasWindow:
         `ui_state` (config de UI, "abre igual fechou") — não "unificar"."""
         if self._store is None:
             return
-        dlg = Gtk.Window(title="Limites — gasto do fleet ($) e RAM por nó")
-        dlg.set_modal(True)
-        dlg.set_default_size(380, -1)  # sem isto, o label wrap estica a janela p/ tela cheia
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        for m in ("top", "bottom", "start", "end"):
-            getattr(box, f"set_margin_{m}")(14)
+        # N2-item4: migrado pro helper compartilhado (ganha Esc + transient_for + margens
+        # consistentes). Os labels já têm max_width_chars → sem risco de esticar a janela.
+        dlg, box = self._dialog("Limites — gasto do fleet ($) e RAM por nó")
         hint = Gtk.Label(xalign=0, wrap=True, max_width_chars=44, label=(
             "Teto de gasto dos agentes (USD). Vazio = sem teto. No HARD, os runs mediados param "
             "até você zerar. SOFT (só aviso) vazio = 75% do hard. O contador só sobe — o agente "
@@ -4401,8 +4379,7 @@ class CanvasWindow:
         spent_lbl = Gtk.Label(xalign=0, label=f"Gasto contado agora: ${_spent:.4f}")
         spent_lbl.add_css_class("dim-label")
         box.append(spent_lbl)
-        btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, halign=Gtk.Align.END)
-        zerar = Gtk.Button(label="Zerar gasto")
+        zerar = Gtk.Button(label="Zerar gasto")  # botão secundário → entra como `extra`
 
         def do_zerar(_b):
             budget.reset_budget(self._store)
@@ -4411,24 +4388,19 @@ class CanvasWindow:
             self._refresh_fleet_hud()
 
         zerar.connect("clicked", do_zerar)
-        salvar = Gtk.Button(label="Salvar")
-        salvar.add_css_class("suggested-action")
 
-        def do_salvar(_b):
+        def do_salvar():  # sem arg: o _dialog_footer chama on_primary() e fecha depois
             self._store.set_ui("budget_hard", hard_e.get_text().strip())
             self._store.set_ui("budget_soft", soft_e.get_text().strip())
             self._store.set_ui("ram_limit_mb", ram_e.get_text().strip())  # parse no uso
             self._ram_alerted.clear()  # limiar mudou → rearma os alertas de RAM
             self._budget_notified = False  # rearma o aviso
             self._refresh_fleet_hud()
-            dlg.close()
 
-        salvar.connect("clicked", do_salvar)
-        btns.append(zerar)
-        btns.append(salvar)
-        box.append(btns)
-        dlg.set_child(box)
-        dlg.present()
+        # cancel=False: o card Limites nunca teve "Cancelar" (Esc já fecha) — preserva
+        self._dialog_footer(dlg, box, primary="Salvar", on_primary=do_salvar,
+                            extra=zerar, cancel=False)
+        dlg.present()  # _dialog já fez set_child(box)
 
     def _anomaly_tick(self) -> bool:
         """Vigilância ATIVA (Etapa 4): rajada de recrutamentos bloqueados → kill-switch
@@ -5206,9 +5178,7 @@ class CanvasWindow:
         box.append(combo)
         box.append(Gtk.Label(label="Intenção:"))
         box.append(entry)
-        brow = Gtk.Box(spacing=6)
-
-        def fire(_b):
+        def fire():
             idx = combo.get_active()
             intent = entry.get_text().strip() or "Responda apenas OK."
             dlg.destroy()
@@ -5216,13 +5186,8 @@ class CanvasWindow:
                 src, dst = edges[idx]
                 self._run_handoff(src, dst, intent)
 
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda _b: dlg.destroy())
-        ok = Gtk.Button(label="Disparar")
-        ok.connect("clicked", fire)
-        brow.append(cancel)
-        brow.append(ok)
-        box.append(brow)
+        # N2-item5: keep_open — fire destrói dlg e dispara o handoff (preserva a ordem)
+        self._dialog_footer(dlg, box, primary="Disparar", on_primary=fire, keep_open=True)
         dlg.present()
 
     def _run_handoff(self, src: str, dst: str, intent: str) -> None:
@@ -5254,7 +5219,15 @@ class CanvasWindow:
         return False
 
     # -- helper de diálogo (GTK4: sem Dialog.run; janela modal simples) --
-    def _dialog(self, title: str):
+    def _dialog(self, title: str, *, scroll: bool = False, max_h: int = 560):
+        """Diálogo modal base: Gtk.Window + box vertical (margens 8, spacing 6), Esc fecha.
+        Retorna `(win, box)` — os chamadores fazem `box.append(...)`.
+
+        `scroll=True` (N2 item 6): embrulha o box num `ScrolledWindow` (só vertical) que
+        **cresce naturalmente até `max_h`px e só então rola** (`propagate_natural_height`) —
+        cura falta de altura em diálogos com lista dinâmica (team edit) sem estourar os 720px
+        do device. **NUNCA** ligar em diálogo que JÁ tem scroller próprio (Editar Terminal/
+        paleta) — viraria scroll-dentro-de-scroll (docs/26 §4 item 6)."""
         win = Gtk.Window(title=title)
         win.set_transient_for(self.win)
         win.set_modal(True)
@@ -5264,7 +5237,15 @@ class CanvasWindow:
         box.set_margin_bottom(8)
         box.set_margin_start(8)
         box.set_margin_end(8)
-        win.set_child(box)
+        if scroll:
+            sc = Gtk.ScrolledWindow()
+            sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)  # só vertical
+            sc.set_propagate_natural_height(True)  # cresce até max_h, aí rola
+            sc.set_max_content_height(max_h)
+            sc.set_child(box)
+            win.set_child(sc)
+        else:
+            win.set_child(box)
         # Esc fecha o diálogo (GTK4 não dá isso de graça como o antigo Dialog.run).
         # Só afeta janelas modais (paleta/floors/routines); não rouba o Esc do terminal.
         esc = Gtk.EventControllerKey()
@@ -5318,6 +5299,54 @@ class CanvasWindow:
         box.append(row)
         win.present()
         return win
+
+    def _dialog_footer(self, win, box, *, primary: str, on_primary,
+                       destructive: bool = False, extra=None, cancel: bool = True,
+                       keep_open: bool = False):
+        """Rodapé PADRÃO dos diálogos form-heavy: barra `[Cancelar?, extra…, primário]`
+        alinhada à direita + **Enter→primário** pela API canônica do GTK4
+        (`win.set_default_widget(primário)` + `set_activates_default(True)` em toda
+        `Gtk.Entry` do box) — não um controller manual de tecla (colidiria com o
+        Esc-controller e os `connect("activate")` já existentes; ADR/plano docs/26 §3.7).
+
+        Espelha o rodapé do `_confirm_dialog`, mas pra diálogos COM formulário. Por
+        padrão, o primário roda `on_primary()` e **fecha depois** (`win.destroy()`).
+        `keep_open=True`: NÃO fecha sozinho — o callback controla o destroy (diálogos que
+        **reabrem a si mesmos**: workspaces/team não podem fechar antes do `on_primary`).
+        `extra` (widget/lista) entra ENTRE cancelar e o primário (botões secundários como
+        "Zerar"/"Duplicar"). Retorna o botão primário."""
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.set_halign(Gtk.Align.END)
+        if cancel:
+            cancel_btn = Gtk.Button(label="Cancelar")
+            cancel_btn.connect("clicked", lambda _b: win.destroy())
+            row.append(cancel_btn)
+        if extra is not None:
+            for w in (extra if isinstance(extra, (list, tuple)) else [extra]):
+                row.append(w)
+        prim = Gtk.Button(label=primary)
+        prim.add_css_class("destructive-action" if destructive else "suggested-action")
+        if keep_open:
+            prim.connect("clicked", lambda _b: on_primary())
+        else:
+            prim.connect("clicked", lambda _b: (on_primary(), win.destroy()))
+        row.append(prim)
+        box.append(row)
+        win.set_default_widget(prim)  # Enter aciona o primário (default do GTK4)
+        self._entries_activate_default(box)
+        return prim
+
+    @staticmethod
+    def _entries_activate_default(root) -> None:
+        """Faz toda `Gtk.Entry` descendente de `root` acionar o widget-default no Enter
+        (par do `set_default_widget`). Percorre a árvore GTK4 por
+        `get_first_child`/`get_next_sibling`. Idempotente."""
+        child = root.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.Entry):
+                child.set_activates_default(True)
+            CanvasWindow._entries_activate_default(child)
+            child = child.get_next_sibling()
 
     # -- floors no canvas (V8-S5) --
     def _open_floors_dialog(self):
@@ -6558,14 +6587,9 @@ class CanvasWindow:
             mgr_combo.append_text(f"{label} ({nid})")
         mgr_combo.set_active(0)
         box.append(mgr_combo)
-        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        foot.set_halign(Gtk.Align.END)
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda _b: win.destroy())
-        montar = Gtk.Button(label="Montar")
-        montar.add_css_class("suggested-action")
-
-        def do_montar(_b):
+        # N2-item5: keep_open — do_montar destrói win E parent_win (o footer não pode
+        # fechar sozinho antes disso).
+        def do_montar():
             values = {n: e.get_text().strip() for n, e in entries.items()}
             rendered = render_team_template(tpl, **values) if names else tpl
             idx = mgr_combo.get_active()
@@ -6576,10 +6600,7 @@ class CanvasWindow:
             # onde o BLOCO inteiro da equipe nasce, em vez de um algoritmo decidir.
             self._start_placing({"kind": "team", "spec": rendered, "manager": manager})
 
-        montar.connect("clicked", do_montar)
-        foot.append(cancel)
-        foot.append(montar)
-        box.append(foot)
+        self._dialog_footer(win, box, primary="Montar", on_primary=do_montar, keep_open=True)
         win.present()
 
     def _team_group_edit_dialog(self, group_state: dict, on_group_saved) -> None:
@@ -6587,7 +6608,8 @@ class CanvasWindow:
         dentro de `_team_edit_dialog`; ao Salvar, devolve o grupo atualizado via callback
         (não toca o disco — só o template inteiro persiste, no Salvar de fora)."""
         NO_LEADER = "(nenhum)"
-        win, box = self._dialog(f"Grupo — {group_state.get('name') or 'novo'}")
+        # scroll=True (N2 item 6): lista dinâmica de membros pode passar de 720px no device
+        win, box = self._dialog(f"Grupo — {group_state.get('name') or 'novo'}", scroll=True)
         win.set_default_size(460, -1)
 
         box.append(Gtk.Label(label="Nome do grupo", xalign=0))
@@ -6663,14 +6685,8 @@ class CanvasWindow:
         addm.connect("clicked", lambda _b: (add_member_row(), refresh_leader_combo()))
         box.append(addm)
 
-        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        foot.set_halign(Gtk.Align.END)
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda _b: win.destroy())
-        save = Gtk.Button(label="Salvar")
-        save.add_css_class("suggested-action")
-
-        def do_save(_b):
+        # N2-item5: keep_open — do_save destrói win e devolve o grupo via callback
+        def do_save():
             members = []
             for name_ent, agent_combo, instr_tv, mcolor in member_widgets:
                 buf = instr_tv.get_buffer()
@@ -6692,10 +6708,7 @@ class CanvasWindow:
             win.destroy()
             on_group_saved(updated)
 
-        save.connect("clicked", do_save)
-        foot.append(cancel)
-        foot.append(save)
-        box.append(foot)
+        self._dialog_footer(win, box, primary="Salvar", on_primary=do_save, keep_open=True)
         win.present()
         name_e.grab_focus()
 
@@ -6703,7 +6716,9 @@ class CanvasWindow:
         """Cria/edita um `TeamTemplate` inteiro (Fase C, docs/14 §11). `staging` é um dict
         no shape de `TeamTemplate.to_dict()` (rascunho editável); `original_name` = nome
         anterior (edição/rename) ou `None` (novo/duplicado de um built-in)."""
-        win, box = self._dialog("Editar equipe" if original_name else "Nova equipe (template)")
+        # scroll=True (N2 item 6): N grupos × M membros passa de 720px no device
+        win, box = self._dialog("Editar equipe" if original_name else "Nova equipe (template)",
+                                scroll=True)
         win.set_default_size(460, -1)
 
         box.append(Gtk.Label(label="Nome", xalign=0))
@@ -6772,14 +6787,9 @@ class CanvasWindow:
         box.append(addg)
         box.append(err_lbl)
 
-        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        foot.set_halign(Gtk.Align.END)
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda _b: win.destroy())
-        save = Gtk.Button(label="Salvar")
-        save.add_css_class("suggested-action")
-
-        def do_save(_b):
+        # N2-item5: keep_open — do_save VALIDA (err_lbl + return se inválido, fica aberto)
+        # e controla o destroy.
+        def do_save():
             staging["name"] = name_e.get_text().strip()
             staging["description"] = desc_e.get_text().strip()
             ok, msg = self._save_team_from_staging(staging, original_name)
@@ -6789,10 +6799,7 @@ class CanvasWindow:
             win.destroy()
             on_saved()
 
-        save.connect("clicked", do_save)
-        foot.append(cancel)
-        foot.append(save)
-        box.append(foot)
+        self._dialog_footer(win, box, primary="Salvar", on_primary=do_save, keep_open=True)
         win.present()
         name_e.grab_focus()
 

@@ -3,8 +3,9 @@
 > Data: 2026-07-05 · PT-BR · Origem: usuário reclamou que o card **"Limites"** (💰, gasto/RAM)
 > abre "quase tela cheia"; pediu melhorar a UX de **todos** os diálogos/cards abertos. Protocolo
 > `AGENTS.md`: analisar → planejar → **pesquisar (revisão adversarial do Fable)** → validar → codar.
-> Estado: **NÍVEL 1 ENTREGUE (v0.58.0)** · Nível 2 adiado. (Revisado pelo Fable 2026-07-05; validado contra a `main` v0.57.2). Não
-> codar até o usuário puxar da fila (`docs/15`) e escolher o escopo.
+> Estado: **NÍVEL 1 ENTREGUE (v0.58.0)** · **NÍVEL 2 ENTREGUE (v0.62.0, itens 4+5+6)** —
+> branch `feat/ux-dialogos-completo`, validado por teste visual no device. Plano CONCLUÍDO.
+> (Revisado pelo Fable 2026-07-05; validado contra a `main` v0.57.2.)
 
 ## 1. Objetivo (a dor)
 - Alvo: **handheld uConsole CM4, 1280×720**, toque + trackball; strings PT-BR longas (incham labels).
@@ -71,7 +72,9 @@ Falta só o **teste vivo visual no device** (largura ≤ ~600px, Esc, Enter→pr
    teste AST/grep garantindo que nenhum `Gtk.Label(wrap=True)` de corpo de diálogo fica sem
    `max_width_chars` (ou passa pelo `_hint_label`). Trava o bug pra sempre sem precisar de display.
 
-### Nível 2 — polimento (adiável; depois do teste vivo do Nível 1)
+### Nível 2 — polimento — ✅ **ENTREGUE (v0.62.0, branch `feat/ux-dialogos-completo`)**
+Itens 4+5+6 abaixo entregues; `_hitl_*` e a barra por-linha da lista de templates ficaram FORA
+(não são rodapés `[Cancelar,Salvar]` — ver CHANGELOG v0.62.0). Validado por teste visual no device.
 4. **Migrar `_budget_dialog` (Limites) pro helper** — remove o outlier; ganha Esc/transient/
    consistência. (O fullscreen já está resolvido; isto é higiene.)
 5. **`_dialog_footer(win, box, *, primary, on_primary, destructive=False, extra=None, cancel=True)`**

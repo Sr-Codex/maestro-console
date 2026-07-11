@@ -3,6 +3,32 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.62.0] — feat(canvas): UX dos diálogos Nível 2 (`docs/26`) — rodapé padrão + Enter→primário + scroll
+Fecha o plano `docs/26` (Nível 1 saiu na v0.58.0). Rodada de higiene/consistência dos diálogos do
+canvas nativo, validada por **teste visual no device** (Esc fecha, Enter aciona o primário, nada
+abre fullscreen, os diálogos de equipe rolam). Branch `feat/ux-dialogos-completo`, fatiada em commits.
+- **Item 4 — `_budget_dialog` migrado pro helper `_dialog`:** o único outlier dos 21 diálogos
+  (montava a própria `Gtk.Window` sem Esc/transient) agora usa o helper — Esc + `transient_for` +
+  margens consistentes. Comportamento inalterado (os labels já tinham `max_width_chars` da v0.56).
+- **Item 5 — helper `_dialog_footer` + Enter→primário, adotado em 7 diálogos:** barra padrão
+  `[Cancelar?, extra…, primário]` alinhada à direita, com **Enter→primário pela API canônica do
+  GTK4** (`set_default_widget` + `set_activates_default` recursivo nas `Gtk.Entry`). Adotado em:
+  editar terminal, role edit, handoff manual, budget, montar equipe, editar grupo/template de team.
+  **`keep_open`** pros diálogos que reabrem a si mesmos ou validam com early-return (role/team edit
+  não fecham se inválido; montar-equipe destrói win+parent). Em editar terminal, removido o
+  `name.connect("activate")` — o `set_activates_default` o substitui (senão Enter salvaria 2×).
+  **Pulados com razão:** `_hitl_recruit`/`_hitl_team` (decisões async Negar/Aprovar com idempotência
+  + timeout, não `[Cancelar,Salvar]`); a barra por-linha da lista de templates (ação-por-item).
+- **Item 6 — scroll opt-in `_dialog(scroll=True, max_h=560)`:** embrulha o box num `ScrolledWindow`
+  (só vertical, `propagate_natural_height`) que cresce até `max_h` e só então rola — cura falta de
+  altura nos diálogos de team (N grupos × M membros) sem estourar os 720px do device. Default
+  `False` (20 diálogos inalterados); **nunca** em quem já rola (Editar Terminal/paleta).
+- Testes: 5 novos gi (`_dialog_footer` estrutura/`keep_open`/entries-ativam-default; `_dialog`
+  scroll via Viewport auto do GTK4). Suíte gi de canvas inteira verde (14 arquivos) + venv (gi-free)
+  verde; ruff baseline (10 em canvas) mantido — 0 erro novo.
+- **Cortado do item de emoji→Lucide:** medido que emoji não tofa mais no SD/OS atual (Noto Color
+  Emoji instalado); tofu era em outro cartão → item descartado (ver `docs/15`).
+
 ## [0.61.0] — feat(canvas): cor própria do `blocked` (Mocha red) — separado do âmbar do `waiting`
 Fatia PR 2 da Fase B do header (`docs/27`, `docs/15` backlog 2026-07-09). Até aqui `waiting`
 ("é sua vez") e `blocked` ("bloqueado por dependência") eram a **mesma cor âmbar `#f59e0b`** — só a
