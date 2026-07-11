@@ -24,6 +24,7 @@ maestro/state/logs/
 
 # workspaces criados em runtime (registro local de workspaces; não é fonte)
 codex/workspaces.json
+claude/workspaces.json
 
 # spike — código descartável (benchmarks/protótipos; não faz parte do produto)
 spike/
