@@ -72,3 +72,9 @@ def check(store) -> str:
     """Veredito atual do budget (`ok`/`soft`/`hard`) a partir do estado no store."""
     soft, hard = budget_limits(store)
     return budget_verdict(counted_spend(store), soft, hard)
+
+
+def is_paused(store) -> bool:
+    """Fleet "⏸ pausado por budget"? DERIVADO do veredito (docs/29 §4.2 — nada de flag solta
+    que dessincroniza): pausado == o hard está estourado AGORA. Subir o teto ou zerar despausa."""
+    return check(store) == "hard"

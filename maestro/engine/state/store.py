@@ -441,6 +441,15 @@ class Store:
             ).fetchone()
         return dict(row) if row else None
 
+    def list_chains(self, status: str) -> list[dict[str, Any]]:
+        """Chains num dado status, mais antiga primeiro (docs/29 §4.4: a lista de retidas
+        `escalated_budget` que o diálogo Limites mostra pra retomar/descartar)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM chain_runs WHERE status=? ORDER BY updated_at", (status,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     # -- posições dos nós no canvas (V4-S5) ----------------------------
     def set_node_position(self, agent_id: str, x: float, y: float) -> None:
         with self._lock, self._conn:
