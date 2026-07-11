@@ -1213,12 +1213,8 @@ class CanvasWindow:
         ag.append(self._editor_agente_section(nid, applies))
         stack.add_titled(ag, "agente", "Agente")
 
-        # — rodapé: Cancelar / Salvar —
-        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        foot.set_halign(Gtk.Align.END)
-        foot.set_margin_top(10)
-
-        def do_save(_b=None):
+        # — rodapé (N2-item5: helper padrão + Enter→Salvar) —
+        def do_save():  # o _dialog_footer chama on_primary() e fecha depois
             nm = name.get_text().strip()
             self.model.set_node_name(nid, nm or nid)  # persiste (abre igual fechou)
             fr = self.frames.get(nid)
@@ -1227,17 +1223,10 @@ class CanvasWindow:
                 lbl.set_text(f"  {nm or nid}  ")
             for fn in applies:  # aplica+persiste cada aba (Aparência etc.)
                 fn()
-            win.destroy()
 
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda _b: win.destroy())
-        save = Gtk.Button(label="Salvar")
-        save.add_css_class("suggested-action")
-        save.connect("clicked", do_save)
-        name.connect("activate", do_save)
-        foot.append(cancel)
-        foot.append(save)
-        box.append(foot)
+        # o set_activates_default do footer no `name` substitui o antigo
+        # name.connect("activate", do_save) — senão Enter dispararia do_save DUAS vezes.
+        self._dialog_footer(win, box, primary="Salvar", on_primary=do_save)
         win.present()
         name.grab_focus()
 
@@ -1853,14 +1842,9 @@ class CanvasWindow:
             ptv.get_buffer().set_text(role.instruction)
         psc.set_child(ptv)
         box.append(psc)
-        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        foot.set_halign(Gtk.Align.END)
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda _b: win.destroy())
-        save = Gtk.Button(label="Salvar")
-        save.add_css_class("suggested-action")
-
-        def do_save(_b):
+        # N2-item5: keep_open — do_save VALIDA (early-return se nome vazio) e controla o
+        # destroy; o footer não pode fechar sozinho antes disso.
+        def do_save():
             nm = name.get_text().strip()
             if not nm:
                 return
@@ -1872,10 +1856,7 @@ class CanvasWindow:
             win.destroy()
             on_saved(nm)
 
-        save.connect("clicked", do_save)
-        foot.append(cancel)
-        foot.append(save)
-        box.append(foot)
+        self._dialog_footer(win, box, primary="Salvar", on_primary=do_save, keep_open=True)
         win.present()
         name.grab_focus()
 
@@ -5197,9 +5178,7 @@ class CanvasWindow:
         box.append(combo)
         box.append(Gtk.Label(label="Intenção:"))
         box.append(entry)
-        brow = Gtk.Box(spacing=6)
-
-        def fire(_b):
+        def fire():
             idx = combo.get_active()
             intent = entry.get_text().strip() or "Responda apenas OK."
             dlg.destroy()
@@ -5207,13 +5186,8 @@ class CanvasWindow:
                 src, dst = edges[idx]
                 self._run_handoff(src, dst, intent)
 
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda _b: dlg.destroy())
-        ok = Gtk.Button(label="Disparar")
-        ok.connect("clicked", fire)
-        brow.append(cancel)
-        brow.append(ok)
-        box.append(brow)
+        # N2-item5: keep_open — fire destrói dlg e dispara o handoff (preserva a ordem)
+        self._dialog_footer(dlg, box, primary="Disparar", on_primary=fire, keep_open=True)
         dlg.present()
 
     def _run_handoff(self, src: str, dst: str, intent: str) -> None:
@@ -6597,14 +6571,9 @@ class CanvasWindow:
             mgr_combo.append_text(f"{label} ({nid})")
         mgr_combo.set_active(0)
         box.append(mgr_combo)
-        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        foot.set_halign(Gtk.Align.END)
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda _b: win.destroy())
-        montar = Gtk.Button(label="Montar")
-        montar.add_css_class("suggested-action")
-
-        def do_montar(_b):
+        # N2-item5: keep_open — do_montar destrói win E parent_win (o footer não pode
+        # fechar sozinho antes disso).
+        def do_montar():
             values = {n: e.get_text().strip() for n, e in entries.items()}
             rendered = render_team_template(tpl, **values) if names else tpl
             idx = mgr_combo.get_active()
@@ -6615,10 +6584,7 @@ class CanvasWindow:
             # onde o BLOCO inteiro da equipe nasce, em vez de um algoritmo decidir.
             self._start_placing({"kind": "team", "spec": rendered, "manager": manager})
 
-        montar.connect("clicked", do_montar)
-        foot.append(cancel)
-        foot.append(montar)
-        box.append(foot)
+        self._dialog_footer(win, box, primary="Montar", on_primary=do_montar, keep_open=True)
         win.present()
 
     def _team_group_edit_dialog(self, group_state: dict, on_group_saved) -> None:
@@ -6702,14 +6668,8 @@ class CanvasWindow:
         addm.connect("clicked", lambda _b: (add_member_row(), refresh_leader_combo()))
         box.append(addm)
 
-        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        foot.set_halign(Gtk.Align.END)
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda _b: win.destroy())
-        save = Gtk.Button(label="Salvar")
-        save.add_css_class("suggested-action")
-
-        def do_save(_b):
+        # N2-item5: keep_open — do_save destrói win e devolve o grupo via callback
+        def do_save():
             members = []
             for name_ent, agent_combo, instr_tv, mcolor in member_widgets:
                 buf = instr_tv.get_buffer()
@@ -6731,10 +6691,7 @@ class CanvasWindow:
             win.destroy()
             on_group_saved(updated)
 
-        save.connect("clicked", do_save)
-        foot.append(cancel)
-        foot.append(save)
-        box.append(foot)
+        self._dialog_footer(win, box, primary="Salvar", on_primary=do_save, keep_open=True)
         win.present()
         name_e.grab_focus()
 
@@ -6811,14 +6768,9 @@ class CanvasWindow:
         box.append(addg)
         box.append(err_lbl)
 
-        foot = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        foot.set_halign(Gtk.Align.END)
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda _b: win.destroy())
-        save = Gtk.Button(label="Salvar")
-        save.add_css_class("suggested-action")
-
-        def do_save(_b):
+        # N2-item5: keep_open — do_save VALIDA (err_lbl + return se inválido, fica aberto)
+        # e controla o destroy.
+        def do_save():
             staging["name"] = name_e.get_text().strip()
             staging["description"] = desc_e.get_text().strip()
             ok, msg = self._save_team_from_staging(staging, original_name)
@@ -6828,10 +6780,7 @@ class CanvasWindow:
             win.destroy()
             on_saved()
 
-        save.connect("clicked", do_save)
-        foot.append(cancel)
-        foot.append(save)
-        box.append(foot)
+        self._dialog_footer(win, box, primary="Salvar", on_primary=do_save, keep_open=True)
         win.present()
         name_e.grab_focus()
 
