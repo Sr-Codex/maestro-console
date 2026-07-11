@@ -3,6 +3,36 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.63.0] — feat(canvas): cápsula contextual de Grupo (`docs/28`) — seleção cairo + apagar confirmado
+Fecha a última pendência de conformidade do `AGENTS.md` ("todo elemento com config tem cápsula
+contextual ao selecionar" — grupo era o que faltava). Plano `docs/28`, **revisado adversarialmente
+pelo Fable** (aprovado com 9 emendas, todas incorporadas). Validado por **teste visual no device**
+(iterado com o usuário: swatches, hierarquia). Branch `feat/capsula-grupo`.
+- **Selecionar grupo (1 clique na faixa de título):** outline azul tracejado desenhado no
+  `_draw_groups_cr` (paridade com o `.selected` de nó/nota — grupo é cairo, sem frame/CSS) +
+  cápsula `[⚙ editar] [● cor] [🗑 apagar]` (ENXUTA, decisão do usuário: renomear fica no diálogo).
+- **Emenda ALTA do Fable (a que salvou a feature):** `_select` agora faz `queue_draw` quando a
+  seleção antiga OU nova é grupo — sem isso o outline cairo não aparecia no clique parado e ficava
+  STALE ao trocar pra um nó (o caminho `_on_frame_press` não redesenha o plane). Num ponto só
+  (dentro do `_select`), não nos call-sites.
+- **Apagar grupo passa SEMPRE por confirmação** (`_confirm_close_group`, caminho único usado pela
+  cápsula E pelo `_group_dialog`) — o duplo-clique→apagar direto (sem pergunta) era o caminho
+  destrutivo que motivou o item. `_close_group` limpa a seleção (cápsula não fica órfã apontando
+  pra gid morto) e `_pan_update`/`_pan_end` abortam gesto de grupo apagado no meio (anti-ressurreição).
+- **Handlers guardados por `_sel_gid()`** (espelha `_sel_nid`): gid morto → no-op seguro.
+- **Swatches compartilhadas** (`_group_swatches`): extraídas do `_group_dialog` e usadas também no
+  popover da cápsula — círculos (`.csw`, achatado p/ a cor aparecer), cores NOMEADAS do grupo (o
+  popover da nota é paleta hex livre, inreutilizável).
+- **NOVA regra de design (decisão do usuário): hierarquia de cápsulas** — 1ª (FAB) > 2ª (pílula
+  contextual) > 3ª (popover aberto da pílula). Popovers de cor (grupo E nota) viram nível 3:
+  círculos 18px (`.csw-sm`), spacing 5, padding 5 (`.pop-sm`).
+- Hot path intocado: `_pan_begin` só ganha `_select(("group",gid))` nos 2 branches de grupo que já
+  existiam; drag/resize/duplo-clique de grupo inalterados. Clique no CORPO do grupo segue sendo
+  fundo (pan/desseleciona) — decisão do usuário; só a faixa de título seleciona.
+- Testes: `test_group_ctx_canvas` novo (8 testes gi: guarda de gid, redraw na seleção/troca/limpeza,
+  seleção limpa no close, apagar confirmado, anti-ressurreição). Suíte gi relacionada verde; venv
+  verde; ruff baseline mantido.
+
 ## [0.62.0] — feat(canvas): UX dos diálogos Nível 2 (`docs/26`) — rodapé padrão + Enter→primário + scroll
 Fecha o plano `docs/26` (Nível 1 saiu na v0.58.0). Rodada de higiene/consistência dos diálogos do
 canvas nativo, validada por **teste visual no device** (Esc fecha, Enter aciona o primário, nada

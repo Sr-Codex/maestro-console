@@ -45,6 +45,9 @@ Padrão de toolbar do canvas nativo, decidido pelo usuário:
 2. **Cápsula contextual por elemento:** aparece **ao SELECIONAR** um elemento (1 clique) e mostra as
    **config/ações DAQUELE elemento** (espelha a pílula da nota). **Todo elemento que tiver config
    deve ter a sua cápsula contextual** — generalize o padrão da nota, não crie UI ad-hoc por nó.
+   **Hierarquia de TAMANHO das cápsulas (decisão do usuário, 2026-07-11):** 1ª (FAB) > 2ª (pílula
+   contextual, `note-ctx-btn`) > 3ª (popover aberto DE uma pílula, `.pop-sm`/`.csw-sm` — círculos
+   18px, padding 5). Todo popover novo aberto de uma pílula nasce no 3º nível — não no tamanho da pílula.
 3. **Zoom** fica numa **cápsula inferior-esquerda** (rodapé).
 4. **Sem menu "☰ ações" global** — as opções se distribuem entre (1) global e (2) por-elemento.
 5. **Todo elemento novo criado pela cápsula principal nasce por CLIQUE-PRA-POSICIONAR — nunca

@@ -1,7 +1,12 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-11 · v0.62.0**.
-> Recente: **v0.62.0** — UX dos diálogos Nível 2 (`docs/26`, fecha o plano): `_budget_dialog`
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-11 · v0.63.0**.
+> Recente: **v0.63.0** — cápsula contextual de GRUPO (`docs/28`, fecha a conformidade do
+> AGENTS.md): selecionar grupo (1 clique na faixa) → outline cairo tracejado + cápsula
+> `[⚙][●][🗑]`; apagar grupo passa SEMPRE por confirmação; **hierarquia de cápsulas** (regra
+> nova de design: FAB > pílula > popover — popovers de cor do grupo E da nota em nível 3).
+> Revisado pelo Fable (9 emendas); validado no device.
+> **v0.62.0** — UX dos diálogos Nível 2 (`docs/26`, fecha o plano): `_budget_dialog`
 > migrado pro helper; helper `_dialog_footer` (rodapé padrão + **Enter→primário** pela API canônica)
 > adotado em 7 diálogos form-heavy; scroll opt-in (`_dialog(scroll=True)`) nos diálogos de team.
 > Validado por teste visual no device. **v0.61.0** — cor própria do `blocked` (Mocha red `#f38ba8`,

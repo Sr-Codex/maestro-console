@@ -630,6 +630,7 @@ class CanvasWindow:
         overlay.add_overlay(self._build_fleet_hud())  # HUD do fleet (topo-direita) — ADR-17 Etapa 4
         overlay.add_overlay(self._build_note_ctx())  # 2ª pílula: contexto da NOTA selecionada
         overlay.add_overlay(self._build_node_ctx())  # 2ª pílula: contexto do TERMINAL selecionado
+        overlay.add_overlay(self._build_group_ctx())  # 2ª pílula: contexto do GRUPO selecionado
         root.append(overlay)
         self._hint_lbl = Gtk.Label(label=hintbar_text(), xalign=0)  # B2: ensina atalhos
         self._hint_lbl.add_css_class("hintbar")
@@ -746,6 +747,10 @@ class CanvasWindow:
             " border: 1px solid rgba(255,255,255,0.18); }",
             ".csw:hover { border-color: rgba(255,255,255,0.7); }",
             ".csw-sel { border: 2px solid #89b4fa; }",  # swatch selecionado no editor
+            # hierarquia de cápsulas (decisão do usuário): a 3ª (popover aberto DE uma
+            # pílula) é menor que a 2ª (pílula contextual) — swatch e padding reduzidos
+            ".csw-sm { min-width: 18px; min-height: 18px; }",
+            ".pop-sm > contents { padding: 5px; border-radius: 12px; }",
             ".note-curcolor { border-radius: 50%; min-width: 22px; min-height: 22px; }",
             ".note-morecolors { border-radius: 9px; color: #cdd6f4;"
             " background-color: rgba(255,255,255,0.06); padding: 6px; }",
@@ -1032,14 +1037,16 @@ class CanvasWindow:
         colorbtn.set_child(swatch)
         cpop = Gtk.Popover()
         cpop.add_css_class("note-pop")
+        cpop.add_css_class("pop-sm")  # 3º nível da hierarquia de cápsulas → padding menor
         cgrid = Gtk.Grid()
-        cgrid.set_row_spacing(8)
-        cgrid.set_column_spacing(8)
+        cgrid.set_row_spacing(5)
+        cgrid.set_column_spacing(5)
         per_row = 7
         for i, hexc in enumerate(NOTE_PALETTE):
             sw = Gtk.Button()
             sw.set_has_frame(False)  # achata: deixa o background-color (palsw) aparecer
             sw.add_css_class("csw")
+            sw.add_css_class("csw-sm")  # hierarquia: popover (3º nível) = círculos menores
             sw.add_css_class(f"palsw-{i}")
             sw.set_tooltip_text(hexc)
             sw.connect(
@@ -1148,6 +1155,70 @@ class CanvasWindow:
         bar.append(dele)
         self._ctx_del_btn = dele  # 🗑: em órfão vira "Arquivar" (o trabalho no disco fica)
         self._node_ctx_bar = bar
+        return bar
+
+    def _sel_gid(self):
+        """gid do grupo selecionado, com guarda de gid morto (espelha `_sel_nid`): None se a
+        seleção não é grupo OU o grupo já não existe (ex.: popover aberto e o grupo morreu
+        por outro caminho) — os botões da pílula viram no-op seguro."""
+        sel = self._selected
+        if not sel or sel[0] != "group":
+            return None
+        return sel[1] if sel[1] in self._group_base else None
+
+    def _build_group_ctx(self) -> Gtk.Widget:
+        """Cápsula contextual do GRUPO selecionado (AGENTS.md: todo elemento com config tem
+        pílula). ENXUTA (decisão do usuário + Fable): [⚙ editar→diálogo] [● cor] [🗑 apagar
+        confirmado] — renomear fica no diálogo (✏ dedicado duplicaria o `_group_dialog`)."""
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        bar.add_css_class("fab-bar")
+        bar.add_css_class("note-ctx-bar")  # mesma pílula menor (só uma aparece por vez)
+        bar.set_halign(Gtk.Align.CENTER)
+        bar.set_valign(Gtk.Align.START)
+        bar.set_margin_top(66)  # mesmo nível das pílulas de nota/nó
+        bar.set_visible(False)
+
+        def edit(_b=None):
+            gid = self._sel_gid()
+            if gid is not None:
+                self._group_dialog(gid)
+
+        edt = self._fab_button(
+            "emblem-system-symbolic", "⚙", "Editar grupo (nome/cor/apagar)", edit)
+        edt.add_css_class("note-ctx-btn")
+        bar.append(edt)
+        # ● cor: popover com as MESMAS swatches nomeadas do diálogo (helper compartilhado —
+        # o popover da NOTA usa paleta hex livre, inreutilizável: grupo persiste cor NOMEADA)
+        colb = Gtk.MenuButton()
+        colb.set_has_frame(False)  # achata: sem moldura/seta engordando a cápsula (como a nota)
+        colb.add_css_class("fab-btn")
+        colb.add_css_class("note-ctx-btn")
+        colb.set_child(self._fab_icon("maestro-paintbrush", "●"))
+        colb.set_tooltip_text("Cor do grupo")
+        pop = Gtk.Popover()
+        pop.add_css_class("note-pop")  # popover escuro arredondado (padrão da nota)
+        pop.add_css_class("pop-sm")  # 3º nível da hierarquia de cápsulas → padding menor
+
+        def pick(cname):
+            gid = self._sel_gid()
+            if gid is not None:
+                self._set_group_color(gid, cname)
+            pop.popdown()
+
+        pop.set_child(self._group_swatches(pick, small=True))
+        colb.set_popover(pop)
+        bar.append(colb)
+
+        def delete(_b=None):
+            gid = self._sel_gid()
+            if gid is not None:
+                self._confirm_close_group(gid)
+
+        dele = self._fab_button(
+            "user-trash-symbolic", "🗑", "Apagar grupo (os itens ficam no canvas)", delete)
+        dele.add_css_class("note-ctx-btn")
+        bar.append(dele)
+        self._group_ctx_bar = bar
         return bar
 
     def _ctx_edit_node(self) -> None:
@@ -2103,6 +2174,9 @@ class CanvasWindow:
     def _update_ctx(self) -> None:
         """Atualiza TODAS as pílulas contextuais conforme o elemento selecionado."""
         self._update_note_ctx()
+        gbar = getattr(self, "_group_ctx_bar", None)  # cápsula do GRUPO (AGENTS.md)
+        if gbar is not None:
+            gbar.set_visible(bool(self._selected) and self._selected[0] == "group")
         bar = getattr(self, "_node_ctx_bar", None)
         if bar is not None:
             is_node = bool(self._selected) and self._selected[0] == "node"
@@ -2641,14 +2715,20 @@ class CanvasWindow:
         """Marca (kind, id) como selecionado: borda azul tracejada. None = limpa seleção."""
         if sel == self._selected:
             return
-        old = self._frame_of(self._selected)
+        prev = self._selected
+        old = self._frame_of(prev)
         if old is not None:
             old.remove_css_class("selected")
         self._selected = sel
         new = self._frame_of(sel)
         if new is not None:
             new.add_css_class("selected")
-        self._update_ctx()  # mostra/esconde as pílulas de contexto (nota / terminal)
+        self._update_ctx()  # mostra/esconde as pílulas de contexto (nota / terminal / grupo)
+        # grupo é CAIRO (sem frame/CSS): o outline de seleção só aparece/some com um
+        # redraw do plane — que o CSS de nó/nota nunca dispara. Fica AQUI (1 ponto) e
+        # não nos call-sites (são muitos: _pan_begin, _on_frame_press, fechar nota…).
+        if (prev is not None and prev[0] == "group") or (sel is not None and sel[0] == "group"):
+            self.plane.queue_draw()
         if sel is None or sel[0] not in ("node", "note"):
             self.plane.set_cursor(None)  # limpa o cursor de resize ao desmarcar
 
@@ -2724,11 +2804,13 @@ class CanvasWindow:
         # C2: grupos (cairo) — resize no canto tem prioridade sobre arrasto pela faixa
         gid = self._group_corner_hit(px, py)
         if gid is not None:
+            self._select(("group", gid))  # cápsula do grupo (só seleção; drag intocado)
             self._group_resize = {"id": gid, "size": self._group_size.get(gid, (600.0, 360.0))}
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
             return
         gid = self._group_title_band_hit(px, py)
         if gid is not None:  # arrasta o grupo + os nós contidos (move junto)
+            self._select(("group", gid))  # cápsula do grupo (só seleção; drag intocado)
             self._drag = {
                 "kind": "group",
                 "id": gid,
@@ -2753,6 +2835,9 @@ class CanvasWindow:
             return
         if self._group_resize is not None:  # C2: redimensiona o grupo
             gid, o = self._group_resize["id"], self._group_resize["size"]
+            if gid not in self._group_base:  # grupo morreu no meio do gesto → não ressuscitar
+                self._group_resize = None
+                return
             w = max(GROUP_MIN_W, o[0] + off_x / z)
             h = max(GROUP_MIN_H, o[1] + off_y / z)
             self._group_size[gid] = (w, h)
@@ -2760,6 +2845,9 @@ class CanvasWindow:
             return
         if self._drag is not None and self._drag["kind"] == "group":  # C2: move grupo+membros
             o, gid = self._drag["base"], self._drag["id"]
+            if gid not in self._group_base:  # grupo morreu no meio do gesto → não ressuscitar
+                self._drag = None
+                return
             nb = snap_point((o[0] + off_x / z, o[1] + off_y / z), GRID)
             if nb != self._group_base.get(gid):
                 dx, dy = nb[0] - o[0], nb[1] - o[1]
@@ -2820,6 +2908,8 @@ class CanvasWindow:
         if self._group_resize is not None:  # C2: fim do resize MANUAL do grupo (vira o piso)
             gid = self._group_resize["id"]
             self._group_resize = None
+            if gid not in self._group_base:  # grupo morreu no meio do gesto
+                return
             w, h = self._group_size.get(gid, (600.0, 360.0))
             w = max(GROUP_MIN_W, snap_to_grid(w, GRID))
             h = max(GROUP_MIN_H, snap_to_grid(h, GRID))
@@ -2836,6 +2926,8 @@ class CanvasWindow:
             gid = self._drag["id"]
             members = self._drag.get("members", {})
             self._drag = None
+            if gid not in self._group_base:  # grupo morreu no meio do gesto
+                return
             gx, gy = self._group_base.get(gid, (0.0, 0.0))
             gw, gh = self._group_size.get(gid, (600.0, 360.0))
             self._group_manual[gid] = (gx, gy, gw, gh)  # piso acompanha o move
@@ -6945,6 +7037,16 @@ class CanvasWindow:
         z = self.model.zoom()
         for gid in self._group_base:
             x, y, w, h = self._group_disp_rect(gid)
+            # outline de SELEÇÃO (paridade com o `.selected` de nó/nota — grupo é cairo,
+            # sem frame/CSS): azul tracejado por fora da borda; redraw vem do `_select`
+            if self._selected == ("group", gid):
+                cr.save()
+                cr.set_source_rgba(0.21, 0.52, 0.89, 0.95)  # #3584e4 (azul de seleção)
+                cr.set_line_width(2.0)
+                cr.set_dash((6.0, 4.0))
+                cr.rectangle(x - 3, y - 3, w + 6, h + 6)
+                cr.stroke()
+                cr.restore()
             c = _rgba(NOTE_COLORS.get(self._group_color.get(gid, "blue"), NOTE_COLORS["blue"]))
             cr.set_source_rgba(c.red, c.green, c.blue, 0.10)  # corpo translúcido
             cr.rectangle(x, y, w, h)
@@ -7046,8 +7148,38 @@ class CanvasWindow:
             for gid in self._group_base:
                 self._autofit_group(gid)
 
+    def _group_swatches(self, on_pick, *, small: bool = False) -> Gtk.Widget:
+        """Fileira de swatches das cores NOMEADAS do grupo (`NOTE_COLORS`, persistidas como
+        string). Compartilhada entre o `_group_dialog` e o popover da cápsula — o popover da
+        NOTA não serve (paleta hex livre que o modelo de grupo não persiste).
+        `small=True`: círculos de 18px (3º nível da hierarquia de cápsulas — popover)."""
+        swatches = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5 if small else 8)
+        for cname in NOTE_COLORS:
+            sw = Gtk.Button()
+            sw.set_has_frame(False)  # achata: deixa o background-color aparecer (como a nota)
+            sw.add_css_class("csw")  # CÍRCULO (padrão da paleta da nota) + mata o bg do botão
+            if small:
+                sw.add_css_class("csw-sm")
+            sw.add_css_class(f"notecol-{cname}")
+            sw.set_tooltip_text(cname)
+            sw.connect("clicked", lambda _b, c=cname: on_pick(c))
+            swatches.append(sw)
+        return swatches
+
+    def _confirm_close_group(self, gid):
+        """Apagar grupo passa SEMPRE por confirmação (emenda Fable): caminho ÚNICO usado
+        pela cápsula E pelo `_group_dialog` — os itens dentro do grupo ficam no canvas."""
+        title = self._group_title.get(gid, "Grupo")
+        return self._confirm_dialog(
+            "Apagar grupo",
+            f"Apagar o grupo “{title}”? Os terminais/notas dentro dele FICAM no canvas — "
+            "só a moldura do grupo some.",
+            primary="Apagar", destructive=True,
+            on_primary=lambda: self._close_group(gid))
+
     def _group_dialog(self, gid):
-        """Renomear / recolorir / apagar o grupo (duplo-clique na faixa do título)."""
+        """Renomear / recolorir / apagar o grupo (duplo-clique na faixa do título ou ⚙ da
+        cápsula contextual)."""
         if self.groups is None:
             return
         g = self.groups.get(gid)
@@ -7057,14 +7189,7 @@ class CanvasWindow:
         entry = Gtk.Entry()
         entry.set_text(g.title)
         box.append(entry)
-        swatches = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
-        for cname in NOTE_COLORS:
-            sw = Gtk.Button()
-            sw.add_css_class(f"notecol-{cname}")
-            sw.set_size_request(24, 24)
-            sw.connect("clicked", lambda _b, c=cname: self._set_group_color(gid, c))
-            swatches.append(sw)
-        box.append(swatches)
+        box.append(self._group_swatches(lambda c: self._set_group_color(gid, c)))
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         okb = Gtk.Button(label="OK")
         delb = Gtk.Button(label="🗑 apagar")
@@ -7080,8 +7205,8 @@ class CanvasWindow:
             dlg.destroy()
 
         def remove(_w=None):
-            self._close_group(gid)
             dlg.destroy()
+            self._confirm_close_group(gid)  # emenda Fable: também AQUI, não só na cápsula
 
         entry.connect("activate", save)
         okb.connect("clicked", save)
@@ -7101,6 +7226,8 @@ class CanvasWindow:
         self.plane.queue_draw()
 
     def _close_group(self, gid):
+        if self._selected == ("group", gid):  # emenda Fable: sem isto a cápsula fica órfã
+            self._select(None)  # (apontando pra gid morto) — espelha o _confirm_close_node
         if self.groups is not None:
             self.groups.delete(gid)
         for d in (self._group_base, self._group_size, self._group_color, self._group_title, self._group_manual):
