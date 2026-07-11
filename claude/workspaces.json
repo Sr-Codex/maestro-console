@@ -1,0 +1,8 @@
+{
+  "workspaces": {
+    "default": {
+      "project_dir": "claude"
+    }
+  },
+  "current": "default"
+}

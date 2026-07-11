@@ -47,7 +47,11 @@ sobraram 2 pontos: (a) o **seletor de ícone do nó** (`canvas.py:211`, grade de
 que o usuário atribui ao card) — a grade inteira tofa; migrar pra ícones bundled Lucide
 (há 264 no bundle) seria o certo; (b) o botão **"🤖 criar agente"** no diálogo de workspaces
 (`canvas.py:~5420`). Fora do escopo da Fase A (que era a FAB). Sweep único: `grep` glifos > U+2FFF
-usados como UI e trocar por bundled. Status: 🧊 icebox.
+usados como UI e trocar por bundled. Status: ❌ DESCARTADO (2026-07-11) — medido (Pango
+`get_unknown_glyphs_count`) que **emoji NÃO tofa mais no SD/OS atual**: a fonte `fonts-noto-color-emoji`
+entrou num upgrade do Kali rolling. O tofu do A1 era em OUTRO cartão/OS sem a fonte. Decisão do
+usuário: não migrar (emoji funciona no OS principal; migrar perderia a variedade de 6000+ emojis com
+busca). Se um cartão futuro tofar, a cura é instalar a fonte, não mexer no app.
 
 ### 2026-07-08 — Cápsula contextual de Grupo (e Árvore?) — conformidade com AGENTS.md
 Da auditoria de UI (Fable, 2026-07-08). A regra do AGENTS.md pede cápsula contextual pra TODO
@@ -68,8 +72,9 @@ não há clamp de janela). O card Limites já foi tapado inline (v0.56.0); ~15 l
 (os `_confirm_*` são os expostos). Plano **revisado pelo Fable** (cortou clamp-de-janela e
 scroll-automático por não terem base no GTK4; rebaixou form-row/SizeGroup como YAGNI). Quick-win:
 `_hint_label` + `_confirm_dialog` + guarda de regressão no fonte (roda no CI). Plano cirúrgico
-completo em [`docs/26-plano-ux-dialogos.md`](26-plano-ux-dialogos.md). Status: 📋 planejada (aguarda
-o usuário escolher escopo: quick-win vs completo).
+completo em [`docs/26-plano-ux-dialogos.md`](26-plano-ux-dialogos.md). Status: ✅ entregue —
+Nível 1 na v0.58.0; **Nível 2 completo (itens 4+5+6) na v0.62.0** (branch `feat/ux-dialogos-completo`),
+validado por teste visual no device.
 
 ### 2026-07-04 — Auto-unload pós-tarefa: nó descarregado "acorda" pro cabo e volta a dormir sozinho
 Ideia do usuário (durante o Bloco D do unload, `docs/21`): nó descarregado que recebe tarefa via
