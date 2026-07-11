@@ -101,7 +101,10 @@ NOVOS que não estavam na fila (os já existentes — reattach órfãos, FIFO, b
 profiles, nerd fonts — foram PROMOVIDOS em prioridade lá, não duplicados aqui):
 - **Budget cap: pausa graciosa + notificação + retomada 1-clique** ao esgotar o teto — dor validada
   (RunMaestro #235: run de 24h parado 4h em silêncio; Cursor sem guardrails). Extensão do Bloco D
-  (docs/20 §4 já previa). 🧊
+  (docs/20 §4 já previa). 📋 planejada (2026-07-11) →
+  [`29-plano-budget-pausa-retomada.md`](29-plano-budget-pausa-retomada.md) (análise + pesquisa
+  viva + revisão Fable; achado novo no caminho: modo LIVE e floor run FURAM o gate do budget e
+  nem contam gasto — brecha de invariante, §5 do plano).
 - **Paste/drag de imagem pro nó** — dor em 5+ concorrentes (supacode, AoE, Maestro OSS, Clave com
   caminho temp deletado): screenshot do clipboard → salvar em arquivo estável do workspace e colar
   o caminho; drag de arquivo → caminho estável. Verificar comportamento atual do VTE primeiro. 🧊
