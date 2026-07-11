@@ -4398,8 +4398,7 @@ class CanvasWindow:
         spent_lbl = Gtk.Label(xalign=0, label=f"Gasto contado agora: ${_spent:.4f}")
         spent_lbl.add_css_class("dim-label")
         box.append(spent_lbl)
-        btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, halign=Gtk.Align.END)
-        zerar = Gtk.Button(label="Zerar gasto")
+        zerar = Gtk.Button(label="Zerar gasto")  # botão secundário → entra como `extra`
 
         def do_zerar(_b):
             budget.reset_budget(self._store)
@@ -4408,22 +4407,18 @@ class CanvasWindow:
             self._refresh_fleet_hud()
 
         zerar.connect("clicked", do_zerar)
-        salvar = Gtk.Button(label="Salvar")
-        salvar.add_css_class("suggested-action")
 
-        def do_salvar(_b):
+        def do_salvar():  # sem arg: o _dialog_footer chama on_primary() e fecha depois
             self._store.set_ui("budget_hard", hard_e.get_text().strip())
             self._store.set_ui("budget_soft", soft_e.get_text().strip())
             self._store.set_ui("ram_limit_mb", ram_e.get_text().strip())  # parse no uso
             self._ram_alerted.clear()  # limiar mudou → rearma os alertas de RAM
             self._budget_notified = False  # rearma o aviso
             self._refresh_fleet_hud()
-            dlg.close()
 
-        salvar.connect("clicked", do_salvar)
-        btns.append(zerar)
-        btns.append(salvar)
-        box.append(btns)
+        # cancel=False: o card Limites nunca teve "Cancelar" (Esc já fecha) — preserva
+        self._dialog_footer(dlg, box, primary="Salvar", on_primary=do_salvar,
+                            extra=zerar, cancel=False)
         dlg.present()  # _dialog já fez set_child(box)
 
     def _anomaly_tick(self) -> bool:
@@ -5314,6 +5309,54 @@ class CanvasWindow:
         box.append(row)
         win.present()
         return win
+
+    def _dialog_footer(self, win, box, *, primary: str, on_primary,
+                       destructive: bool = False, extra=None, cancel: bool = True,
+                       keep_open: bool = False):
+        """Rodapé PADRÃO dos diálogos form-heavy: barra `[Cancelar?, extra…, primário]`
+        alinhada à direita + **Enter→primário** pela API canônica do GTK4
+        (`win.set_default_widget(primário)` + `set_activates_default(True)` em toda
+        `Gtk.Entry` do box) — não um controller manual de tecla (colidiria com o
+        Esc-controller e os `connect("activate")` já existentes; ADR/plano docs/26 §3.7).
+
+        Espelha o rodapé do `_confirm_dialog`, mas pra diálogos COM formulário. Por
+        padrão, o primário roda `on_primary()` e **fecha depois** (`win.destroy()`).
+        `keep_open=True`: NÃO fecha sozinho — o callback controla o destroy (diálogos que
+        **reabrem a si mesmos**: workspaces/team não podem fechar antes do `on_primary`).
+        `extra` (widget/lista) entra ENTRE cancelar e o primário (botões secundários como
+        "Zerar"/"Duplicar"). Retorna o botão primário."""
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.set_halign(Gtk.Align.END)
+        if cancel:
+            cancel_btn = Gtk.Button(label="Cancelar")
+            cancel_btn.connect("clicked", lambda _b: win.destroy())
+            row.append(cancel_btn)
+        if extra is not None:
+            for w in (extra if isinstance(extra, (list, tuple)) else [extra]):
+                row.append(w)
+        prim = Gtk.Button(label=primary)
+        prim.add_css_class("destructive-action" if destructive else "suggested-action")
+        if keep_open:
+            prim.connect("clicked", lambda _b: on_primary())
+        else:
+            prim.connect("clicked", lambda _b: (on_primary(), win.destroy()))
+        row.append(prim)
+        box.append(row)
+        win.set_default_widget(prim)  # Enter aciona o primário (default do GTK4)
+        self._entries_activate_default(box)
+        return prim
+
+    @staticmethod
+    def _entries_activate_default(root) -> None:
+        """Faz toda `Gtk.Entry` descendente de `root` acionar o widget-default no Enter
+        (par do `set_default_widget`). Percorre a árvore GTK4 por
+        `get_first_child`/`get_next_sibling`. Idempotente."""
+        child = root.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.Entry):
+                child.set_activates_default(True)
+            CanvasWindow._entries_activate_default(child)
+            child = child.get_next_sibling()
 
     # -- floors no canvas (V8-S5) --
     def _open_floors_dialog(self):

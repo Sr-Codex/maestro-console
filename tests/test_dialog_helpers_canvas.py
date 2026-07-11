@@ -87,3 +87,65 @@ def test_confirm_dialog_extra_entre_msg_e_rodape(tmp_path):
         kids = _children(win.get_child())
         assert kids.index(entry) == 1  # logo após o hint, antes do rodapé
         win.destroy()
+
+
+# -- _dialog_footer (N2 item 5: rodapé dos form-heavy + Enter→primário) --
+
+def test_dialog_footer_estrutura_ordem_css_e_default(tmp_path):
+    with Store(tmp_path / "m.db") as store:
+        w = _mkwin(tmp_path, store)
+        win, box = w._dialog("T")
+        fired = {"n": 0}
+        extra = Gtk.Button(label="Zerar")
+        prim = w._dialog_footer(win, box, primary="Salvar",
+                                on_primary=lambda: fired.__setitem__("n", fired["n"] + 1),
+                                extra=extra)
+        btns = _children(_children(box)[-1])  # rodapé é o último filho do box
+        assert [b.get_label() for b in btns] == ["Cancelar", "Zerar", "Salvar"]
+        assert btns[-1].has_css_class("suggested-action")
+        assert win.get_default_widget() is prim  # Enter → primário (API canônica)
+        btns[-1].emit("clicked")
+        assert fired["n"] == 1
+
+
+def test_dialog_footer_cancel_false_e_destructive(tmp_path):
+    with Store(tmp_path / "m.db") as store:
+        w = _mkwin(tmp_path, store)
+        win, box = w._dialog("T")
+        prim = w._dialog_footer(win, box, primary="Apagar", on_primary=lambda: None,
+                                destructive=True, cancel=False)
+        btns = _children(_children(box)[-1])
+        assert [b.get_label() for b in btns] == ["Apagar"]  # sem Cancelar
+        assert prim.has_css_class("destructive-action")
+        win.destroy()
+
+
+def test_dialog_footer_keep_open_nao_fecha(tmp_path):
+    # diálogos que reabrem a si mesmos (workspaces/team): o footer NÃO pode destruir
+    with Store(tmp_path / "m.db") as store:
+        w = _mkwin(tmp_path, store)
+        win, box = w._dialog("T")
+        fired = {"n": 0}
+        prim = w._dialog_footer(win, box, primary="Salvar", keep_open=True,
+                                on_primary=lambda: fired.__setitem__("n", fired["n"] + 1))
+        prim.emit("clicked")
+        assert fired["n"] == 1
+        assert win.get_child() is not None  # continua VIVA (não destruída)
+        win.destroy()
+
+
+def test_dialog_footer_entries_ativam_default(tmp_path):
+    # Enter numa Gtk.Entry do corpo aciona o primário (set_activates_default em toda entry)
+    with Store(tmp_path / "m.db") as store:
+        w = _mkwin(tmp_path, store)
+        win, box = w._dialog("T")
+        e_top = Gtk.Entry()
+        box.append(e_top)
+        nested = Gtk.Box()  # entry aninhada (numa row) também deve ser pega (recursivo)
+        e_deep = Gtk.Entry()
+        nested.append(e_deep)
+        box.append(nested)
+        w._dialog_footer(win, box, primary="OK", on_primary=lambda: None)
+        assert e_top.get_activates_default() is True
+        assert e_deep.get_activates_default() is True
+        win.destroy()
