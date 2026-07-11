@@ -747,6 +747,10 @@ class CanvasWindow:
             " border: 1px solid rgba(255,255,255,0.18); }",
             ".csw:hover { border-color: rgba(255,255,255,0.7); }",
             ".csw-sel { border: 2px solid #89b4fa; }",  # swatch selecionado no editor
+            # hierarquia de cápsulas (decisão do usuário): a 3ª (popover aberto DE uma
+            # pílula) é menor que a 2ª (pílula contextual) — swatch e padding reduzidos
+            ".csw-sm { min-width: 18px; min-height: 18px; }",
+            ".pop-sm > contents { padding: 5px; border-radius: 12px; }",
             ".note-curcolor { border-radius: 50%; min-width: 22px; min-height: 22px; }",
             ".note-morecolors { border-radius: 9px; color: #cdd6f4;"
             " background-color: rgba(255,255,255,0.06); padding: 6px; }",
@@ -1033,14 +1037,16 @@ class CanvasWindow:
         colorbtn.set_child(swatch)
         cpop = Gtk.Popover()
         cpop.add_css_class("note-pop")
+        cpop.add_css_class("pop-sm")  # 3º nível da hierarquia de cápsulas → padding menor
         cgrid = Gtk.Grid()
-        cgrid.set_row_spacing(8)
-        cgrid.set_column_spacing(8)
+        cgrid.set_row_spacing(5)
+        cgrid.set_column_spacing(5)
         per_row = 7
         for i, hexc in enumerate(NOTE_PALETTE):
             sw = Gtk.Button()
             sw.set_has_frame(False)  # achata: deixa o background-color (palsw) aparecer
             sw.add_css_class("csw")
+            sw.add_css_class("csw-sm")  # hierarquia: popover (3º nível) = círculos menores
             sw.add_css_class(f"palsw-{i}")
             sw.set_tooltip_text(hexc)
             sw.connect(
@@ -1184,10 +1190,14 @@ class CanvasWindow:
         # ● cor: popover com as MESMAS swatches nomeadas do diálogo (helper compartilhado —
         # o popover da NOTA usa paleta hex livre, inreutilizável: grupo persiste cor NOMEADA)
         colb = Gtk.MenuButton()
+        colb.set_has_frame(False)  # achata: sem moldura/seta engordando a cápsula (como a nota)
+        colb.add_css_class("fab-btn")
+        colb.add_css_class("note-ctx-btn")
         colb.set_child(self._fab_icon("maestro-paintbrush", "●"))
         colb.set_tooltip_text("Cor do grupo")
-        colb.add_css_class("note-ctx-btn")
         pop = Gtk.Popover()
+        pop.add_css_class("note-pop")  # popover escuro arredondado (padrão da nota)
+        pop.add_css_class("pop-sm")  # 3º nível da hierarquia de cápsulas → padding menor
 
         def pick(cname):
             gid = self._sel_gid()
@@ -1195,7 +1205,7 @@ class CanvasWindow:
                 self._set_group_color(gid, cname)
             pop.popdown()
 
-        pop.set_child(self._group_swatches(pick))
+        pop.set_child(self._group_swatches(pick, small=True))
         colb.set_popover(pop)
         bar.append(colb)
 
@@ -7138,15 +7148,20 @@ class CanvasWindow:
             for gid in self._group_base:
                 self._autofit_group(gid)
 
-    def _group_swatches(self, on_pick) -> Gtk.Widget:
+    def _group_swatches(self, on_pick, *, small: bool = False) -> Gtk.Widget:
         """Fileira de swatches das cores NOMEADAS do grupo (`NOTE_COLORS`, persistidas como
         string). Compartilhada entre o `_group_dialog` e o popover da cápsula — o popover da
-        NOTA não serve (paleta hex livre que o modelo de grupo não persiste)."""
-        swatches = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
+        NOTA não serve (paleta hex livre que o modelo de grupo não persiste).
+        `small=True`: círculos de 18px (3º nível da hierarquia de cápsulas — popover)."""
+        swatches = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5 if small else 8)
         for cname in NOTE_COLORS:
             sw = Gtk.Button()
+            sw.set_has_frame(False)  # achata: deixa o background-color aparecer (como a nota)
+            sw.add_css_class("csw")  # CÍRCULO (padrão da paleta da nota) + mata o bg do botão
+            if small:
+                sw.add_css_class("csw-sm")
             sw.add_css_class(f"notecol-{cname}")
-            sw.set_size_request(24, 24)
+            sw.set_tooltip_text(cname)
             sw.connect("clicked", lambda _b, c=cname: on_pick(c))
             swatches.append(sw)
         return swatches
