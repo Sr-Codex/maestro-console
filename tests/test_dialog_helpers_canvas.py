@@ -134,6 +134,24 @@ def test_dialog_footer_keep_open_nao_fecha(tmp_path):
         win.destroy()
 
 
+def test_dialog_scroll_opt_in(tmp_path):
+    # N2 item 6: scroll=True embrulha o box num ScrolledWindow; default NÃO
+    with Store(tmp_path / "m.db") as store:
+        w = _mkwin(tmp_path, store)
+        win_plain, box_plain = w._dialog("T")
+        assert win_plain.get_child() is box_plain  # sem scroll: box é filho direto
+        win_sc, box_sc = w._dialog("T", scroll=True)
+        sc = win_sc.get_child()
+        assert isinstance(sc, Gtk.ScrolledWindow)
+        # GTK4: o ScrolledWindow embrulha um box não-scrollável num Viewport automático
+        vp = sc.get_child()
+        inner = vp.get_child() if isinstance(vp, Gtk.Viewport) else vp
+        assert inner is box_sc  # o box vive DENTRO do scroller (via viewport)
+        assert sc.get_propagate_natural_height() is True  # cresce até max_h, aí rola
+        win_plain.destroy()
+        win_sc.destroy()
+
+
 def test_dialog_footer_entries_ativam_default(tmp_path):
     # Enter numa Gtk.Entry do corpo aciona o primário (set_activates_default em toda entry)
     with Store(tmp_path / "m.db") as store:

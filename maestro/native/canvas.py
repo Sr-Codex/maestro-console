@@ -5219,7 +5219,15 @@ class CanvasWindow:
         return False
 
     # -- helper de diálogo (GTK4: sem Dialog.run; janela modal simples) --
-    def _dialog(self, title: str):
+    def _dialog(self, title: str, *, scroll: bool = False, max_h: int = 560):
+        """Diálogo modal base: Gtk.Window + box vertical (margens 8, spacing 6), Esc fecha.
+        Retorna `(win, box)` — os chamadores fazem `box.append(...)`.
+
+        `scroll=True` (N2 item 6): embrulha o box num `ScrolledWindow` (só vertical) que
+        **cresce naturalmente até `max_h`px e só então rola** (`propagate_natural_height`) —
+        cura falta de altura em diálogos com lista dinâmica (team edit) sem estourar os 720px
+        do device. **NUNCA** ligar em diálogo que JÁ tem scroller próprio (Editar Terminal/
+        paleta) — viraria scroll-dentro-de-scroll (docs/26 §4 item 6)."""
         win = Gtk.Window(title=title)
         win.set_transient_for(self.win)
         win.set_modal(True)
@@ -5229,7 +5237,15 @@ class CanvasWindow:
         box.set_margin_bottom(8)
         box.set_margin_start(8)
         box.set_margin_end(8)
-        win.set_child(box)
+        if scroll:
+            sc = Gtk.ScrolledWindow()
+            sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)  # só vertical
+            sc.set_propagate_natural_height(True)  # cresce até max_h, aí rola
+            sc.set_max_content_height(max_h)
+            sc.set_child(box)
+            win.set_child(sc)
+        else:
+            win.set_child(box)
         # Esc fecha o diálogo (GTK4 não dá isso de graça como o antigo Dialog.run).
         # Só afeta janelas modais (paleta/floors/routines); não rouba o Esc do terminal.
         esc = Gtk.EventControllerKey()
@@ -6592,7 +6608,8 @@ class CanvasWindow:
         dentro de `_team_edit_dialog`; ao Salvar, devolve o grupo atualizado via callback
         (não toca o disco — só o template inteiro persiste, no Salvar de fora)."""
         NO_LEADER = "(nenhum)"
-        win, box = self._dialog(f"Grupo — {group_state.get('name') or 'novo'}")
+        # scroll=True (N2 item 6): lista dinâmica de membros pode passar de 720px no device
+        win, box = self._dialog(f"Grupo — {group_state.get('name') or 'novo'}", scroll=True)
         win.set_default_size(460, -1)
 
         box.append(Gtk.Label(label="Nome do grupo", xalign=0))
@@ -6699,7 +6716,9 @@ class CanvasWindow:
         """Cria/edita um `TeamTemplate` inteiro (Fase C, docs/14 §11). `staging` é um dict
         no shape de `TeamTemplate.to_dict()` (rascunho editável); `original_name` = nome
         anterior (edição/rename) ou `None` (novo/duplicado de um built-in)."""
-        win, box = self._dialog("Editar equipe" if original_name else "Nova equipe (template)")
+        # scroll=True (N2 item 6): N grupos × M membros passa de 720px no device
+        win, box = self._dialog("Editar equipe" if original_name else "Nova equipe (template)",
+                                scroll=True)
         win.set_default_size(460, -1)
 
         box.append(Gtk.Label(label="Nome", xalign=0))
