@@ -63,7 +63,11 @@ outline de seleção desenhado no `_draw_groups_cr`; (b) hit-test de seleção e
 `_select` (`canvas.py:2687-2813` — caminho quente de drag/resize/detach, risco médio de regressão);
 (c) `_confirm_dialog` no apagar (o `_group_dialog:6947` deleta sem confirmação — paridade com o ✕ do
 nó). Migrar nome/cor/apagar do diálogo pra pílula. Árvore de arquivo: provavelmente FORA (só tem
-posição, sem config). PR isolado, depois de A+B validadas no device. Status: 🧊 icebox.
+posição, sem config). PR isolado, depois de A+B validadas no device. Status: ✅ entregue —
+v0.63.0, plano `docs/28` (revisado pelo Fable, 9 emendas), branch `feat/capsula-grupo`.
+Decisões: pílula ENXUTA `[⚙][●][🗑]` (renomear fica no diálogo); corpo do grupo segue sendo
+fundo; árvore de arquivo FORA (sem config). Bônus: hierarquia de cápsulas (FAB > pílula >
+popover) virou regra de design, aplicada também ao popover de cor da nota.
 
 ### 2026-07-05 — UX dos diálogos/cards do canvas (📋 planejada → `docs/26`)
 Gatilho: o card "Limites" (💰) abria "quase tela cheia"; usuário pediu melhorar a UX de TODOS os

@@ -1,4 +1,8 @@
-# Plano — Cápsula contextual de Grupo
+# Plano — Cápsula contextual de Grupo — ✅ ENTREGUE (v0.63.0)
+
+> **Status final:** entregue na v0.63.0 (branch `feat/capsula-grupo`), validado por teste
+> visual no device. Extra descoberto no teste: **hierarquia de cápsulas** (FAB > pílula >
+> popover) virou regra de design — popovers de cor (grupo E nota) em nível 3 (`.csw-sm`/`.pop-sm`).
 
 > Data: 2026-07-11 · PT-BR · Origem: backlog `docs/15` (2026-07-08, auditoria de UI do Fable) —
 > conformidade com a regra do `AGENTS.md` ("todo elemento com config tem cápsula contextual ao
