@@ -197,9 +197,12 @@ emendas, todas incorporadas na v2:
 verificadas; gate LIVE movido pro `_ask_delegate`), guard-rails da §7. Spot-check das citações da
 v1: 13/14 corretas (a errada — métodos da tabela `tasks` — morreu com a fila).
 
-## 10. DECISÕES — pendentes de validação do usuário
+## 10. DECISÕES — VALIDADAS com o usuário (2026-07-11, pós-Fable)
 
-- [ ] Design v2 como um todo (retenção tipada via `escalated_budget` + `resume_chain`; sem fila).
-- [ ] Escopo da §5 no MESMO PR (gates LIVE + floor) vs PR separado. Recomendação: mesmo PR — é o
-  invariante do mesmo freio (lição wire/dismiss); a contagem do LIVE fica pra backlog.
-- [ ] Digitação humana segue fora do cap (não gateada, não contada) — confirmar e registrar no ADR.
+- ✅ **Design v2 como um todo** (retenção tipada via `escalated_budget` + `resume_chain`; sem fila).
+- ✅ **Gates da §5 no MESMO PR** (LIVE via `_ask_delegate` + floor fail-fast) — é o invariante do
+  mesmo freio (lição wire/dismiss); a contagem do gasto do LIVE fica pra backlog próprio.
+- ✅ **Digitação humana segue fora do cap** (não gateada, não contada — o adversário do ADR-17 é o
+  agente, não o dono). Registrar a linha no ADR junto com a implementação (§8 DoD).
+
+Plano fechado pra implementação (branch `feat/` própria, após o merge deste doc).
