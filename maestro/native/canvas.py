@@ -4358,12 +4358,9 @@ class CanvasWindow:
         `ui_state` (config de UI, "abre igual fechou") — não "unificar"."""
         if self._store is None:
             return
-        dlg = Gtk.Window(title="Limites — gasto do fleet ($) e RAM por nó")
-        dlg.set_modal(True)
-        dlg.set_default_size(380, -1)  # sem isto, o label wrap estica a janela p/ tela cheia
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        for m in ("top", "bottom", "start", "end"):
-            getattr(box, f"set_margin_{m}")(14)
+        # N2-item4: migrado pro helper compartilhado (ganha Esc + transient_for + margens
+        # consistentes). Os labels já têm max_width_chars → sem risco de esticar a janela.
+        dlg, box = self._dialog("Limites — gasto do fleet ($) e RAM por nó")
         hint = Gtk.Label(xalign=0, wrap=True, max_width_chars=44, label=(
             "Teto de gasto dos agentes (USD). Vazio = sem teto. No HARD, os runs mediados param "
             "até você zerar. SOFT (só aviso) vazio = 75% do hard. O contador só sobe — o agente "
@@ -4427,8 +4424,7 @@ class CanvasWindow:
         btns.append(zerar)
         btns.append(salvar)
         box.append(btns)
-        dlg.set_child(box)
-        dlg.present()
+        dlg.present()  # _dialog já fez set_child(box)
 
     def _anomaly_tick(self) -> bool:
         """Vigilância ATIVA (Etapa 4): rajada de recrutamentos bloqueados → kill-switch
