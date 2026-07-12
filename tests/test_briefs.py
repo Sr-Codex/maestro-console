@@ -13,8 +13,8 @@ from maestro.engine.teams import Role
 
 def test_sanitize_remove_unicode_invisivel():
     # Rules File Backdoor (docs/30 E3): zero-width, bidi, tags e soft-hyphen NÃO passam
-    assert sanitize_brief("a​b‮c﻿d\U000e0041e") == "abcde"
-    assert sanitize_brief("plano­ real ⁦oculto⁩") == "plano real oculto"
+    assert sanitize_brief("a\u200bb\u202ec\ufeffd\U000e0041e") == "abcde"
+    assert sanitize_brief("plano\u00ad real \u2066oculto\u2069") == "plano real oculto"
 
 
 def test_sanitize_remove_controles_preserva_texto():

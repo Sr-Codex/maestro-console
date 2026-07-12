@@ -82,7 +82,7 @@ def test_set_group_brief_sanitiza_e_recarimba_membros(tmp_path):
     w = _win(tmp_path)
     CanvasWindow._assign_birth_group(w, "claude-2", "g1")  # membro ANTES do brief existir
     w.frames = {"claude-2": object()}
-    CanvasWindow._set_group_brief(w, "g1", "meta​ nova", "corpo‮oculto")  # com invisíveis
+    CanvasWindow._set_group_brief(w, "g1", "meta\u200b nova", "corpo\u202eoculto")  # com invisíveis
     assert w._store.get_ui("group_goal_g1") == "meta nova"  # sanitizado no save
     assert w._store.get_ui("group_brief_g1") == "corpooculto"
     assert w._store.get_ui("group_brief_ts_g1")  # data registrada

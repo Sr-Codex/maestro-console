@@ -32,7 +32,7 @@ _INVISIBLE = re.compile(
 _CONTROLS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 
-def sanitize_brief(text: str, cap: int = BRIEF_MAX) -> str:
+def sanitize_brief(text: str | None, cap: int = BRIEF_MAX) -> str:
     """Sanitiza texto de brief/objetivo vindo da UI: remove Unicode invisível + controles,
     normaliza fim de linha e aplica o cap. Roda SÓ no save do host (o arquivo espelhado
     nunca volta pra cá — sem caminho de re-ingestão)."""

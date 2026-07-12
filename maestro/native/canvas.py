@@ -5928,6 +5928,20 @@ class CanvasWindow:
             self._placing_cursor = None
             self.plane.queue_draw()
 
+    def _commit_placing_agent(self, base: str, bx: float, by: float) -> None:
+        """Nascimento de agente pelo FAB: cria no clique e, se o clique caiu num grupo,
+        grava o grupo de nascimento (docs/30 E2 — gesto humano, não geometria do card) e
+        reinicia p/ a IA já abrir com o brief (padrão do recruit-com-papel)."""
+        nid = self._new_agent_terminal(base, default=(bx, by))
+        if nid is None:
+            return
+        gid = self._group_at_point(bx, by)
+        if gid:
+            self._assign_birth_group(nid, gid)
+            goal, brief, _ = self._group_brief(gid)
+            if goal or brief:
+                self._respawn_node(nid)
+
     def _commit_placing(self, bx: float, by: float) -> None:
         """Cria o item pendente na posição CLICADA (coords base) — sem algoritmo de
         posicionamento; o humano escolheu."""
@@ -5939,14 +5953,7 @@ class CanvasWindow:
         if spec["kind"] == "shell":
             self._new_shell_terminal(default=(bx, by))
         elif spec["kind"] == "agent":
-            nid = self._new_agent_terminal(spec["base"], default=(bx, by))
-            if nid is not None:  # docs/30 E2: grupo de nascimento = o grupo SOB O CLIQUE
-                gid = self._group_at_point(bx, by)  # (gesto humano, não geometria do card)
-                if gid:
-                    self._assign_birth_group(nid, gid)
-                    goal, brief, _ = self._group_brief(gid)
-                    if goal or brief:  # reinicia p/ a IA já abrir com o brief (padrão recruit)
-                        self._respawn_node(nid)
+            self._commit_placing_agent(spec["base"], bx, by)
         elif spec["kind"] == "note":
             self._create_note(default=(bx, by))
         elif spec["kind"] == "group":
