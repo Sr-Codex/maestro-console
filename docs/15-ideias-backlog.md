@@ -187,9 +187,13 @@ Team Templates/líder, Maestro mode, bwrap):
   reconciliação de git worktree órfão (R4, adiada — 2º PR/backlog).
 - **Fila FIFO de follow-ups por nó/cabo** — empilhar instruções enquanto o agente roda, reordenar,
   cancelar; enviar ao VTE só quando pronto. Maestro mode enfileira sem perder mensagem. 🧊
-- **Briefing persistente por grupo/template** — `brief.md` de "objetivo/decisões/contexto" injetado
-  automaticamente em cada agente novo do grupo (nota conectada + líder). Resolve "usei um dia e
-  esqueci o plano". Pode incluir um campo "objetivo atual" fixado no header do grupo. 🧊
+- **Briefing persistente por grupo/template** — brief de "objetivo/decisões/contexto" entregue
+  automaticamente a cada agente novo do grupo + campo "objetivo atual". Resolve "usei um dia e
+  esqueci o plano". 📋 planejada (2026-07-12) →
+  [`30-plano-briefing-grupo.md`](30-plano-briefing-grupo.md) (pesquisa de validação + revisão
+  adversarial Fable: APROVADA COM EMENDAS — mecanismo invertido de "injeção no 1º prompt"
+  [inimplementável: FAB/recruit não têm 1º prompt] pra bloco marcado em CLAUDE.md/AGENTS.md do
+  workspace, o trilho dos roles; aguardando validação do usuário, §10).
 - **Modo compacto pro canvas lotado (1280×720)** — colapsar grupos, mini-cartões de nó, atalhos por
   teclado; camada de visualização sobre os mesmos nós (não muda o orquestrador). Essencial p/ 8+ nós. 🧊
 - **Consciência read-only entre nós irmãos** — um agente lê status/branch/diff-resumido/notas de
