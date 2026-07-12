@@ -92,6 +92,11 @@ morre ao fim do turno — o PTY não ressuscita), então o núcleo da ideia é *
 genuinamente NOVO: **auto-unload por ociosidade de nós VIVOS** ("suspender após X min sem uso
 humano" — timeout configurável + guard de ociosidade). Trade-off: resume relê o transcript
 (re-ingestão de tokens a cada ciclo) e auto-unload arrisca matar nó que o usuário ia usar já já.
+**Detalhe do usuário (2026-07-12): opt-in em DOIS níveis** — (a) toggle GLOBAL na config
+("habilitar para todos os terminais": todo terminal novo já nasce com o padrão) e (b) override
+POR TERMINAL na config do nó (ativar só naquele terminal, ou desativar um específico com o
+global ligado). Mesmo padrão do `monitor_sound` (`node_cfg` por nó) + default global em
+`ui_state` — nunca forçado sem o usuário habilitar.
 Status: 🧊 icebox.
 
 ### 2026-07-03 — Novos candidatos vindos da pesquisa de dores da concorrência (análise cruzada)
@@ -196,7 +201,9 @@ Team Templates/líder, Maestro mode, bwrap):
   adversarial Fable: mecanismo invertido de "injeção no 1º prompt" pra bloco marcado em
   CLAUDE.md/AGENTS.md do workspace, o trilho dos roles; decisões validadas no §10).
 - **Modo compacto pro canvas lotado (1280×720)** — colapsar grupos, mini-cartões de nó, atalhos por
-  teclado; camada de visualização sobre os mesmos nós (não muda o orquestrador). Essencial p/ 8+ nós. 🧊
+  teclado; camada de visualização sobre os mesmos nós (não muda o orquestrador). Essencial p/ 8+ nós.
+  🧊 **(2026-07-12: usuário avaliou — sem utilidade no uso atual; STAND BY deliberado, não
+  promover sem ele pedir.)**
 - **Consciência read-only entre nós irmãos** — um agente lê status/branch/diff-resumido/notas de
   outro nó do MESMO grupo, sem escrever; mediado pelo orquestrador, escopo por cabo/grupo (CLI/MCP
   local). 🧊
