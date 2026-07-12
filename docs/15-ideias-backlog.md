@@ -92,6 +92,11 @@ morre ao fim do turno — o PTY não ressuscita), então o núcleo da ideia é *
 genuinamente NOVO: **auto-unload por ociosidade de nós VIVOS** ("suspender após X min sem uso
 humano" — timeout configurável + guard de ociosidade). Trade-off: resume relê o transcript
 (re-ingestão de tokens a cada ciclo) e auto-unload arrisca matar nó que o usuário ia usar já já.
+**Detalhe do usuário (2026-07-12): opt-in em DOIS níveis** — (a) toggle GLOBAL na config
+("habilitar para todos os terminais": todo terminal novo já nasce com o padrão) e (b) override
+POR TERMINAL na config do nó (ativar só naquele terminal, ou desativar um específico com o
+global ligado). Mesmo padrão do `monitor_sound` (`node_cfg` por nó) + default global em
+`ui_state` — nunca forçado sem o usuário habilitar.
 Status: 🧊 icebox.
 
 ### 2026-07-03 — Novos candidatos vindos da pesquisa de dores da concorrência (análise cruzada)
@@ -112,8 +117,21 @@ profiles, nerd fonts — foram PROMOVIDOS em prioridade lá, não duplicados aqu
   o caminho; drag de arquivo → caminho estável. Verificar comportamento atual do VTE primeiro. 🧊
 - **Teste de runtime de teclado internacional** (dead keys/acentos PT-BR + CJK) no VTE — dor em 4
   concorrentes; provavelmente já funciona, mas PROVAR e registrar (público PT-BR). 🧊
-- **Perfis com diretório de config isolado por nó** (conta Claude trabalho × pessoal simultâneas —
-  dor Clave #22, ninguém entrega) — ampliação do item "Profiles de agente" já na fila. 🧊
+- **Perfis de agente = conta/ambiente isolado por nó → REFORMULADO (2026-07-12, revisão
+  adversarial Fable + pesquisa de mercado):** derrubado o preset básico de flags (redundante:
+  `agent_argv` só varia auto-approve; ⚙ por nó + Team Templates cobrem o resto — preset sem knob
+  é menu vazio) e **fundido com este item de multi-conta**, que a pesquisa validou FORTE: 10+
+  issues duplicadas no anthropics/claude-code pedindo perfis (jan–abr/2026, sem entrega nativa) e
+  ecossistema dedicado (Claude Switch, AgentsRoom). **Correção do docs/24: "ninguém entrega"
+  DESATUALIZADO** — a Clave fechou a #22 (PR #23 mergeado 2026-06-06, macOS); o diferencial que
+  resta é canvas/Linux-ARM. Recorte: **perfil = nome + config dir isolado
+  (`CLAUDE_CONFIG_DIR`/`CODEX_HOME`, mecanismos oficiais aceitos pela Anthropic) + env extra**,
+  escolhido ao criar o nó, badge no card. Guardas do plano futuro: **NUNCA rotação automática de
+  conta** (é o padrão que a Anthropic bane — evasão de limite; perfil = escolha humana explícita
+  por nó); rw-bind por nó no sandbox (hoje o dir alternativo ficaria read-only — `sandbox.py`);
+  **usage.py precisa seguir o config dir do nó** senão o budget cap fica cego (`~/.claude/projects`
+  hardcoded — regressão silenciosa no ADR-22). Demanda é do upstream (nenhum pedido direto ao
+  maestro-console ainda) → fica na fila por mérito de mercado, sem urgência. 🧊
 - **Guardas de projeto (não-features)**: manter kanban de sessões cortado (Windsurf confirma
   "orchestration theater"); nunca auto-atualizar/embutir CLI do agente (Jean #460); não escalar
   N agentes antes de UX de review (P12). 🧊 (regras, avaliar incorporar no AGENTS.md quando
@@ -196,12 +214,15 @@ Team Templates/líder, Maestro mode, bwrap):
   adversarial Fable: mecanismo invertido de "injeção no 1º prompt" pra bloco marcado em
   CLAUDE.md/AGENTS.md do workspace, o trilho dos roles; decisões validadas no §10).
 - **Modo compacto pro canvas lotado (1280×720)** — colapsar grupos, mini-cartões de nó, atalhos por
-  teclado; camada de visualização sobre os mesmos nós (não muda o orquestrador). Essencial p/ 8+ nós. 🧊
+  teclado; camada de visualização sobre os mesmos nós (não muda o orquestrador). Essencial p/ 8+ nós.
+  🧊 **(2026-07-12: usuário avaliou — sem utilidade no uso atual; STAND BY deliberado, não
+  promover sem ele pedir.)**
 - **Consciência read-only entre nós irmãos** — um agente lê status/branch/diff-resumido/notas de
   outro nó do MESMO grupo, sem escrever; mediado pelo orquestrador, escopo por cabo/grupo (CLI/MCP
   local). 🧊
-- **Profiles de agente (presets nomeados)** — "Claude sandbox", "Codex yolo" etc. na cápsula
-  principal ao criar nó; persistidos em `ui_state`, injetados no comando de spawn. 🧊
+- **Profiles de agente (presets nomeados)** — ❌ DERRUBADO como item isolado (2026-07-12,
+  Fable): sem knobs de spawn pra embalar, preset é redundante com ⚙ por nó + Team Templates.
+  Fundido no item "Perfis de agente = conta/ambiente isolado por nó" (lista de 2026-07-03 acima).
 - **Custo/tokens por nó (versão lean)** — um número discreto no header do nó, sem dashboard. **Já
   está no backlog acima como F1** (triplo-confirmado: docs/16 + Fable + docs/17); é o mesmo item —
   não duplicar, só reforça a prioridade. 🧊
