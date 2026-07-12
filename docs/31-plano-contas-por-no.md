@@ -238,15 +238,17 @@ claims de ToS conferidos ao vivo e corretos, mas exigem URLs + nuance de enforce
 **E11** corte YAGNI: sem combo na criação (conta só no ⚙); **E12** budget verificado ok
 (rotação/uuid4/por-nid), mas o LIVE não-contado precisa ficar explícito.
 
-## 10. DECISÕES — pendentes de validação do usuário
+## 10. DECISÕES — VALIDADAS com o usuário (2026-07-12, pós-Fable)
 
-| # | Decisão | Recomendação |
+Todas as recomendações aprovadas como estão ("ok", 2026-07-12):
+
+| # | Decisão | Validado |
 |---|---|---|
 | D1 | Nome na UI: "Conta" vs "Perfil" | **Conta** (colisão com AgentProfile/roles) |
 | D2 | Config-dirs derivados sob raiz única `~/.maestro-accounts/` vs caminho livre por conta | **raiz única** (viabiliza a máscara §5.3; caminho livre = YAGNI) |
 | D3 | Máscara tmpfs das contas alheias (§5.3) | **sim** (fecha exfiltração ro entre contas; custo: param novo no sandbox.py) |
-| D4 | Recruit herda conta do manager | **sim** (padrão birth_group; alternativa: sempre default) |
-| D5 | Campo conta em TeamTemplate | **adiar** (YAGNI, mesmo corte do docs/30 E6) |
-| D6 | Escopo do PR: 1 PR único (M/G) vs 2 | **1 PR** (unidade coerente; fatiar criaria estado intermediário sem valor testável) |
-| D7 | Floor run (roda por agente BASE, sem nó) na conta default | **sim, explícito e documentado** (E4; alternativa exigiria identidade de nó no floor — fora de escopo) |
-| D8 | Conta SÓ no ⚙ (sem combo na criação — corte E11) | **sim** (criação continua leve; caso raro paga 1 clique) |
+| D4 | Recruit herda conta do manager | **sim** (padrão birth_group) |
+| D5 | Campo conta em TeamTemplate | **adiado** (YAGNI, mesmo corte do docs/30 E6) |
+| D6 | Escopo do PR: 1 PR único (M/G) vs 2 | **1 PR** (unidade coerente) |
+| D7 | Floor run (roda por agente BASE, sem nó) na conta default | **sim, explícito e documentado** (E4) |
+| D8 | Conta SÓ no ⚙ (sem combo na criação — corte E11) | **sim** (criação continua leve) |
