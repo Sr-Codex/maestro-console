@@ -1,7 +1,14 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-11 · v0.64.0**.
-> Recente: **v0.64.0** — budget cap com PAUSA GRACIOSA + notificação + retomada 1-clique
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-12 · v0.65.0**.
+> Recente: **v0.65.0** — briefing persistente por GRUPO (`docs/30`, ADR-27): objetivo atual +
+> brief editados no diálogo do grupo (host-only, sanitizado, cap 1000/80) e entregues por bloco
+> marcado em CLAUDE.md/AGENTS.md do workspace de cada agente que NASCE no grupo (FAB pelo ponto
+> do clique · recruit herda do manager · montar equipe com `description` do template como
+> semente) — o CLI lê no start; headless e reattach cobertos de graça; re-carimbo a cada
+> respawn desfaz rabisco de agente. Grupo de nascimento = decisão host (`birth_group`), nunca
+> geometria.
+> **v0.64.0** — budget cap com PAUSA GRACIOSA + notificação + retomada 1-clique
 > (`docs/29`, ADR-26, fecha a dor RunMaestro #235): barrada do hard agora é visível (BLOCKED no
 > `envelope_log`, texto "pausado por budget" — nunca "falhou"), chain barrada escala TIPADA
 > (`escalated_budget`) e o diálogo Limites lista as retidas com ▶ retomar (via `resume_chain`) e

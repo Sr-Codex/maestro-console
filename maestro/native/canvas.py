@@ -54,6 +54,13 @@ from ..engine.attention import (  # noqa: E402
     attention_nids,
     notify,
 )
+from ..engine.briefs import (  # noqa: E402
+    BRIEF_MAX,
+    GOAL_MAX,
+    install_brief_block,
+    remove_brief_block,
+    sanitize_brief,
+)
 from ..engine.envelope import EnvelopeState  # noqa: E402
 from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
 from ..engine.maestro_audit import append_event, read_events  # noqa: E402
@@ -2976,6 +2983,7 @@ class CanvasWindow:
                 self._place(frame, (bx, by), self.model.zoom())
             if kind == "node":
                 self.model.set_position(tid, bx, by)  # persiste posição do nó
+                self._update_birth_group_on_drop(tid, bx, by)  # docs/30 E5 (gesto humano)
             elif kind == "note" and frame is not None:
                 self._save_note(frame)  # persiste posição da nota
             self._autofit_all_groups()  # C2: grupo abraça quem entrou/saiu/moveu
@@ -3329,6 +3337,7 @@ class CanvasWindow:
             self.model.clear_node_cfg(nid, "unloaded")
             self.model.clear_node_cfg(nid, "orphan")  # reattach R2: revivido → não é mais órfão
             self.set_node_state(nid, self._node_state.get(nid, "idle"))  # tira a vista ⏏
+        self._stamp_brief(nid)  # docs/30 E3: re-carimbo ANTES do CLI subir (desfaz rabisco)
         term.reset(True, True)  # limpa tela + scrollback p/ um restart limpo
         _spawn_into(term, self._node_argv(nid), cwd, self._node_envv(nid))
         return False  # idle one-shot
@@ -3863,6 +3872,85 @@ class CanvasWindow:
             if wsp.is_dir():
                 return [str(wsp)]
         return []
+
+    # -- Briefing por grupo (docs/30): quadro de avisos host-only entregue por arquivo --
+    def _group_brief(self, gid: str) -> tuple[str, str, str]:
+        """(objetivo, brief, data da edição) do grupo — fonte da verdade no Store."""
+        store = getattr(self, "_store", None)  # tolerante a janela parcial (testes __new__)
+        if store is None or not gid:
+            return ("", "", "")
+        return (store.get_ui(f"group_goal_{gid}") or "",
+                store.get_ui(f"group_brief_{gid}") or "",
+                store.get_ui(f"group_brief_ts_{gid}") or "")
+
+    def _set_group_brief(self, gid: str, goal: str, brief: str) -> None:
+        """Salva o brief do grupo (SÓ pela UI do host — nunca comando de agente, ADR-17) e
+        re-carimba os membros na hora: o headless lê o arquivo a CADA run (cwd=workspace),
+        então o espelho não pode esperar o próximo respawn."""
+        store = getattr(self, "_store", None)
+        if store is None:
+            return
+        goal = sanitize_brief(goal, GOAL_MAX)
+        brief = sanitize_brief(brief, BRIEF_MAX)
+        store.set_ui(f"group_goal_{gid}", goal)
+        store.set_ui(f"group_brief_{gid}", brief)
+        ts = time.strftime("%Y-%m-%d %H:%M")
+        store.set_ui(f"group_brief_ts_{gid}", ts if (goal or brief) else "")
+        for nid in self._brief_members(gid):
+            self._stamp_brief(nid)
+
+    def _brief_members(self, gid: str) -> list[str]:
+        """Nós cujo grupo de NASCIMENTO (decisão host, nunca geometria — E2/ADR-21) é `gid`.
+        Roster ∪ frames: cobre nós descarregados/órfãos que voltam com --resume."""
+        nids = {s.get("nid") for s in self.model.node_roster()} | set(self.frames)
+        return [n for n in nids if n and self.model.node_cfg(n, "birth_group") == gid]
+
+    def _stamp_brief(self, nid: str) -> None:
+        """Re-carimba o bloco BRIEF no workspace do nó (E3: o Store é a verdade; o arquivo é
+        espelho descartável — rabisco de agente morre aqui). Sem grupo/brief → remove o bloco.
+        Best-effort: nunca derruba spawn/respawn por erro de IO."""
+        targets = self._role_targets(nid)
+        if not targets:
+            return
+        gid = self.model.node_cfg(nid, "birth_group")
+        goal, brief, ts = self._group_brief(gid)
+        for t in targets:
+            try:
+                if goal or brief:
+                    install_brief_block(t, goal, brief, ts)
+                else:
+                    remove_brief_block(t)
+            except OSError:
+                pass
+
+    def _group_at_point(self, bx: float, by: float) -> str:
+        """Grupo cujo retângulo contém o ponto (coords base). Aninhados: o MENOR vence
+        (mais específico). Usado só em GESTO humano (clique do FAB) — decisão host-side."""
+        best, best_area = "", None
+        sizes = getattr(self, "_group_size", {})  # tolerante a janela parcial (testes __new__)
+        for gid, (gx, gy) in getattr(self, "_group_base", {}).items():
+            gw, gh = sizes.get(gid, (600.0, 360.0))
+            if gx <= bx <= gx + gw and gy <= by <= gy + gh:
+                area = gw * gh
+                if best_area is None or area < best_area:
+                    best, best_area = gid, area
+        return best
+
+    def _assign_birth_group(self, nid: str, gid: str) -> None:
+        """Grava o grupo de nascimento (host-side) e carimba o brief no workspace."""
+        self.model.set_node_cfg(nid, "birth_group", gid or "")
+        self._stamp_brief(nid)
+
+    def _update_birth_group_on_drop(self, nid: str, bx: float, by: float) -> None:
+        """E5: VOCÊ arrastou o nó pra dentro/fora de um grupo (gesto humano = decisão host,
+        não geometria espontânea). Atualiza a pertença e re-carimba o espelho — o terminal
+        vivo só LÊ no próximo start (documentado: sem efeito mid-session); headless pega já."""
+        if not self._role_targets(nid):
+            return  # sem workspace (nó-shell) → não há onde carimbar (docs/30 §6.4)
+        w, h = getattr(self, "_node_size", {}).get(nid, (BASE_W, BASE_H))
+        gid = self._group_at_point(bx + w / 2.0, by + h / 2.0)  # centro do card solto
+        if gid != self.model.node_cfg(nid, "birth_group"):
+            self._assign_birth_group(nid, gid)
 
     def _refresh_agent_cap(self, nid: str, role=None) -> None:
         """Fase B: cápsula do agente no header = NOME do papel (cor fixa). Escondida quando o nó
@@ -4949,10 +5037,18 @@ class CanvasWindow:
             self.model.set_node_cfg(nid, "maestro", "")  # recruta NASCE sem poder recrutar
             self._recruited_by[nid] = frm  # linhagem (profundidade)
             self.edges.add(frm, nid)
+            # docs/30 E2: recruta HERDA o grupo de nascimento do manager (pertença host-side,
+            # nunca a geometria do card novo — _place_below pode cair fora do retângulo)
+            mgr_gid = self.model.node_cfg(frm, "birth_group")
+            if mgr_gid:
+                self._assign_birth_group(nid, mgr_gid)
+            _goal, _brief, _ = self._group_brief(mgr_gid)
             if role:
                 self.model.set_node_cfg(nid, "role", role)
                 self._apply_node_role(nid)
-                self._respawn_node(nid)  # reinicia p/ a IA já abrir com o papel
+                self._respawn_node(nid)  # reinicia p/ a IA já abrir com o papel (+ brief)
+            elif _goal or _brief:
+                self._respawn_node(nid)  # sem papel, mas com brief → reinicia p/ abrir com ele
             self._ask_hint(frm, nid)
             self._wake_cables()
             self.plane.queue_draw()
@@ -5832,6 +5928,20 @@ class CanvasWindow:
             self._placing_cursor = None
             self.plane.queue_draw()
 
+    def _commit_placing_agent(self, base: str, bx: float, by: float) -> None:
+        """Nascimento de agente pelo FAB: cria no clique e, se o clique caiu num grupo,
+        grava o grupo de nascimento (docs/30 E2 — gesto humano, não geometria do card) e
+        reinicia p/ a IA já abrir com o brief (padrão do recruit-com-papel)."""
+        nid = self._new_agent_terminal(base, default=(bx, by))
+        if nid is None:
+            return
+        gid = self._group_at_point(bx, by)
+        if gid:
+            self._assign_birth_group(nid, gid)
+            goal, brief, _ = self._group_brief(gid)
+            if goal or brief:
+                self._respawn_node(nid)
+
     def _commit_placing(self, bx: float, by: float) -> None:
         """Cria o item pendente na posição CLICADA (coords base) — sem algoritmo de
         posicionamento; o humano escolheu."""
@@ -5843,7 +5953,7 @@ class CanvasWindow:
         if spec["kind"] == "shell":
             self._new_shell_terminal(default=(bx, by))
         elif spec["kind"] == "agent":
-            self._new_agent_terminal(spec["base"], default=(bx, by))
+            self._commit_placing_agent(spec["base"], bx, by)
         elif spec["kind"] == "note":
             self._create_note(default=(bx, by))
         elif spec["kind"] == "group":
@@ -6738,6 +6848,10 @@ class CanvasWindow:
                                     x=gx, y=gy, w=float(gw), h=float(gh))
             self._load_group(g)
             groups_created += 1
+            # docs/30 E6c: a `description` do template (campo já existente) é a SEMENTE do
+            # brief do grupo recém-criado — a equipe nasce com o quadro preenchido.
+            if (spec.description or "").strip():
+                self._set_group_brief(g.id, "", spec.description)
             member_nids: dict[str, str] = {}  # nome do papel -> nid, DENTRO deste grupo
             for i, member in enumerate(group.members):
                 col, row = i % cols, i // cols
@@ -6753,6 +6867,7 @@ class CanvasWindow:
                 self._force_node_rect(nid, px, py, card_w, card_h)
                 self.model.set_node_cfg(nid, "role", member.name)  # nome p/ display/badge/HUD
                 self._apply_role_spec(nid, member)  # instrução REAL do template (não a lib)
+                self._assign_birth_group(nid, g.id)  # docs/30 E2: nasceu NESTE grupo (host-side)
                 member_nids[member.name] = nid
                 self._respawn_node(nid)
             # Fiação de cabos (Fase D, docs/14 §12): grupo COM líder vira caixa-preta — o
@@ -7347,8 +7462,8 @@ class CanvasWindow:
             on_primary=lambda: self._close_group(gid))
 
     def _group_dialog(self, gid):
-        """Renomear / recolorir / apagar o grupo (duplo-clique na faixa do título ou ⚙ da
-        cápsula contextual)."""
+        """Renomear / recolorir / apagar o grupo + BRIEFING (docs/30: objetivo atual + brief,
+        host-only, sanitizado, com cap). Duplo-clique na faixa do título ou ⚙ da cápsula."""
         if self.groups is None:
             return
         g = self.groups.get(gid)
@@ -7359,6 +7474,38 @@ class CanvasWindow:
         entry.set_text(g.title)
         box.append(entry)
         box.append(self._group_swatches(lambda c: self._set_group_color(gid, c)))
+
+        # -- Briefing do grupo (docs/30): o quadro de avisos que os agentes leem no start --
+        goal0, brief0, ts0 = self._group_brief(gid)
+        bhint = Gtk.Label(xalign=0, wrap=True, max_width_chars=44, label=(
+            "Briefing (só você edita): entregue a cada agente que NASCE no grupo — ele lê no "
+            "início da sessão. Curto adere mais."))
+        bhint.add_css_class("dim-label")
+        box.append(bhint)
+        goal_e = Gtk.Entry()
+        goal_e.set_placeholder_text(f"objetivo atual (até {GOAL_MAX})")
+        goal_e.set_max_length(GOAL_MAX)
+        goal_e.set_text(goal0)
+        box.append(goal_e)
+        brief_v = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR)
+        brief_v.get_buffer().set_text(brief0)
+        bsc = Gtk.ScrolledWindow()
+        bsc.set_min_content_height(90)
+        bsc.set_child(brief_v)
+        box.append(bsc)
+        count_lbl = Gtk.Label(xalign=0)
+        count_lbl.add_css_class("dim-label")
+
+        def _refresh_count(*_a):
+            n = brief_v.get_buffer().get_char_count()
+            over = " ⚠ acima do limite (corta no salvar)" if n > BRIEF_MAX else ""
+            edited = f"  ·  editado {ts0}" if ts0 else ""
+            count_lbl.set_text(f"{n}/{BRIEF_MAX}{over}{edited}")
+
+        brief_v.get_buffer().connect("changed", _refresh_count)
+        _refresh_count()
+        box.append(count_lbl)
+
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         okb = Gtk.Button(label="OK")
         delb = Gtk.Button(label="🗑 apagar")
@@ -7370,6 +7517,10 @@ class CanvasWindow:
                 cur.title = self._group_title[gid]
                 cur.color = self._group_color.get(gid, cur.color)
                 self.groups.save(cur)
+            buf = brief_v.get_buffer()
+            new_brief = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+            if (goal_e.get_text(), new_brief) != (goal0, brief0):  # só re-carimba se mudou
+                self._set_group_brief(gid, goal_e.get_text(), new_brief)
             self.plane.queue_draw()
             dlg.destroy()
 
@@ -7397,6 +7548,18 @@ class CanvasWindow:
     def _close_group(self, gid):
         if self._selected == ("group", gid):  # emenda Fable: sem isto a cápsula fica órfã
             self._select(None)  # (apontando pra gid morto) — espelha o _confirm_close_node
+        # docs/30 E7: brief morre com o grupo — desliga a pertença e tira o bloco dos membros
+        for nid in self._brief_members(gid):
+            self.model.set_node_cfg(nid, "birth_group", "")
+            for t in self._role_targets(nid):
+                try:
+                    remove_brief_block(t)
+                except OSError:
+                    pass
+        _store = getattr(self, "_store", None)
+        if _store is not None:
+            for key in (f"group_goal_{gid}", f"group_brief_{gid}", f"group_brief_ts_{gid}"):
+                _store.set_ui(key, "")
         if self.groups is not None:
             self.groups.delete(gid)
         for d in (self._group_base, self._group_size, self._group_color, self._group_title, self._group_manual):
