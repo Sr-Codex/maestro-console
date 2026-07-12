@@ -117,8 +117,21 @@ profiles, nerd fonts — foram PROMOVIDOS em prioridade lá, não duplicados aqu
   o caminho; drag de arquivo → caminho estável. Verificar comportamento atual do VTE primeiro. 🧊
 - **Teste de runtime de teclado internacional** (dead keys/acentos PT-BR + CJK) no VTE — dor em 4
   concorrentes; provavelmente já funciona, mas PROVAR e registrar (público PT-BR). 🧊
-- **Perfis com diretório de config isolado por nó** (conta Claude trabalho × pessoal simultâneas —
-  dor Clave #22, ninguém entrega) — ampliação do item "Profiles de agente" já na fila. 🧊
+- **Perfis de agente = conta/ambiente isolado por nó → REFORMULADO (2026-07-12, revisão
+  adversarial Fable + pesquisa de mercado):** derrubado o preset básico de flags (redundante:
+  `agent_argv` só varia auto-approve; ⚙ por nó + Team Templates cobrem o resto — preset sem knob
+  é menu vazio) e **fundido com este item de multi-conta**, que a pesquisa validou FORTE: 10+
+  issues duplicadas no anthropics/claude-code pedindo perfis (jan–abr/2026, sem entrega nativa) e
+  ecossistema dedicado (Claude Switch, AgentsRoom). **Correção do docs/24: "ninguém entrega"
+  DESATUALIZADO** — a Clave fechou a #22 (PR #23 mergeado 2026-06-06, macOS); o diferencial que
+  resta é canvas/Linux-ARM. Recorte: **perfil = nome + config dir isolado
+  (`CLAUDE_CONFIG_DIR`/`CODEX_HOME`, mecanismos oficiais aceitos pela Anthropic) + env extra**,
+  escolhido ao criar o nó, badge no card. Guardas do plano futuro: **NUNCA rotação automática de
+  conta** (é o padrão que a Anthropic bane — evasão de limite; perfil = escolha humana explícita
+  por nó); rw-bind por nó no sandbox (hoje o dir alternativo ficaria read-only — `sandbox.py`);
+  **usage.py precisa seguir o config dir do nó** senão o budget cap fica cego (`~/.claude/projects`
+  hardcoded — regressão silenciosa no ADR-22). Demanda é do upstream (nenhum pedido direto ao
+  maestro-console ainda) → fica na fila por mérito de mercado, sem urgência. 🧊
 - **Guardas de projeto (não-features)**: manter kanban de sessões cortado (Windsurf confirma
   "orchestration theater"); nunca auto-atualizar/embutir CLI do agente (Jean #460); não escalar
   N agentes antes de UX de review (P12). 🧊 (regras, avaliar incorporar no AGENTS.md quando
@@ -207,8 +220,9 @@ Team Templates/líder, Maestro mode, bwrap):
 - **Consciência read-only entre nós irmãos** — um agente lê status/branch/diff-resumido/notas de
   outro nó do MESMO grupo, sem escrever; mediado pelo orquestrador, escopo por cabo/grupo (CLI/MCP
   local). 🧊
-- **Profiles de agente (presets nomeados)** — "Claude sandbox", "Codex yolo" etc. na cápsula
-  principal ao criar nó; persistidos em `ui_state`, injetados no comando de spawn. 🧊
+- **Profiles de agente (presets nomeados)** — ❌ DERRUBADO como item isolado (2026-07-12,
+  Fable): sem knobs de spawn pra embalar, preset é redundante com ⚙ por nó + Team Templates.
+  Fundido no item "Perfis de agente = conta/ambiente isolado por nó" (lista de 2026-07-03 acima).
 - **Custo/tokens por nó (versão lean)** — um número discreto no header do nó, sem dashboard. **Já
   está no backlog acima como F1** (triplo-confirmado: docs/16 + Fable + docs/17); é o mesmo item —
   não duplicar, só reforça a prioridade. 🧊
