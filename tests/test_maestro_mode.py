@@ -83,6 +83,7 @@ def _make_win():
 
     w._maestro_clock = _clock
     w._sock_server = None  # vigilância (Etapa 4) — testes ligam quando precisam
+    w._store = None  # sem budget nos testes de fleet (docs/29: gates leem _store)
     w.closed = []
     created = []
 
@@ -182,6 +183,7 @@ def test_node_auto_approve_le_maestro_e_autoapprove():
 def test_cabo_default_headless_live_optin():
     """ADR-20: por padrão o cabo entrega por HEADLESS (confiável); 'live' (raspa a TUI) é opt-in."""
     w = CanvasWindow.__new__(CanvasWindow)
+    w._store = None  # sem budget aqui (o gate LIVE tem teste próprio)
     calls = []
     w._ask_live = lambda to, p: (calls.append("live") or "truncado")
     w._ask_headless = lambda to, p: (calls.append("headless") or "completo")

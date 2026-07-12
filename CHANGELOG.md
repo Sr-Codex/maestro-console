@@ -38,6 +38,45 @@ do workspace** (o trilho de `install_role_block`), que o CLI lê sozinho no star
   re-carimbo desfaz rabisco) + `test_briefing_grupo_ui.py` (gi: grupo-no-clique com aninhados,
   carimbo por caminho, re-carimbo no save, drop dentro/fora, delete limpa tudo).
 
+## [0.64.0] — feat(budget): pausa graciosa + notificação + retomada 1-clique (`docs/29`)
+Fecha o tríptico da dor RunMaestro #235 sobre o budget cap (v0.55.0/ADR-22): estourou o hard →
+antes o turno era descartado EM SILÊNCIO e "retomar" era reconstruir contexto na mão. Design v2
+pós-revisão adversarial (Fable 5, 10 emendas — a v1 com fila FIFO foi REPROVADA e morta). Plano
+`docs/29` validado pelo usuário; **retenção por unidade TIPADA, sem fila/tabela nova**. ADR-26.
+- **Pausa graciosa:** a barrada do gate agora é VISÍVEL — o envelope BLOCKED entra no
+  `envelope_log` e a nota diz "**pausado por budget**" (nunca "falhou" — lacuna LiteLLM #14144).
+  Chain de team barrada escala TIPADA: `chain_status="escalated_budget"` (distinta do
+  `"escalated"` de erro) — o único delta de dado do plano. `budget.is_paused()` DERIVADO do
+  veredito (E10: sem flag que dessincroniza).
+- **Notificação imediata (fecha a falha silenciosa):** o gate barra ANTES de rodar → `on_usage`
+  nunca dispara (E4); novo `budget_bus` (padrão `usage_bus`) sinaliza engine→UI na hora, com
+  fallback de poll no `_anomaly_tick` (3s). Desktop notify com SOM na 1ª barrada ("budget PAUSOU
+  o fleet · gasto $X de $Y · abra Limites"), 1× por episódio, rearma ao liberar.
+- **HUD pausado:** segmento vira `⏸ budget · $X/$Y · N retida(s)` (classe `hud-hard` mantida);
+  clicar no HUD abre o diálogo Limites.
+- **Retomada 1-clique:** o diálogo Limites (💰) lista as chains retidas (time · papel(agente) ·
+  idade — E6: nunca retomar às cegas prompt velho) com **▶ retomar** e **🗑 descartar** (+
+  "descartar todas"). ▶ habilita só com veredito < hard (senão re-barraria); re-estouro no meio
+  re-escala `escalated_budget` sem loop (a chain É o checkpoint). Alvo morto (E9) → aviso "time
+  mudou", nunca crash. `controller.resume_run(team, intent, run_id)` retoma POR run_id —
+  funciona após fechar/reabrir ("abre igual fechou"). Trilha: `budget_resumed`/`budget_discarded`
+  (fora de `ABUSE_EVENTS`, como `budget_blocked`).
+- **2 brechas de invariante fechadas (§5 — o freio vale em TODAS as entradas, lição
+  wire/dismiss):** modo **LIVE** do cabo (injetava no VTE vivo sem gate) → no hard pula o live e
+  cai no headless, onde o gate uniforme barra; **floor run** → fail-fast com texto de pausa, SEM
+  retenção (E3: reter re-executaria fora do cwd do floor). Digitação HUMANA no VTE segue fora do
+  cap (decisão validada: o adversário do ADR-17 é o agente, não o dono).
+- **Sem retenção fora de chain (E1):** ask por cabo/handoff/nota → só o BLOCKED logado +
+  notificação (consumidor morre com a thread; re-rodar depois = resposta pro nada); routine →
+  nada a reter (o scheduler re-roda inteira no próximo tick). Sem 3º limiar "proativo": com pausa
+  graciosa, o próprio hard É o checkpoint limpo (ADR-22 intacto: monotônico, soft=aviso).
+- Testes: `test_budget_pause.py` (gi-free: gate loga, escalada tipada, resume re-roda o passo,
+  re-estouro sem loop, floor fail-fast, `resume_run` por run_id) + `test_budget_pause_ui.py`
+  (gi: gate LIVE, HUD ⏸, notify 1×/rearme). **Prova de runtime no device:** app aberto com teto
+  estourado → HUD `⏸ budget · $2.34/$1.00 · 1 retida` + notificação desktop reais (screenshot).
+  Backlog novo: contagem do gasto do modo LIVE (o gate entra já; a contagem exige mapear
+  session_id do PTY).
+
 ## [0.63.0] — feat(canvas): cápsula contextual de Grupo (`docs/28`) — seleção cairo + apagar confirmado
 Fecha a última pendência de conformidade do `AGENTS.md` ("todo elemento com config tem cápsula
 contextual ao selecionar" — grupo era o que faltava). Plano `docs/28`, **revisado adversarialmente

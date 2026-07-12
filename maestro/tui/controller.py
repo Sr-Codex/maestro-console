@@ -207,6 +207,17 @@ class TUIController:
         if self._resume_ctx is None:
             raise RuntimeError("não há cadeia para retomar")
         team, intent, run_id = self._resume_ctx
+        return await self.resume_run(
+            team, intent, run_id, swap_agent=swap_agent, reprompt=reprompt, progress=progress
+        )
+
+    async def resume_run(
+        self, team: Team, intent: str, run_id: str,
+        *, swap_agent=None, reprompt=None, progress=None,
+    ) -> ChainResult:
+        """Retoma uma cadeia POR run_id (docs/29 §4.4): a retomada 1-clique das chains
+        `escalated_budget` do diálogo Limites — funciona mesmo após reabrir o app (o
+        checkpoint vive no store, não em `_resume_ctx`)."""
         self._active = {
             "task_id": run_id,
             "route": team.route,

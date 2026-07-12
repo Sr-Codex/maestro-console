@@ -121,6 +121,29 @@ async def run_edge_handoff(
     return EdgeHandoffResult(src=env_a, dst=env_b, escalated=escalated, reason=reason)
 
 
+def run_resume_in_thread(
+    controller, team, intent: str, run_id: str, on_step, on_done=None
+) -> threading.Thread:
+    """Retoma uma chain por run_id (docs/29 §4.4 — ▶ do diálogo Limites) num thread daemon.
+
+    `resume_chain` re-roda a etapa que ficou BLOCKED (etapas DONE nunca repetem); se o teto
+    novo re-estourar no meio, a chain re-escala `escalated_budget` — sem loop, sem perder
+    posição. on_done(ChainResult) se dado.
+    """
+
+    def worker():
+        try:
+            res = _run_sync(controller.resume_run(team, intent, run_id, progress=on_step))
+            if on_done is not None:
+                on_done(res)
+        except Exception as exc:
+            _report_thread_error("resume_chain", exc)
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    return t
+
+
 def run_edge_handoff_in_thread(controller, src, dst, intent: str, on_step) -> threading.Thread:
     """Executa run_edge_handoff(...) num thread daemon; chama on_step(StepProgress)."""
 
@@ -180,11 +203,13 @@ def run_floor_agent_in_thread(
     on_done,
     *,
     run_fn=None,
+    store=None,
 ) -> threading.Thread:
     """Roda um agente NUM floor (V8-S5) em thread; snapshot do trabalho na branch.
 
     on_done(res, committed): res = RunResult do agente; committed = bool (houve
-    commit na branch do floor). `run_fn` injetável (testes).
+    commit na branch do floor). `run_fn` injetável (testes). `store` liga o gate
+    de budget do floor (docs/29 §5.2 — fail-fast no hard, sem snapshot).
     """
 
     def worker():
@@ -192,9 +217,14 @@ def run_floor_agent_in_thread(
             kw = {"run_fn": run_fn} if run_fn is not None else {}
             res = _run_sync(
                 run_agent_in_floor(
-                    session_manager, profile, agent_id, prompt, floor, repo, timeout=180, **kw
+                    session_manager, profile, agent_id, prompt, floor, repo,
+                    timeout=180, store=store, **kw
                 )
             )
+            # barrado pelo gate (nada rodou) → não faz snapshot/commit de nada
+            if not res.ok and "pausado por budget" in (res.stderr or ""):
+                on_done(res, False)
+                return
             committed = commit_floor(floor, f"floor {floor.name}: {prompt[:50]}")
             on_done(res, committed)
         except Exception as exc:

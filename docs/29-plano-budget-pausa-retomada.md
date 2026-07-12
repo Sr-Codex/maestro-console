@@ -1,5 +1,10 @@
 # Plano — Budget cap: pausa graciosa + notificação + retomada 1-clique
 
+> **✅ ENTREGUE (2026-07-11) — v0.64.0 / ADR-26.** Implementado como especificado (retenção
+> tipada `escalated_budget` + `resume_chain`; notify via `budget_bus` + poll; lista de retidas
+> no Limites; gates LIVE/floor no mesmo PR). Prova de runtime no device: HUD ⏸ + notificação
+> reais com teto estourado. Contagem do gasto do LIVE ficou em backlog próprio (`docs/15`).
+>
 > Data: 2026-07-11 · PT-BR · Origem: `docs/15` (item 2026-07-03, dor RunMaestro #235) — extensão
 > do Bloco D do F1 (`docs/20`, entregue em v0.55.0/ADR-22). Protocolo do `AGENTS.md`:
 > **analisar → planejar → pesquisar → validar → codar.** A v1 deste plano foi **REPROVADA na

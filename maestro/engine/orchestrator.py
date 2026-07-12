@@ -28,6 +28,17 @@ from .wrapper import request_envelope
 # ask(agent_id, prompt) -> stdout bruto do agente
 Ask = Callable[[str, str], Awaitable[str]]
 
+# Prefixo da nota do BLOCKED do gate de budget — "pausado", nunca "falhou" (docs/29 §4.2):
+# é o marcador que distingue a escalada por budget (retomável) da escalada por erro.
+BUDGET_NOTE_PREFIX = "pausado por budget"
+
+
+def is_budget_blocked(env: Envelope) -> bool:
+    """O envelope é o BLOCKED emitido pelo gate de budget (não um BLOCKED do agente)?"""
+    return env.state is EnvelopeState.BLOCKED and bool(
+        env.note and env.note.startswith(BUDGET_NOTE_PREFIX)
+    )
+
 # Um passo da cadeia: agente + função que monta a tarefa a partir do resultado
 # anterior (str | None). Para tarefa fixa, ignore o argumento.
 TaskFn = Callable[[str | None], str]
@@ -87,28 +98,52 @@ class OutputBus:
 
 
 class Orchestrator:
-    def __init__(self, ask: Ask, *, store=None, logbook=None, max_retries: int = 2):
+    def __init__(
+        self, ask: Ask, *, store=None, logbook=None, max_retries: int = 2, on_budget_block=None
+    ):
         self._ask = ask
         self._store = store
         self._logbook = logbook
         self._max_retries = max_retries
+        # docs/29 §4.3: sinal engine→UI de barrada por budget — o gate barra ANTES de rodar,
+        # então on_usage nunca dispara; este é o canal dedicado (best-effort, nunca derruba).
+        self._on_budget_block = on_budget_block
 
     async def delegate(self, agent_id: str, task: str, *, task_id: str | None = None) -> Envelope:
         # F1 Bloco D — HARD budget cap: recusa o turno ANTES de rodar se o gasto contado estourou
         # o teto. `budget_blocked` NÃO é evento de abuso (não arma o kill-switch) — é estado
         # permanente pós-hard, não runaway. Best-effort: nunca derruba por erro do próprio check.
         if self._store is not None:
+            hard_hit = False
             try:
-                if budget.check(self._store) == "hard":
-                    return Envelope(
-                        sender=agent_id, recipient="orchestrator",
-                        message_id=str(uuid.uuid4()), task_id=task_id,
-                        state=EnvelopeState.BLOCKED, task=task,
-                        note=f"budget excedido (${budget.counted_spend(self._store):.2f}) — "
-                             "turno barrado; zere o budget no app pra continuar.",
-                    )
+                hard_hit = budget.check(self._store) == "hard"
             except Exception:
                 pass  # medição/leitura falhou → não bloqueia (freio best-effort, não trava tudo)
+            if hard_hit:
+                try:
+                    spent = budget.counted_spend(self._store)
+                    hard = budget.budget_limits(self._store)[1] or 0.0
+                    detail = f" (gasto ${spent:.2f} de ${hard:.2f})"
+                except Exception:
+                    detail = ""
+                env = Envelope(
+                    sender=agent_id, recipient="orchestrator",
+                    message_id=str(uuid.uuid4()), task_id=task_id,
+                    state=EnvelopeState.BLOCKED, task=task,
+                    note=f"{BUDGET_NOTE_PREFIX}{detail} — libere no Limites (💰) e retome.",
+                )
+                try:  # docs/29 §4.1: a barrada entra no envelope_log (antes era invisível);
+                    # log/sinal são observabilidade — falha neles NUNCA fura o freio
+                    self._store.log_envelope(
+                        message_id=env.message_id, task_id=env.task_id,
+                        sender=env.sender, recipient=env.recipient,
+                        state=str(env.state), payload={"note": env.note},
+                    )
+                    if self._on_budget_block is not None:
+                        self._on_budget_block(agent_id)
+                except Exception:
+                    pass
+                return env
 
         async def ask1(prompt: str) -> str:
             return await self._ask(agent_id, prompt)
@@ -256,7 +291,10 @@ class Orchestrator:
                 out.escalated = True
                 out.reason = f"{role.name}({agent}) -> {env.state}: {env.note or env.result}"
                 if self._store is not None:
-                    self._store.set_chain_status(run_id, "escalated")
+                    # docs/29 §4.1: barrada por budget escala TIPADA — a retomada (resume_chain)
+                    # sabe que é pausa retomável, não erro. É o único delta de dado do plano.
+                    status = "escalated_budget" if is_budget_blocked(env) else "escalated"
+                    self._store.set_chain_status(run_id, status)
                 return out
             carry = env.result
         if self._store is not None:

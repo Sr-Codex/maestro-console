@@ -7,7 +7,14 @@
 > do clique · recruit herda do manager · montar equipe com `description` do template como
 > semente) — o CLI lê no start; headless e reattach cobertos de graça; re-carimbo a cada
 > respawn desfaz rabisco de agente. Grupo de nascimento = decisão host (`birth_group`), nunca
-> geometria. (v0.64.0 = budget cap pausa/retomada, PR #77.)
+> geometria.
+> **v0.64.0** — budget cap com PAUSA GRACIOSA + notificação + retomada 1-clique
+> (`docs/29`, ADR-26, fecha a dor RunMaestro #235): barrada do hard agora é visível (BLOCKED no
+> `envelope_log`, texto "pausado por budget" — nunca "falhou"), chain barrada escala TIPADA
+> (`escalated_budget`) e o diálogo Limites lista as retidas com ▶ retomar (via `resume_chain`) e
+> 🗑 descartar; HUD `⏸ budget · $X/$Y · N retidas` clicável; notify com som 1×/episódio via
+> `budget_bus`; gates novos no modo LIVE do cabo e no floor run (invariante em todas as
+> entradas). Digitação humana segue fora do cap (decisão do usuário).
 > **v0.63.0** — cápsula contextual de GRUPO (`docs/28`, fecha a conformidade do
 > AGENTS.md): selecionar grupo (1 clique na faixa) → outline cairo tracejado + cápsula
 > `[⚙][●][🗑]`; apagar grupo passa SEMPRE por confirmação; **hierarquia de cápsulas** (regra
