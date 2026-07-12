@@ -3,6 +3,41 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.65.0] — feat(canvas): briefing persistente por grupo (`docs/30`) — quadro de avisos host-only
+Fecha a dor "usei um dia e esqueci o plano" (pesquisa de comunidade `docs/17`; re-verificada na
+fonte: vibe-kanban #3424 pede exatamente isso). Plano `docs/30` **validado por pesquisa ao vivo +
+revisão adversarial (Fable 5, 7 emendas)** — a E1 inverteu o mecanismo: injeção no 1º prompt era
+INIMPLEMENTÁVEL (FAB/recruit não têm 1º prompt) → **bloco marcado `BRIEF` em CLAUDE.md/AGENTS.md
+do workspace** (o trilho de `install_role_block`), que o CLI lê sozinho no start. ADR-27.
+- **Novo `engine/briefs.py`** (gi-free): `sanitize_brief` (strip de Unicode INVISÍVEL —
+  zero-width/bidi/tags/soft-hyphen, precedente "Rules File Backdoor" — + controles + cap),
+  `install_brief_block`/`remove_brief_block` (bloco marcado idempotente que COEXISTE com o de
+  role; re-instalar substitui). Caps por evidência Context Rot: brief 1000 chars, objetivo 80.
+- **Grupo ganha brief + objetivo atual** no diálogo (⚙): editor com contador, data da última
+  edição visível (o agente também recebe a data — sabe a idade do contexto). **Host-only por
+  construção**: nenhum comando de agente lê/escreve; pílula segue enxuta `[⚙][●][🗑]`.
+- **Fonte da verdade no Store** (chaves `ui_state` por gid, padrão ADR-22 — sem migração);
+  o arquivo é ESPELHO descartável: **re-carimbado a cada respawn/reattach** (`_do_respawn`) e
+  no salvar (headless lê a CADA run, cwd=workspace) — rabisco de agente no espelho morre no
+  próximo start e NUNCA volta pro Store (E3).
+- **Grupo de nascimento = decisão HOST, nunca geometria** (E2/ADR-21): FAB → grupo sob o PONTO
+  DO CLIQUE (`_group_at_point`, aninhados: menor vence); recruit → herda o grupo do manager
+  (`_place_below` pode cair fora do retângulo — geometria mentiria); montar equipe → o grupo
+  criado, com `TeamTemplate.description` (campo existente) como brief-semente (E6c). Persistido
+  em `node_cfg birth_group`; nó recém-nascido com brief é respawnado p/ abrir já lendo (padrão
+  do recruit-com-papel).
+- **Arrastar pra dentro/fora de grupo** (E5): atualiza a pertença no drop (gesto humano) e
+  re-carimba — efeito no PRÓXIMO start do terminal vivo (documentado), imediato no headless.
+- **Apagar grupo** (E7): zera as chaves + limpa `birth_group` + remove o bloco dos membros.
+- Cortes YAGNI (E6): sem vínculo run_team↔grupo (engine não conhece grupos; a via arquivo já
+  cobre o headless), sem desenho no header cairo (1280×720), sem campo novo em template.
+- Riscos residuais documentados (`docs/30` §6): brief é amplificador (fan-out do que o humano
+  colar), obsolescência (data visível), auto-edição mid-session (corrige no start), nó-shell
+  sem workspace fica fora.
+- Testes: `test_briefs.py` (gi-free: sanitização/backdoor, idempotência, coexistência com role,
+  re-carimbo desfaz rabisco) + `test_briefing_grupo_ui.py` (gi: grupo-no-clique com aninhados,
+  carimbo por caminho, re-carimbo no save, drop dentro/fora, delete limpa tudo).
+
 ## [0.63.0] — feat(canvas): cápsula contextual de Grupo (`docs/28`) — seleção cairo + apagar confirmado
 Fecha a última pendência de conformidade do `AGENTS.md` ("todo elemento com config tem cápsula
 contextual ao selecionar" — grupo era o que faltava). Plano `docs/28`, **revisado adversarialmente

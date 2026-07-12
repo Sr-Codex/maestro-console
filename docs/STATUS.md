@@ -1,7 +1,14 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-11 · v0.63.0**.
-> Recente: **v0.63.0** — cápsula contextual de GRUPO (`docs/28`, fecha a conformidade do
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-12 · v0.65.0**.
+> Recente: **v0.65.0** — briefing persistente por GRUPO (`docs/30`, ADR-27): objetivo atual +
+> brief editados no diálogo do grupo (host-only, sanitizado, cap 1000/80) e entregues por bloco
+> marcado em CLAUDE.md/AGENTS.md do workspace de cada agente que NASCE no grupo (FAB pelo ponto
+> do clique · recruit herda do manager · montar equipe com `description` do template como
+> semente) — o CLI lê no start; headless e reattach cobertos de graça; re-carimbo a cada
+> respawn desfaz rabisco de agente. Grupo de nascimento = decisão host (`birth_group`), nunca
+> geometria. (v0.64.0 = budget cap pausa/retomada, PR #77.)
+> **v0.63.0** — cápsula contextual de GRUPO (`docs/28`, fecha a conformidade do
 > AGENTS.md): selecionar grupo (1 clique na faixa) → outline cairo tracejado + cápsula
 > `[⚙][●][🗑]`; apagar grupo passa SEMPRE por confirmação; **hierarquia de cápsulas** (regra
 > nova de design: FAB > pílula > popover — popovers de cor do grupo E da nota em nível 3).

@@ -189,11 +189,10 @@ Team Templates/líder, Maestro mode, bwrap):
   cancelar; enviar ao VTE só quando pronto. Maestro mode enfileira sem perder mensagem. 🧊
 - **Briefing persistente por grupo/template** — brief de "objetivo/decisões/contexto" entregue
   automaticamente a cada agente novo do grupo + campo "objetivo atual". Resolve "usei um dia e
-  esqueci o plano". 📋 planejada (2026-07-12) →
+  esqueci o plano". ✅ ENTREGUE (2026-07-12, **v0.65.0**/ADR-27) →
   [`30-plano-briefing-grupo.md`](30-plano-briefing-grupo.md) (pesquisa de validação + revisão
-  adversarial Fable: APROVADA COM EMENDAS — mecanismo invertido de "injeção no 1º prompt"
-  [inimplementável: FAB/recruit não têm 1º prompt] pra bloco marcado em CLAUDE.md/AGENTS.md do
-  workspace, o trilho dos roles; aguardando validação do usuário, §10).
+  adversarial Fable: mecanismo invertido de "injeção no 1º prompt" pra bloco marcado em
+  CLAUDE.md/AGENTS.md do workspace, o trilho dos roles; decisões validadas no §10).
 - **Modo compacto pro canvas lotado (1280×720)** — colapsar grupos, mini-cartões de nó, atalhos por
   teclado; camada de visualização sobre os mesmos nós (não muda o orquestrador). Essencial p/ 8+ nós. 🧊
 - **Consciência read-only entre nós irmãos** — um agente lê status/branch/diff-resumido/notas de

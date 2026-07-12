@@ -1,5 +1,10 @@
 # Plano — Briefing persistente por grupo (brief + objetivo atual)
 
+> **✅ ENTREGUE (2026-07-12) — v0.65.0 / ADR-27.** Implementado como especificado pós-emendas
+> (bloco `BRIEF` via `engine/briefs.py`; nascimento host-side em `node_cfg birth_group`;
+> re-carimbo no `_do_respawn` e no save; sanitização + caps; delete limpa tudo). Decisões do
+> §10 validadas pelo usuário ("segue as recomendações do Fable").
+>
 > Data: 2026-07-12 · PT-BR · Origem: `docs/15` (item 2026-07-02, da pesquisa de comunidade
 > `docs/17` — dor "usei um dia e esqueci o plano"). Protocolo do `AGENTS.md`: **analisar →
 > planejar → pesquisar → validar → codar.** A proposta original foi submetida a **pesquisa de
@@ -212,17 +217,17 @@ memória CrewAI/LangGraph/AutoGen e Claude vs ChatGPT Projects. Código citado v
 `roles.py:5-6,51,136,156-169` · `agent_run.py:32-35` · `workspace.py:5-7` ·
 `team_templates.py:55` · `canvas.py:374, 4576, 4779, 6523+, 7106-7112`.
 
-## 10. DECISÕES — pendentes de validação do usuário
+## 10. DECISÕES — VALIDADAS com o usuário (2026-07-12, "segue as recomendações do Fable")
 
-- [ ] **Design v1 como um todo** (via arquivo E1 + nascimento host-side E2 + segurança E3 +
-      cortes E6)?
-- [ ] **Cap exato** do brief (proposta: 1000 chars; objetivo: 80) — o contador mostra o limite.
-- [ ] **Onde o "objetivo atual" aparece pro humano:** (a) tooltip da faixa do grupo, (b) linha
-      no popover da cápsula, (c) só no diálogo. (Header cairo ficou fora do v1 — E6.)
-- [ ] **Armazenamento:** chave `ui_state` por gid (recomendado — padrão budget, sem migração)
-      vs coluna nova na tabela de grupos.
-- [ ] **Botão na cápsula do grupo:** adicionar 📋 à pílula `[⚙][●][🗑]` ou deixar o brief só
-      dentro do ⚙ (diálogo)? (Hierarquia de cápsulas do AGENTS.md se aplica.)
+- ✅ **Design v1 como um todo** (via arquivo E1 + nascimento host-side E2 + segurança E3 +
+  cortes E6).
+- ✅ **Cap:** brief 1000 chars · objetivo 80 (contador na UI; corte no salvar).
+- ✅ **"Objetivo atual" pro humano:** no diálogo do grupo (⚙) — opção (c), a recomendada como
+  mínimo digno; header cairo segue fora (E6).
+- ✅ **Armazenamento:** chaves `ui_state` por gid (`group_goal_/group_brief_/group_brief_ts_`)
+  — padrão budget/ADR-22, sem migração de schema.
+- ✅ **Cápsula:** SEM botão 📋 novo — a pílula do grupo continua enxuta `[⚙][●][🗑]` (decisão
+  de design da v0.63.0); o brief mora no ⚙.
 
-Após validação: branch `feat/briefing-grupo`, implementação com testes 100% (nunca pela metade)
-e teste visual no device antes do merge.
+Implementado na branch `feat/briefing-grupo` (mesmo PR deste plano, padrão docs/28) com testes
+gi-free + gi e teste visual no device antes do merge.
