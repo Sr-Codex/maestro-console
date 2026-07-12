@@ -131,7 +131,12 @@ profiles, nerd fonts — foram PROMOVIDOS em prioridade lá, não duplicados aqu
   por nó); rw-bind por nó no sandbox (hoje o dir alternativo ficaria read-only — `sandbox.py`);
   **usage.py precisa seguir o config dir do nó** senão o budget cap fica cego (`~/.claude/projects`
   hardcoded — regressão silenciosa no ADR-22). Demanda é do upstream (nenhum pedido direto ao
-  maestro-console ainda) → fica na fila por mérito de mercado, sem urgência. 🧊
+  maestro-console ainda). **PUXADO da fila 2026-07-12** → 📋 planejado em
+  [`31-plano-contas-por-no.md`](31-plano-contas-por-no.md) (conceito renomeado pra **CONTA**
+  — "profile" colide com AgentProfile dos adapters; prova de isolamento no device; design v2
+  pós-revisão adversarial Fable com 12 emendas — inclusive: rw_paths por SUBSTITUIÇÃO, os 4
+  call-sites de argv, session_capture/orphans hardcoded, resolvedor engine-side; decisões
+  D1-D8 aguardando validação do usuário).
 - **Guardas de projeto (não-features)**: manter kanban de sessões cortado (Windsurf confirma
   "orchestration theater"); nunca auto-atualizar/embutir CLI do agente (Jean #460); não escalar
   N agentes antes de UX de review (P12). 🧊 (regras, avaliar incorporar no AGENTS.md quando
