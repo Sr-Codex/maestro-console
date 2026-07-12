@@ -91,7 +91,7 @@ from ..engine.team_templates import (  # noqa: E402
     save_team_templates,
     validate_team_template,
 )
-from ..engine.teams import Role  # noqa: E402
+from ..engine.teams import BUILTIN_TEAMS, Role, Teams  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from ..engine.workspace_registry import WorkspaceRegistry  # noqa: E402
 from .agents import STATE_COLORS, agent_argv, installed_agents  # noqa: E402
@@ -112,6 +112,7 @@ from .orchestrate import (  # noqa: E402
     run_floor_agent_in_thread,
     run_note_to_agent_in_thread,
     run_one_routine_in_thread,
+    run_resume_in_thread,
     run_routines_tick_in_thread,
     run_team_in_thread,
 )
@@ -307,6 +308,22 @@ _STATE_PT = {
 _log = logging.getLogger(__name__)
 
 
+def _age_text(ts) -> str:
+    """Idade de um timestamp epoch em texto curto ("há 5min" / "há 2h") — docs/29 §4.4:
+    a lista de retidas mostra a idade pra retomada não ser cega a prompt obsoleto (E6)."""
+    try:
+        s = max(0.0, time.time() - float(ts))
+    except (TypeError, ValueError):
+        return "idade ?"
+    if s < 60:
+        return "agora"
+    if s < 3600:
+        return f"há {int(s // 60)}min"
+    if s < 86400:
+        return f"há {int(s // 3600)}h"
+    return f"há {int(s // 86400)}d"
+
+
 def _rgba(hex_color: str) -> Gdk.RGBA:
     c = Gdk.RGBA()
     c.parse(hex_color)
@@ -456,6 +473,9 @@ class CanvasWindow:
             _ub = getattr(controller, "usage_bus", None)
             if _ub is not None:  # marshala p/ a main thread (emit vem do worker do delegate)
                 _ub.set(lambda aid, _t: GLib.idle_add(self._on_usage_update, aid))
+            _bb = getattr(controller, "budget_bus", None)
+            if _bb is not None:  # docs/29 §4.3: barrada do hard → notifica + HUD ⏸ (main thread)
+                _bb.set(lambda aid, _x: GLib.idle_add(self._on_budget_blocked, aid))
         self.run_team_name = run_team_name
         self.edges = edges  # EdgeModel | None — cabos criados pelo usuário (V7-S2)
         self.floors = floors  # Floors | None — ambientes isolados (V8-S5)
@@ -4040,7 +4060,17 @@ class CanvasWindow:
         # contexto contínuo por agente (run_in_session usa --resume). Só o modo "live" (opt-in
         # via MAESTRO_ASK_MODE=live) raspa o terminal vivo p/ você VER a interação — mas é frágil
         # (~70%, trunca); se raspar algo, usa; senão cai no headless mesmo assim.
-        if self._ask_mode == "live":
+        # Gate de budget no LIVE (docs/29 §5.1): o live injeta no VTE vivo SEM passar pelo
+        # delegate — no hard, pula o live e cai no headless, onde o gate uniforme barra (um
+        # BLOCKED só, mesmo texto). Só o ask por cabo agente→agente passa aqui; a digitação
+        # HUMANA no VTE nunca — o dono segue fora do cap (ADR-17: o adversário é o agente).
+        live_ok = True
+        if self._store is not None:
+            try:
+                live_ok = not budget.is_paused(self._store)
+            except Exception:
+                live_ok = True  # freio best-effort (postura do gate do delegate)
+        if self._ask_mode == "live" and live_ok:
             ans = self._ask_live(to, prompt)
             if ans and ans.strip():
                 return ans
@@ -4352,6 +4382,9 @@ class CanvasWindow:
         lbl.set_margin_top(12)
         lbl.set_margin_end(12)
         lbl.set_visible(False)  # só aparece quando há agentes
+        click = Gtk.GestureClick()  # docs/29 §4.4: atalho — clicar no HUD abre o Limites (💰)
+        click.connect("released", lambda *_a: self._budget_dialog())
+        lbl.add_controller(click)
         self._fleet_hud = lbl
         return lbl
 
@@ -4378,9 +4411,15 @@ class CanvasWindow:
             soft, hard = budget.budget_limits(self._store)
             if hard:
                 spent = budget.counted_spend(self._store)
-                seg = f"gasto ${spent:.2f}/${hard:.2f}"  # A1: sem emoji 💰 (tofava)
-                text = f"{text}  ·  {seg}" if text else seg
                 verdict = budget.budget_verdict(spent, soft, hard)
+                if verdict == "hard":  # docs/29 §4.2: pausado (⏸), textualmente distinto de erro
+                    seg = f"⏸ budget · ${spent:.2f}/${hard:.2f}"
+                    held = len(self._budget_held_chains())
+                    if held:
+                        seg += f" · {held} retida{'s' if held > 1 else ''}"
+                else:
+                    seg = f"gasto ${spent:.2f}/${hard:.2f}"  # A1: sem emoji 💰 (tofava)
+                text = f"{text}  ·  {seg}" if text else seg
         for c in ("hud-soft", "hud-hard"):
             lbl.remove_css_class(c)
         if verdict != "ok":
@@ -4423,6 +4462,44 @@ class CanvasWindow:
                    sound=False)
         elif v == "ok":
             self._budget_notified = False
+
+    def _budget_held_chains(self) -> list[dict]:
+        """Chains retidas pela pausa de budget (status `escalated_budget`), mais antiga
+        primeiro. É a lista do diálogo Limites e o N do HUD ⏸ (docs/29 §4.4)."""
+        if self._store is None:
+            return []
+        try:
+            return self._store.list_chains("escalated_budget")
+        except Exception:
+            return []
+
+    def _on_budget_blocked(self, _aid: str) -> bool:
+        """(main thread) sinal do budget_bus: um dispatch foi barrado pelo hard."""
+        self._refresh_fleet_hud()
+        self._budget_hard_notify()
+        return False  # idle_add one-shot
+
+    def _budget_hard_notify(self) -> None:
+        """Notificação da PAUSA (docs/29 §4.3): 1× por episódio de hard, com SOM (diferente do
+        soft — pausa de fleet é o evento que o humano ausente precisa ouvir). Rearma quando o
+        veredito volta abaixo de hard (subiu o teto ou zerou)."""
+        if self._store is None:
+            return
+        try:  # best-effort inteiro: roda dentro do _anomaly_tick — um erro de leitura do
+            # store NUNCA pode engolir a vigilância do kill-switch (caminho de segurança)
+            paused = budget.is_paused(self._store)
+            if paused and not getattr(self, "_budget_hard_notified", False):
+                self._budget_hard_notified = True
+                spent = budget.counted_spend(self._store)
+                hard = budget.budget_limits(self._store)[1] or 0.0
+                notify("maestro: budget PAUSOU o fleet",
+                       f"gasto ${spent:.2f} de ${hard:.2f} · "
+                       "abra Limites (💰) pra liberar e retomar",
+                       sound=True)
+            elif not paused:
+                self._budget_hard_notified = False
+        except Exception:
+            pass
 
     def _budget_dialog(self, *_a) -> None:
         """Config dos LIMITES — teto de gasto (hard/soft $) + limiar de RAM por nó (MB) —
@@ -4471,12 +4548,98 @@ class CanvasWindow:
         spent_lbl = Gtk.Label(xalign=0, label=f"Gasto contado agora: ${_spent:.4f}")
         spent_lbl.add_css_class("dim-label")
         box.append(spent_lbl)
+
+        # -- chains retidas pela pausa (docs/29 §4.4): lista + ▶ retomar / 🗑 descartar --
+        resume_btns: list[Gtk.Button] = []
+        held = self._budget_held_chains()
+        if held:
+            hb = Gtk.Label(xalign=0, wrap=True, max_width_chars=44, label=(
+                f"⏸ Retidas por budget ({len(held)}): a chain retoma do passo barrado (etapas "
+                "prontas não repetem). ▶ habilita depois de subir o teto ou zerar."))
+            hb.add_css_class("dim-label")
+            box.append(hb)
+            held_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            box.append(held_box)
+
+            def can_resume_now() -> bool:
+                return not budget.is_paused(self._store)
+
+            def refresh_resume_btns() -> None:
+                ok = can_resume_now()
+                for b in resume_btns:
+                    b.set_sensitive(ok and not getattr(b, "_dead_target", False))
+
+            def add_row(chain: dict) -> None:
+                run_id, team_name = chain["run_id"], chain.get("team") or "?"
+                intent = chain.get("intent") or ""
+                # E9 (alvo morto): time apagado/agente do passo dispensado → skip com aviso
+                team = Teams(self._store).get(team_name) or BUILTIN_TEAMS.get(team_name)
+                steps = self._store.get_steps(run_id)
+                pend = next((s for s in steps if s["state"] != "DONE"), None)
+                agent = pend["agent"] if pend else None
+                alive = agent in getattr(self.controller, "agents", {}) if agent else False
+                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                desc = f"{team_name} · {pend['role']}({agent})" if pend else team_name
+                desc += f" · {_age_text(chain.get('updated_at'))}"
+                lbl = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END,
+                                max_width_chars=34, label=desc, hexpand=True)
+                lbl.set_tooltip_text(intent)
+                row.append(lbl)
+                play = Gtk.Button(label="▶")
+                play.set_tooltip_text("Retomar do passo barrado")
+                play._dead_target = team is None or not alive
+                if play._dead_target:
+                    lbl.set_text(desc + " · time mudou — retome pelo editor de team")
+                resume_btns.append(play)
+
+                def do_resume(_b, t=team, i=intent, rid=run_id, r=row):
+                    self._audit("budget_resumed", run=rid, team=team_name)
+                    run_resume_in_thread(
+                        self.controller, t, i, rid, self._on_step_ts,
+                        on_done=lambda _res: GLib.idle_add(self._refresh_fleet_hud))
+                    held_box.remove(r)
+                    self._refresh_fleet_hud()
+
+                def do_discard(_b, rid=run_id, r=row):
+                    self._store.set_chain_status(rid, "discarded")
+                    self._audit("budget_discarded", run=rid, team=team_name)
+                    held_box.remove(r)
+                    self._refresh_fleet_hud()
+
+                play.connect("clicked", do_resume)
+                row.append(play)
+                trash = Gtk.Button(label="🗑")
+                trash.set_tooltip_text("Descartar (não retomar)")
+                trash.connect("clicked", do_discard)
+                row.append(trash)
+                held_box.append(row)
+
+            for c in held:
+                add_row(c)
+            if len(held) > 1:
+                allb = Gtk.Button(label="Descartar todas")
+
+                def do_discard_all(_b):
+                    for c in self._budget_held_chains():
+                        self._store.set_chain_status(c["run_id"], "discarded")
+                        self._audit("budget_discarded", run=c["run_id"], team=c.get("team"))
+                    while (ch := held_box.get_first_child()) is not None:
+                        held_box.remove(ch)
+                    self._refresh_fleet_hud()
+
+                allb.connect("clicked", do_discard_all)
+                box.append(allb)
+            refresh_resume_btns()
+
         zerar = Gtk.Button(label="Zerar gasto")  # botão secundário → entra como `extra`
 
         def do_zerar(_b):
             budget.reset_budget(self._store)
             self._budget_notified = False
+            self._budget_hard_notified = False  # rearma a notificação da pausa (episódio fechou)
             spent_lbl.set_text("Gasto contado agora: $0.0000")
+            if held:
+                refresh_resume_btns()  # despausou → ▶ habilita (docs/29 §4.4)
             self._refresh_fleet_hud()
 
         zerar.connect("clicked", do_zerar)
@@ -4501,6 +4664,7 @@ class CanvasWindow:
             return True
         try:
             self._refresh_fleet_hud()
+            self._budget_hard_notify()  # docs/29 §4.3: fallback de poll do sinal de pausa
             events = read_events(self._ask_bus_dir) if self._ask_bus_dir else []
             if spawn_anomaly(events, now=time.time()) and self._fleet_count() > 0:
                 self._audit("anomaly_killswitch", fleet=self._fleet_count())
@@ -5540,13 +5704,18 @@ class CanvasWindow:
                 out.set_text(f"rodando {agent} no floor {f.name}…")
 
                 def done(res, committed):
+                    if "pausado por budget" in (res.stderr or ""):  # gate docs/29 §5.2
+                        GLib.idle_add(out.set_text, res.stderr)
+                        GLib.idle_add(self._budget_hard_notify)
+                        return
                     GLib.idle_add(
                         out.set_text,
                         f"{agent}: {res.status}; commit={'sim' if committed else '(nada)'}",
                     )
 
                 run_floor_agent_in_thread(
-                    self.session_manager, agents[agent], agent, prompt, f, self.repo, done
+                    self.session_manager, agents[agent], agent, prompt, f, self.repo, done,
+                    store=self._store,
                 )
 
             rrow.append(acombo)

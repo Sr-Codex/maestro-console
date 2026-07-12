@@ -78,5 +78,6 @@ def test_delegate_barra_no_hard(tmp_path):
         orch = Orchestrator(ask, store=s)
         env = asyncio.run(orch.delegate("a", "faça algo"))
         assert env.state is EnvelopeState.BLOCKED
-        assert "budget excedido" in (env.note or "")
+        # docs/29 §4.2: o texto é de PAUSA (retomável), nunca de falha/erro
+        assert (env.note or "").startswith("pausado por budget")
         assert rodou == []  # o agente NÃO rodou (barrado antes)

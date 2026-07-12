@@ -58,6 +58,8 @@ def build_controller(
     output_bus = OutputBus()  # stream ao vivo dos agentes (web liga o SSE)
     usage_ledger = UsageLedger(store)  # F1: acumula tokens/custo por agente (persiste no Store)
     usage_bus = OutputBus()  # reusa o bus de 1-assinante: (agent_id, total) → canvas atualiza o $
+    budget_bus = OutputBus()  # docs/29 §4.3: barrada do hard (o gate corta ANTES de rodar →
+    # on_usage nunca dispara; este bus é o sinal engine→UI da pausa)
 
     def _on_usage(agent_id, u):  # u = TOTAL da sessão (do JSONL) → set, não add (evita duplicar)
         budget.record_spend(store, agent_id, u.cost_usd)  # contador monotônico do budget (D)
@@ -69,10 +71,12 @@ def build_controller(
         ),
         store=store,
         logbook=logbook,
+        on_budget_block=lambda agent_id: budget_bus.emit(agent_id, None),
     )
     controller = TUIController(registry, store, orch)
     controller.output_bus = output_bus
     controller.usage_ledger = usage_ledger  # F1: canvas lê o total por nó
     controller.usage_bus = usage_bus  # F1: canvas assina p/ atualizar o $ ao vivo
+    controller.budget_bus = budget_bus  # docs/29: canvas assina p/ notificar/pausar o HUD
     controller.agents = agents  # mesmo dict do make_agent_ask: permite instâncias em runtime
     return controller, store
