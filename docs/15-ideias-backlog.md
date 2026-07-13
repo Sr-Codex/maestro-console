@@ -136,11 +136,22 @@ profiles, nerd fonts — foram PROMOVIDOS em prioridade lá, não duplicados aqu
   — "profile" colide com AgentProfile dos adapters; prova de isolamento no device; design v2
   pós-revisão adversarial Fable com 12 emendas — inclusive: rw_paths por SUBSTITUIÇÃO, os 4
   call-sites de argv, session_capture/orphans hardcoded, resolvedor engine-side; decisões
-  D1-D8 aguardando validação do usuário).
+  D1-D8 VALIDADAS pelo usuário
+  2026-07-12). **Implementado na v0.66.0 (PR #82, draft)** — aguardando a prova de runtime
+  no device (roteiro no §8 do plano) e o merge pra virar ✅.
 - **Guardas de projeto (não-features)**: manter kanban de sessões cortado (Windsurf confirma
   "orchestration theater"); nunca auto-atualizar/embutir CLI do agente (Jean #460); não escalar
   N agentes antes de UX de review (P12). 🧊 (regras, avaliar incorporar no AGENTS.md quando
   fizer sentido)
+
+### 2026-07-13 — CLI claude 2.1.207: TUI interativa NÃO grava transcript em projects/ (upstream)
+Achado no teste de runtime das contas (docs/31): conversa interativa VIVA (com tool call) não
+produz `projects/<slug>/<sid>.jsonl` — nem em nó de conta nem em nó DEFAULT (A/B no device;
+headless `-p` grava normal; apareceu um dir novo `sessions/` vazio). Antes gravava por evento
+(premissa do ADR-23/unload). Impacto: `_capture_node_session`/`detect_orphans` podem não achar
+sessão de nó vivo recém-conversado → unload/reattach degradam pra "começar do zero" (fallback já
+existente). NÃO é da feature de contas (A/B provou). Investigar: transcript agora é flusheado no
+exit? novo layout `sessions/`? 🧊
 
 ### 2026-07-02 — Paralelizar implementação de features independentes com sub-agentes
 Usar o `Agent` tool (`isolation: "worktree"`, cada sub-agente numa cópia isolada do repo) ou o

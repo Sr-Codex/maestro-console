@@ -30,6 +30,7 @@ def _write_session(home, ws_path, sid, mtime):
 def _win_with_model(store, home, ws_base):
     w = CanvasWindow.__new__(CanvasWindow)  # sem __init__ → não cria GTK
     w.model = CanvasModel(store)
+    w._store = store  # produção seta no __init__; contas por nó (docs/31) resolve por ele
     # _node_ws real usa Path(self._ask_bus_dir).parent / "workspaces" / nid;
     # apontamos o ask_bus_dir p/ um irmão de "workspaces" sob ws_base.
     w._ask_bus_dir = str(ws_base / "askbus")

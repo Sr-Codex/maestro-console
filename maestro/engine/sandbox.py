@@ -34,12 +34,17 @@ def wrap(
     shared_paths: Sequence[str] = (),
     setenv: Mapping[str, str] | None = None,
     allow_network: bool = True,
+    mask_paths: Sequence[str] = (),
 ) -> list[str]:
     """Retorna o argv do agente envelopado em bwrap. Levanta se bwrap ausente.
 
     rw_paths: config/sessão do agente (ex.: ~/.claude).
     shared_paths: diretórios de artefatos compartilhados entre agentes (rw).
     setenv: variáveis de ambiente a injetar no sandbox (ex.: MAESTRO_NODE).
+    mask_paths: diretórios ESCONDIDOS do agente via tmpfs (docs/31 §5.3: a raiz das
+    contas — credencial de outra conta some da vista). A ORDEM importa (bwrap monta
+    em sequência): o tmpfs entra ANTES dos binds de rw_paths/shared_paths, pra um
+    bind dentro da raiz mascarada (a PRÓPRIA conta do nó) reaparecer por cima.
     """
     if not bwrap_available():
         raise SandboxUnavailable("bwrap não encontrado; recusando rodar sem sandbox")
@@ -71,6 +76,10 @@ def wrap(
     ]
     if not allow_network:
         args += ["--unshare-net"]
+    for p in mask_paths:  # ANTES dos binds rw (ordem de mount — ver docstring)
+        mp = str(Path(p).expanduser())
+        if Path(mp).exists():
+            args += ["--tmpfs", mp]  # esconde (ex.: contas alheias); vazio e volátil
     for p in rw_paths:
         rp = str(Path(p).expanduser())
         if Path(rp).exists():

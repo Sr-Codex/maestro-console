@@ -23,6 +23,7 @@ def action_menu_items(
         ("➕ novo terminal", "newterm"),
         ("📁 árvore de arquivos", "filetree"),
         ("🗂️ workspaces", "workspaces"),
+        ("👤 contas de agente", "accounts"),  # docs/31/ADR-28: multi-conta por nó
     ]
     if has_controller:
         items.append((f"▶ rodar time ({team_name})", "run_team"))

@@ -176,8 +176,9 @@ def test_make_agent_ask_usa_session_id_e_dispara_on_usage(monkeypatch, tmp_path)
     from maestro.engine import orchestrator as orch_mod
 
     captured = []
-    monkeypatch.setattr(orch_mod, "usage_from_session",
-                        lambda name, sid: AgentUsage(100, 50, 0.3) if sid == "sid-1" else None)
+    monkeypatch.setattr(  # config_dir: contas por nó (docs/31) — default None
+        orch_mod, "usage_from_session",
+        lambda name, sid, config_dir=None: AgentUsage(100, 50, 0.3) if sid == "sid-1" else None)
 
     class FakeSM:
         async def run_in_session(self, profile, agent_id, prompt, **kw):

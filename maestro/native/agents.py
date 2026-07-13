@@ -11,6 +11,7 @@ import os
 import shlex
 import shutil
 
+from ..engine.accounts import Account, ensure_config_dir, mask_paths
 from ..engine.adapters.base import AgentProfile, load_profiles
 from ..engine.sandbox import wrap as sandbox_wrap
 
@@ -38,6 +39,8 @@ def agent_argv(
     ask_bus_dir: str | None = None,
     auto_approve: bool = False,
     resume_session: str | None = None,
+    account: Account | None = None,
+    node_env_keys: frozenset[str] = frozenset(),
 ) -> list[str]:
     """argv do agente INTERATIVO (binário sem -p) confinado por bwrap.
 
@@ -57,6 +60,13 @@ def agent_argv(
     "subcommand" (codex): ``<cli> resume`` abre o PICKER do CLI (não há captura
     por-workspace; o humano escolhe) e NÃO anexa flags de permissão — o subcomando
     resume não os aceita (mesmo precedente do headless em ``adapters/base.py``).
+
+    ``account`` (docs/31/ADR-28): conta isolada do nó — SUBSTITUI (não acrescenta —
+    emenda E1 do Fable: acrescentar deixaria o ~/.claude do dono RW dentro do nó) os
+    rw_paths de config do adapter pelo config-dir da conta e seta a var oficial
+    (CLAUDE_CONFIG_DIR/CODEX_HOME) via --setenv. ``node_env_keys`` = chaves que o env
+    POR NÓ define (nó vence conta — E6). A raiz das contas é SEMPRE mascarada
+    (tmpfs), inclusive em nó default (E5) — nó não lê credencial de outra conta.
     """
     shared = []
     setenv = {}
@@ -86,10 +96,16 @@ def agent_argv(
     if auto_approve and profile.interactive_auto_approve and not resume_subcmd:
         launch += " " + " ".join(shlex.quote(a) for a in profile.interactive_auto_approve)
     inner = ["/bin/bash", "-c", f"{launch}; exec /bin/bash -i"]
+    rw = profile.rw_paths
+    if account is not None:  # conta isolada: config-dir SUBSTITUI os paths default (E1)
+        rw = [ensure_config_dir(account)]
+        setenv.update(account.sandbox_env(skip=node_env_keys))
     return sandbox_wrap(
         inner,
         workspace=workspace,
-        rw_paths=profile.rw_paths,
+        rw_paths=rw,
         shared_paths=shared,
         setenv=setenv,
+        # some a raiz das contas de TODO nó, inclusive default (E5); root injetável (teste)
+        mask_paths=mask_paths(account.root if account is not None else None),
     )

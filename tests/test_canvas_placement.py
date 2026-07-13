@@ -129,6 +129,8 @@ def test_new_agent_terminal_nao_herda_posicao_e_tamanho_orfaos(tmp_path, monkeyp
     w.controller = SimpleNamespace(add_agent_instance=lambda nid, base: None, agents={})
     w._ask_bus_dir = str(tmp_path / "bus")
     w._node_auto_approve = lambda nid: False
+    w._node_account = lambda nid: None  # contas por nó (docs/31): default
+    w._node_env_keys = lambda nid: frozenset()
 
     monkeypatch.setattr(canvas_mod, "installed_agents", lambda: {"claude": {}})
     monkeypatch.setattr(canvas_mod, "agent_argv", lambda *a, **k: ["claude"])
