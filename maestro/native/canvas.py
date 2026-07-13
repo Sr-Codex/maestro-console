@@ -5358,6 +5358,15 @@ class CanvasWindow:
                     f'"$MAESTRO_BIN/maestro-ask" {b} "<sua pergunta>"\x1b[0m\r\n'.encode()
                 )
 
+    def _focused_term(self):
+        """Widget VTE do terminal em foco (ou None) — alvo do copiar/colar global."""
+        nid = self._focused_nid
+        frame = self.frames.get(nid) if nid else None
+        term = getattr(frame, "_term", None) if frame is not None else None
+        if term is None or getattr(term, "_destroyed", False):
+            return None
+        return term
+
     def _on_key(self, _c, keyval, _keycode, state):
         ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
         shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
@@ -5373,6 +5382,19 @@ class CanvasWindow:
             if nid and nid in self.frames:
                 self._confirm_close_node(nid)  # A2: mesma confirmação do ✕ (invariante)
             return True
+        # Ctrl+Shift+V/C: colar/copiar no terminal em foco. No GTK4 o VTE NÃO traz esses
+        # atalhos embutidos — o embutidor fia (padrão gnome-terminal). Sem isso não dava pra
+        # colar o código do /login das CONTAS (docs/31); Ctrl+V puro fica com o shell/TUI.
+        if ctrl and shift and keyval in (Gdk.KEY_v, Gdk.KEY_V):
+            term = self._focused_term()
+            if term is not None:
+                term.paste_clipboard()
+                return True
+        if ctrl and shift and keyval in (Gdk.KEY_c, Gdk.KEY_C):
+            term = self._focused_term()
+            if term is not None and term.get_has_selection():
+                term.copy_clipboard_format(Vte.Format.TEXT)
+                return True  # sem seleção: cai pro VTE (Ctrl+Shift+C não faz nada mesmo)
         # Ctrl+Shift+A: pula pro próximo terminal que precisa de você (atenção) [A.2]
         if ctrl and shift and keyval in (Gdk.KEY_a, Gdk.KEY_A):
             self._focus_next_attention()
