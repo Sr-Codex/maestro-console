@@ -144,6 +144,15 @@ profiles, nerd fonts — foram PROMOVIDOS em prioridade lá, não duplicados aqu
   N agentes antes de UX de review (P12). 🧊 (regras, avaliar incorporar no AGENTS.md quando
   fizer sentido)
 
+### 2026-07-13 — CLI claude 2.1.207: TUI interativa NÃO grava transcript em projects/ (upstream)
+Achado no teste de runtime das contas (docs/31): conversa interativa VIVA (com tool call) não
+produz `projects/<slug>/<sid>.jsonl` — nem em nó de conta nem em nó DEFAULT (A/B no device;
+headless `-p` grava normal; apareceu um dir novo `sessions/` vazio). Antes gravava por evento
+(premissa do ADR-23/unload). Impacto: `_capture_node_session`/`detect_orphans` podem não achar
+sessão de nó vivo recém-conversado → unload/reattach degradam pra "começar do zero" (fallback já
+existente). NÃO é da feature de contas (A/B provou). Investigar: transcript agora é flusheado no
+exit? novo layout `sessions/`? 🧊
+
 ### 2026-07-02 — Paralelizar implementação de features independentes com sub-agentes
 Usar o `Agent` tool (`isolation: "worktree"`, cada sub-agente numa cópia isolada do repo) ou o
 `Workflow` tool (fan-out mais estruturado, só com pedido explícito do usuário) pra implementar
