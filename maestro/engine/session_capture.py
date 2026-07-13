@@ -32,17 +32,23 @@ def project_slug(ws_path: str | Path) -> str:
     return _NON_ALNUM.sub("-", str(ws_path))
 
 
-def project_dir(ws_path: str | Path, *, home: Path | None = None) -> Path:
-    """``~/.claude/projects/<slug>`` para o workspace do nó (``home`` injetável p/ teste)."""
-    base = (home or Path.home()) / ".claude" / "projects"
+def project_dir(
+    ws_path: str | Path, *, home: Path | None = None, config_dir: str | Path | None = None
+) -> Path:
+    """``~/.claude/projects/<slug>`` para o workspace do nó (``home`` injetável p/ teste).
+    ``config_dir`` (docs/31/ADR-28): config-dir da CONTA do nó — a sessão nasce DENTRO
+    dele (provado no device); sem seguir a conta, unload/reattach perderiam a sessão."""
+    base = (Path(config_dir) if config_dir else (home or Path.home()) / ".claude") / "projects"
     return base / project_slug(ws_path)
 
 
-def newest_session_id(ws_path: str | Path, *, home: Path | None = None) -> str | None:
+def newest_session_id(
+    ws_path: str | Path, *, home: Path | None = None, config_dir: str | Path | None = None
+) -> str | None:
     """Session-id da sessão VIVA do nó: o stem do ``*.jsonl`` mais recente (por mtime) no
     dir de projeto exclusivo do nó. ``None`` se o nó ainda não gravou nenhuma sessão
-    (dir inexistente ou vazio)."""
-    pdir = project_dir(ws_path, home=home)
+    (dir inexistente ou vazio). ``config_dir``: conta do nó (docs/31)."""
+    pdir = project_dir(ws_path, home=home, config_dir=config_dir)
     if not pdir.is_dir():
         return None
     newest: Path | None = None

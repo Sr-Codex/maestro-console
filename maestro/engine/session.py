@@ -62,6 +62,7 @@ class SessionManager:
         run_fn: RunFn = run_agent,
         on_output=None,
         shared_paths: Sequence[str] = (),
+        account=None,
     ) -> RunResult:
         """Executa um turno na sessão do agente, serializado pelo mutex.
 
@@ -70,6 +71,8 @@ class SessionManager:
         - "captured" (codex): o agente gera; 1ª roda sem id e CAPTURAMOS da saída
           (persistindo o id REAL), seguintes retomam exatamente essa sessão.
         Mutex por sessão preservado. ``on_output`` (opcional): stream ao vivo (V5).
+        ``account`` (docs/31/ADR-28): conta isolada do nó — repassada ao run_fn, que
+        troca os rw_paths de config pelo config-dir da conta e seta a var oficial.
         """
         # passa extras ao run_fn só quando presentes (mantém fakes de teste simples)
         extra: dict = {}
@@ -77,6 +80,8 @@ class SessionManager:
             extra["on_output"] = on_output
         if shared_paths:
             extra["shared_paths"] = tuple(shared_paths)
+        if account is not None:
+            extra["account"] = account
         async with self.session_lock(agent_id):
             assign = getattr(profile, "session_assign", "caller")
             if assign == "captured":

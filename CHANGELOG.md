@@ -3,6 +3,38 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.66.0] — feat(contas): conta isolada por nó (`docs/31`) — CLAUDE_CONFIG_DIR/CODEX_HOME por terminal
+Multi-conta simultânea no canvas (trabalho vs pessoal vs cliente, cada nó na sua): dor validada
+por pesquisa (10+ issues no anthropics/claude-code; Clave/AgentsRoom entregaram só em macOS) e
+padrão aceito pela Anthropic (config-dir oficial, cliente oficial, escolha humana — NUNCA rotação
+automática). Plano `docs/31` (PR #81) com prova de isolamento medida no device e **12 emendas da
+revisão adversarial (Fable 5)** incorporadas. ADR-28.
+- **Novo `engine/accounts.py`** (gi-free, resolvedor ÚNICO nó→conta): registro em `ui_state`
+  (nome+agente+env; config-dir DERIVADO do slug sob `~/.maestro-accounts/<agent>/<slug>/`),
+  `resolve()` sem fallback silencioso (associação órfã re-sintetiza; cair calado pro `~/.claude`
+  seria vazamento de conta — §5.2).
+- **Sandbox:** o config-dir da conta **SUBSTITUI** os rw_paths de config do adapter (E1 — senão o
+  `~/.claude` do dono ficaria RW dentro do nó de conta) + novo `mask_paths` no `sandbox.wrap`
+  (E5): a raiz das contas some via **tmpfs** de TODO spawn de agente (inclusive nós default),
+  com o bind da própria conta reaparecendo por cima (ordem de mount).
+- **Invariante em todas as entradas (E2/E4):** os 4 pontos de argv (criar, rebuild, resume do
+  unload, restore do BOOT) + headless (delegate/ask/chain/routine via `make_agent_ask`) resolvem
+  a MESMA conta; comando custom recebe a conta via env do VTE (E7); floor run = default (D7,
+  documentado).
+- **Budget/sessões seguem a conta (E3):** `usage_from_session`/`session_capture`/`orphans` com
+  `config_dir` — o medidor acha o JSONL no dir da conta (budget cap não fica cego; ADR-22/26
+  intactos — teto segue GLOBAL do fleet); unload/reload e reattach pós-crash funcionam pra nó
+  de conta; trocar conta limpa `node_cfg session` + tabela `sessions` do engine.
+- **UI:** CRUD "👤 contas de agente" na cápsula principal (criar/excluir; excluir desassocia —
+  vivo reinicia na hora, badge nunca mente (E8b); o dir com a credencial FICA no disco); picker
+  "Conta" no ⚙ (D8: criação segue leve; trocar limpa sessão e reinicia; descarregado NÃO acorda
+  — E8a); **badge no header** (chip vazado, ellipsize 9 chars, tooltip nome+dir — E9); recruit
+  herda a conta do manager (D4). Login: o próprio CLI pede /login no 1º start — o app nunca toca
+  credencial.
+- Env: precedência nó>conta (E6 — o setenv da conta omite chaves do env por nó).
+- Testes: `test_accounts.py` (18, gi-free) + `test_accounts_ui.py` (7, gi); suíte inteira verde
+  nos 2 ambientes (venv 592 · sistema 772).
+
 ## [0.65.0] — feat(canvas): briefing persistente por grupo (`docs/30`) — quadro de avisos host-only
 Fecha a dor "usei um dia e esqueci o plano" (pesquisa de comunidade `docs/17`; re-verificada na
 fonte: vibe-kanban #3424 pede exatamente isso). Plano `docs/30` **validado por pesquisa ao vivo +

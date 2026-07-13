@@ -34,6 +34,7 @@ def win(store, tmp_path, nid, term_=None, *, kind="agent", base="claude",
     e `_mon` vazio; o unload-node não seta roster e liga o monitor)."""
     w = CanvasWindow.__new__(CanvasWindow)
     w.model = CanvasModel(store)
+    w._store = store  # produção seta no __init__; contas por nó (docs/31) resolve por ele
     if roster:
         w.model.set_node_roster([{"nid": nid, "kind": kind, "base": base}])
     w._ask_bus_dir = str(tmp_path / "askbus")  # _node_ws → tmp/workspaces/<nid>

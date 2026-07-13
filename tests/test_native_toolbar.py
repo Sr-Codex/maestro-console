@@ -17,6 +17,7 @@ def test_completo_inclui_todos_na_ordem():
         "newterm",
         "filetree",
         "workspaces",
+        "accounts",
         "run_team",
         "handoff",
         "note",
@@ -71,6 +72,7 @@ def test_sempre_presentes_sem_nada():
         ("➕ novo terminal", "newterm"),
         ("📁 árvore de arquivos", "filetree"),
         ("🗂️ workspaces", "workspaces"),
+        ("👤 contas de agente", "accounts"),  # docs/31: multi-conta por nó
     ]
 
 
@@ -79,7 +81,8 @@ def test_sem_controller_some_run_handoff_routines():
         has_controller=False, has_edges=True, has_notes=True, has_floors=True, has_routines=True
     )
     keys = [k for _, k in items]
-    assert keys == ["newterm", "filetree", "workspaces", "note", "floors"]  # run/etc exigem ctrl
+    assert keys == ["newterm", "filetree", "workspaces", "accounts", "note",
+                    "floors"]  # run/etc exigem ctrl
 
 
 def test_handoff_exige_controller_e_edges():
@@ -90,6 +93,7 @@ def test_handoff_exige_controller_e_edges():
         "newterm",
         "filetree",
         "workspaces",
+        "accounts",
         "run_team",
     ]  # sem edges, sem handoff
 

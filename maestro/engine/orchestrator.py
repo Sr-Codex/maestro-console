@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from . import budget
+from .accounts import resolve as accounts_resolve
 from .envelope import Envelope, EnvelopeState
 from .session import SessionManager
 from .teams import Team
@@ -310,6 +311,7 @@ def make_agent_ask(
     timeout: float,
     on_output=None,
     on_usage=None,
+    store=None,
 ) -> Ask:
     """ask() real: roda o agente sob sessão (mutex/continuidade) + sandbox.
 
@@ -317,19 +319,25 @@ def make_agent_ask(
     (terminais read-only no canvas — V5). Caminho de dados segue headless.
     ``on_usage(agent_id, AgentUsage)``: se dado, recebe o uso de tokens/custo do turno
     (medidor F1) — best-effort; nunca derruba o run.
+    ``store``: resolve a CONTA do nó (docs/31/ADR-28, resolvedor único
+    ``accounts.resolve``) — cobre delegate/ask/chain/routine/handoff de uma vez (E4);
+    o medidor lê o JSONL no config-dir da conta (senão o budget cap ficaria cego).
     """
 
     async def ask(agent_id: str, prompt: str) -> str:
         profile = agents[agent_id]
+        acct = accounts_resolve(store, agent_id, getattr(profile, "name", None))
         ws = str(workspace.create(agent_id))
         sink = (lambda chunk: on_output(agent_id, chunk)) if on_output is not None else None
         res = await session_manager.run_in_session(
-            profile, agent_id, prompt, workspace=ws, timeout=timeout, on_output=sink
+            profile, agent_id, prompt, workspace=ws, timeout=timeout, on_output=sink,
+            account=acct,
         )
         if on_usage is not None:  # F1: mede o uso do agente pelo JSONL de sessão (best-effort)
             try:
                 sid = session_manager.session_id(agent_id)
-                u = usage_from_session(getattr(profile, "name", agent_id), sid)
+                cfg = str(acct.config_dir()) if acct is not None else None
+                u = usage_from_session(getattr(profile, "name", agent_id), sid, config_dir=cfg)
                 if u is not None:
                     on_usage(agent_id, u)  # TOTAL acumulado da sessão (não delta)
             except Exception:  # medição nunca pode derrubar o caminho de dados

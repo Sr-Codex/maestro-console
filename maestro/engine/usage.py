@@ -84,10 +84,12 @@ def _iter_jsonl(path: Path):
         return
 
 
-def _claude_session_usage(session_id: str) -> AgentUsage | None:
+def _claude_session_usage(session_id: str, config_dir: str | None = None) -> AgentUsage | None:
     """Soma o uso de um session_id nos JSONL do claude (~/.claude/projects/*/<id>.jsonl). O
-    input_tokens do JSONL é BASE; cache_creation/cache_read são separados → custo por baldes."""
-    base = Path.home() / ".claude" / "projects"
+    input_tokens do JSONL é BASE; cache_creation/cache_read são separados → custo por baldes.
+    ``config_dir`` (docs/31/ADR-28): config-dir da CONTA do nó — o JSONL nasce DENTRO
+    dele (provado no device); sem seguir a conta o budget cap ficaria cego (§5.5)."""
+    base = (Path(config_dir) if config_dir else Path.home() / ".claude") / "projects"
     hits = list(base.glob(f"*/{session_id}.jsonl")) if base.is_dir() else []
     if not hits:
         return None
@@ -111,9 +113,10 @@ def _claude_session_usage(session_id: str) -> AgentUsage | None:
     return AgentUsage(inp + cw + cr, out, cost)  # input exibido = total de prompt tokens
 
 
-def _codex_session_usage(session_id: str) -> AgentUsage | None:
-    """Uso de uma sessão do codex (~/.codex/sessions/**/*<id>*.jsonl): maior cumulativo → custo."""
-    base = Path.home() / ".codex" / "sessions"
+def _codex_session_usage(session_id: str, config_dir: str | None = None) -> AgentUsage | None:
+    """Uso de uma sessão do codex (~/.codex/sessions/**/*<id>*.jsonl): maior cumulativo → custo.
+    ``config_dir``: CODEX_HOME da conta do nó (docs/31) — sessões nascem dentro dele."""
+    base = (Path(config_dir) if config_dir else Path.home() / ".codex") / "sessions"
     hits = list(base.glob(f"**/*{session_id}*.jsonl")) if base.is_dir() else []
     if not hits:
         return None
@@ -122,14 +125,17 @@ def _codex_session_usage(session_id: str) -> AgentUsage | None:
     return with_cost(u, _extract_model(text)) if u else None
 
 
-def usage_from_session(agent_name: str, session_id: str | None) -> AgentUsage | None:
+def usage_from_session(
+    agent_name: str, session_id: str | None, config_dir: str | None = None
+) -> AgentUsage | None:
     """Uso ACUMULADO de um agente, lido do JSONL de sessão (a fonte que ccusage/tokscale usam —
-    o run headless emite texto, não JSON, então o stdout não serve). Retorna o TOTAL da sessão."""
+    o run headless emite texto, não JSON, então o stdout não serve). Retorna o TOTAL da sessão.
+    ``config_dir``: config-dir da conta do nó (docs/31/ADR-28); None = default do CLI."""
     if not session_id:
         return None
     if "codex" in (agent_name or "").lower():
-        return _codex_session_usage(session_id)
-    return _claude_session_usage(session_id)
+        return _codex_session_usage(session_id, config_dir)
+    return _claude_session_usage(session_id, config_dir)
 
 
 @dataclass(frozen=True)

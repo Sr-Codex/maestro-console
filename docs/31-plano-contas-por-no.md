@@ -2,7 +2,8 @@
 
 > Promovido da fila (`docs/15`, item "Perfis de agente = conta/ambiente isolado por nó",
 > reformulado pós-Fable 2026-07-12). **Design v2 pós-revisão adversarial (Fable 5, 12
-> emendas — §9). Status: aguardando validação do usuário (§10).** Nada vira código antes.
+> emendas — §9). Decisões D1-D8 VALIDADAS (2026-07-12, §10); implementado na v0.66.0
+> (branch `feat/contas-por-no`, ADR-28).**
 >
 > **Nome do conceito: CONTA** (não "perfil") — "profile" já é o `AgentProfile` dos adapters
 > TOML (`maestro/engine/adapters/base.py:32`, claude vs codex) e "papel/role" já é o

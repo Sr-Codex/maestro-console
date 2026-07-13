@@ -67,7 +67,8 @@ def build_controller(
 
     orch = Orchestrator(
         make_agent_ask(
-            sm, agents, ws, timeout=timeout, on_output=output_bus.emit, on_usage=_on_usage
+            sm, agents, ws, timeout=timeout, on_output=output_bus.emit, on_usage=_on_usage,
+            store=store,  # docs/31/ADR-28: resolve a conta do nó em TODO run headless
         ),
         store=store,
         logbook=logbook,

@@ -1,7 +1,13 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-12 · v0.65.0**.
-> Recente: **v0.65.0** — briefing persistente por GRUPO (`docs/30`, ADR-27): objetivo atual +
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-12 · v0.66.0**.
+> Recente: **v0.66.0** — CONTAS por nó (`docs/31`, ADR-28): cada terminal-agente pode apontar
+> pra uma conta nomeada = config-dir isolado (`CLAUDE_CONFIG_DIR`/`CODEX_HOME`) sob
+> `~/.maestro-accounts/`, escolhida no ⚙ (host-only; recruit herda do manager); badge no
+> header; rw_paths por SUBSTITUIÇÃO + máscara tmpfs das contas alheias no bwrap; usage/
+> session_capture/orphans seguem o config-dir (budget cap enxerga a conta); troca limpa a
+> sessão; sem rotação automática nem fallback silencioso. 12 emendas Fable incorporadas.
+> **v0.65.0** — briefing persistente por GRUPO (`docs/30`, ADR-27): objetivo atual +
 > brief editados no diálogo do grupo (host-only, sanitizado, cap 1000/80) e entregues por bloco
 > marcado em CLAUDE.md/AGENTS.md do workspace de cada agente que NASCE no grupo (FAB pelo ponto
 > do clique · recruit herda do manager · montar equipe com `description` do template como

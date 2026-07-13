@@ -239,6 +239,12 @@ class Store:
                 (agent_id, session_id, time.time()),
             )
 
+    def delete_session(self, agent_id: str) -> None:
+        """Apaga a sessão do agente (troca de CONTA — docs/31 E3: a sessão antiga vive
+        no config-dir antigo; um --resume dela sob a conta nova falharia)."""
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM sessions WHERE agent_id=?", (agent_id,))
+
     def get_session(self, agent_id: str) -> str | None:
         with self._lock:
             row = self._conn.execute(

@@ -33,7 +33,11 @@ gi.require_version("Vte", "3.91")
 gi.require_version("Pango", "1.0")
 from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Pango, Vte  # noqa: E402
 
-from ..engine import budget, crash_flag  # noqa: E402
+from ..engine import (  # noqa: E402
+    accounts,  # noqa: E402  — contas por nó (docs/31/ADR-28)
+    budget,
+    crash_flag,
+)
 from ..engine.ask_bus import (  # noqa: E402
     ASK_MAX_PROMPT_BYTES,
     AskBusError,
@@ -698,6 +702,9 @@ class CanvasWindow:
             # Fase B: papel/agente em CÁPSULA de cor FIXA (não muda por papel nem por estado)
             ".agent-cap { font-size: 10px; font-weight: 600; color: #cdd6f4;"
             " background-color: #45475a; border-radius: 999px; padding: 1px 8px; margin: 0 4px; }",
+            # docs/31 §4.5: CONTA do nó — chip vazado (borda, sem fundo cheio) distinto do papel
+            ".account-cap { font-size: 10px; color: #89b4fa; border: 1px solid #89b4fa;"
+            " border-radius: 999px; padding: 0px 7px; margin: 0 2px; }",
             # Fase B: telemetria em CHIPS de fundo escuro (custo/token/mem) — boa visibilidade
             ".node-metric { font-size: 10px; color: #a6adc8; background-color: rgba(0,0,0,0.28);"
             " border-radius: 6px; padding: 1px 6px; margin: 0 2px; }",
@@ -877,6 +884,7 @@ class CanvasWindow:
             "newterm": self._open_new_terminal_dialog,
             "filetree": lambda: self._start_placing({"kind": "filetree"}),
             "workspaces": self._open_workspaces_dialog,
+            "accounts": self._open_accounts_dialog,
             "run_team": self._run_team,
             "handoff": self._open_handoff_dialog,
             "note": lambda: self._start_placing({"kind": "note"}),
@@ -1297,6 +1305,7 @@ class CanvasWindow:
         det.append(self._editor_monitor_section(nid, applies))
         det.append(self._editor_maestro_section(nid, applies))
         det.append(self._editor_autoapprove_section(nid, applies))
+        det.append(self._editor_account_section(nid, applies))
         det.append(soon("SSH Remoto — Fase 7"))
         stack.add_titled(det, "detalhes", "Detalhes")
         # — Aparência — (Fase 1: Fonte; Cor/Ícone nas próximas etapas; Tema na Fase 2)
@@ -1879,6 +1888,62 @@ class CanvasWindow:
         applies.append(apply)
         return box
 
+    def _editor_account_section(self, nid: str, applies: list) -> Gtk.Widget:
+        """Conta do nó (docs/31/ADR-28, D8: conta SÓ aqui — a criação segue leve).
+        Combo default + contas registradas do agente-base; trocar limpa a sessão (E3)
+        e reinicia (nó descarregado NÃO acorda — E8a)."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        base = self._agent_base(nid)
+        names = [a.name for a in accounts.list_accounts(self._store)
+                 if a.agent == base] if (self._store is not None and base) else []
+        cur = self.model.node_cfg(nid, "account")
+        if cur and cur not in names:
+            names.append(cur)  # associação órfã continua visível (a exclusão E8b limpa)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        row.append(Gtk.Label(label="Conta:"))
+        combo = Gtk.ComboBoxText()
+        combo.append_text(f"padrão (~/.{base or 'claude'})")
+        for n in names:
+            combo.append_text(n)
+        combo.set_active(names.index(cur) + 1 if cur in names else 0)
+        row.append(combo)
+        box.append(row)
+        hint = Gtk.Label(
+            label="Config-dir isolado (CLAUDE_CONFIG_DIR/CODEX_HOME) — 1º start pede "
+                  "/login. Trocar reinicia o terminal; as sessões ficam na conta antiga. "
+                  "Gerenciar contas: cápsula ➕ → 👤 contas.", xalign=0)
+        hint.add_css_class("dim-label")
+        hint.set_wrap(True)  # wrap-exempt: Editar Terminal (dentro do ScrolledWindow)
+        box.append(hint)
+
+        def apply():
+            i = combo.get_active()
+            new = names[i - 1] if 1 <= i <= len(names) else ""
+            if new != cur:
+                self._apply_node_account(nid, new)
+
+        applies.append(apply)
+        return box
+
+    def _apply_node_account(self, nid: str, name: str) -> None:
+        """Associa/troca/desassocia a conta do nó. Limpeza de sessão OBRIGATÓRIA (E3):
+        a sessão antiga vive no config-dir antigo — um --resume dela sob a conta nova
+        falharia (node_cfg `session` E a tabela `sessions` do engine). Vivo → rebuild +
+        respawn (precedente autoapprove); descarregado → só cfg+argv, SEM acordar (E8a:
+        não ressuscitar nó que o dono descarregou pra liberar RAM)."""
+        if name:
+            self.model.set_node_cfg(nid, "account", name)
+        else:
+            self.model.clear_node_cfg(nid, "account")
+        self.model.clear_node_cfg(nid, "session")
+        if self._store is not None:
+            self._store.delete_session(nid)
+        self._rebuild_agent_argv(nid)
+        self._refresh_account_badge(nid)
+        self._audit("account_set", node=nid, account=name or "(padrão)")
+        if not self._node_unloaded(nid):
+            self._respawn_node(nid)
+
     @staticmethod
     def _fill_rect(cr, w, h, hexc) -> None:
         r, g, b = _hex_to_rgb(hexc)
@@ -2286,6 +2351,13 @@ class CanvasWindow:
         agent.set_visible(False)  # só aparece quando o nó tem role (via _refresh_agent_cap)
         head._agent = agent
         head.append(agent)
+        acct_cap = Gtk.Label(label="")  # docs/31 §4.5: badge da CONTA (E9: curto + ellipsize —
+        acct_cap.add_css_class("account-cap")  # o header de 420px já é disputado)
+        acct_cap.set_ellipsize(Pango.EllipsizeMode.END)
+        acct_cap.set_max_width_chars(9)
+        acct_cap.set_visible(False)  # some no default (via _refresh_account_badge)
+        head._account = acct_cap
+        head.append(acct_cap)
         spacer = Gtk.Box()  # empurra a telemetria (custo/token/mem) pra direita, junto à borda
         spacer.set_hexpand(True)
         head.append(spacer)
@@ -2316,6 +2388,7 @@ class CanvasWindow:
         # KurtJacobson). A tag _drag_nid identifica o head como alça de arrasto.
         head._drag_nid = nid
         self.heads[nid] = head
+        self._refresh_account_badge(nid)  # docs/31: badge reflete a conta persistida
         frame._base_argv = argv  # argv "natural" (shell/agente) p/ o respawn voltar a ele
         term = self._make_node_term(nid, argv)  # comando/cwd/env por-nó (Fase 3)
         frame._term = term  # ref p/ remover de self.terms ao fechar o nó
@@ -3233,6 +3306,16 @@ class CanvasWindow:
         toggle 'permissão total' (Fase 2) estiver ligado — o confinamento real é o bwrap (ADR-6)."""
         return bool(self.model.node_cfg(nid, "maestro") or self.model.node_cfg(nid, "autoapprove"))
 
+    def _node_account(self, nid: str):
+        """Conta isolada do nó (docs/31/ADR-28) ou None (default). Resolvedor ÚNICO
+        engine-side (`accounts.resolve`) — o headless usa o MESMO (invariante em todas
+        as entradas, emenda E4)."""
+        return accounts.resolve(self._store, nid, self._agent_base(nid))
+
+    def _node_env_keys(self, nid: str) -> frozenset[str]:
+        """Chaves do env POR NÓ — a conta OMITE essas no setenv (nó vence conta, E6)."""
+        return frozenset(accounts.parse_env(self.model.node_cfg(nid, "env")))
+
     def _agent_base(self, nid: str) -> str | None:
         """Base do agente (claude/codex) do nó, a partir do roster persistido."""
         for spec in self.model.node_roster():
@@ -3267,14 +3350,22 @@ class CanvasWindow:
             return
         frame._base_argv = agent_argv(prof, str(self._node_ws(nid)), node=nid,
                                       ask_bus_dir=self._ask_bus_dir,
-                                      auto_approve=self._node_auto_approve(nid))
+                                      auto_approve=self._node_auto_approve(nid),
+                                      account=self._node_account(nid),
+                                      node_env_keys=self._node_env_keys(nid))
 
     def _node_envv(self, nid: str) -> list[str] | None:
-        """env custom (linhas KEY=VALUE em node_cfg 'env') mesclado ao ambiente; None = herda."""
+        """env custom (linhas KEY=VALUE em node_cfg 'env') mesclado ao ambiente; None = herda.
+        A CONTA do nó (docs/31 E7) entra ANTES do env por nó (nó vence conta): cobre
+        também o comando custom — `_effective_argv` troca o argv (sem bwrap) e perde o
+        setenv do sandbox; o env do VTE é o que resta pra conta valer lá."""
         raw = self.model.node_cfg(nid, "env").strip()
-        if not raw:
+        acct = self._node_account(nid)
+        if not raw and acct is None:
             return None
         env = dict(os.environ)
+        if acct is not None:
+            env.update(acct.sandbox_env())
         for line in raw.splitlines():
             line = line.strip()
             if "=" in line and not line.startswith("#"):
@@ -3690,7 +3781,9 @@ class CanvasWindow:
         session-id capturado em `nodecfg_{nid}_session` (ui_state → sobrevive a restart).
         Chave PRÓPRIA do canvas — NÃO a tabela `sessions` do orquestrador (evita colidir com
         o medidor/budget F1). Retorna o id capturado, ou None se o nó ainda não gravou sessão."""
-        sid = newest_session_id(self._node_ws(nid))
+        acct = self._node_account(nid)
+        sid = newest_session_id(self._node_ws(nid),
+                                config_dir=str(acct.config_dir()) if acct else None)
         if sid:
             self.model.set_node_cfg(nid, "session", sid)
         return sid
@@ -3742,7 +3835,9 @@ class CanvasWindow:
         return agent_argv(prof, str(self._node_ws(nid)), node=nid,
                           ask_bus_dir=self._ask_bus_dir,
                           auto_approve=self._node_auto_approve(nid),
-                          resume_session=sid)
+                          resume_session=sid,
+                          account=self._node_account(nid),
+                          node_env_keys=self._node_env_keys(nid))
 
     def _reload_node(self, nid: str) -> None:
         """Retoma um nó descarregado (unload — Bloco C): respawn RESUME-aware.
@@ -3951,6 +4046,22 @@ class CanvasWindow:
         gid = self._group_at_point(bx + w / 2.0, by + h / 2.0)  # centro do card solto
         if gid != self.model.node_cfg(nid, "birth_group"):
             self._assign_birth_group(nid, gid)
+
+    def _refresh_account_badge(self, nid: str) -> None:
+        """docs/31 §4.5: badge da conta no header — some no default; nome completo + dir
+        no tooltip (E9). Chamada no _add_node, na troca de conta e no recruit-herdado."""
+        heads = getattr(self, "heads", None)
+        head = heads.get(nid) if heads else None
+        cap = getattr(head, "_account", None) if head is not None else None
+        if cap is None:
+            return
+        name = self.model.node_cfg(nid, "account")
+        cap.set_text(name)
+        cap.set_visible(bool(name))
+        if name:
+            acct = self._node_account(nid)
+            cap.set_tooltip_text(
+                f"conta: {name}" + (f"\n{acct.config_dir()}" if acct is not None else ""))
 
     def _refresh_agent_cap(self, nid: str, role=None) -> None:
         """Fase B: cápsula do agente no header = NOME do papel (cor fixa). Escondida quando o nó
@@ -5042,13 +5153,20 @@ class CanvasWindow:
             mgr_gid = self.model.node_cfg(frm, "birth_group")
             if mgr_gid:
                 self._assign_birth_group(nid, mgr_gid)
+            # docs/31 D4: recruta HERDA a CONTA do manager (decisão host no gesto, padrão
+            # birth_group — agente nunca escolhe conta); rebuild p/ o respawn abaixo aplicar.
+            mgr_acct = self.model.node_cfg(frm, "account")
+            if mgr_acct:
+                self.model.set_node_cfg(nid, "account", mgr_acct)
+                self._rebuild_agent_argv(nid)
+                self._refresh_account_badge(nid)
             _goal, _brief, _ = self._group_brief(mgr_gid)
             if role:
                 self.model.set_node_cfg(nid, "role", role)
                 self._apply_node_role(nid)
                 self._respawn_node(nid)  # reinicia p/ a IA já abrir com o papel (+ brief)
-            elif _goal or _brief:
-                self._respawn_node(nid)  # sem papel, mas com brief → reinicia p/ abrir com ele
+            elif _goal or _brief or mgr_acct:
+                self._respawn_node(nid)  # sem papel, mas com brief/conta → reinicia p/ aplicar
             self._ask_hint(frm, nid)
             self._wake_cables()
             self.plane.queue_draw()
@@ -6021,7 +6139,9 @@ class CanvasWindow:
         install_ask_skill(wsp, nid)  # ensina o maestro-ask ao novo agente
         # (role recém-criado é vazio; a injeção do role acontece em _add_node → _apply_node_role)
         argv = agent_argv(profiles[base], str(wsp), node=nid, ask_bus_dir=self._ask_bus_dir,
-                          auto_approve=self._node_auto_approve(nid))
+                          auto_approve=self._node_auto_approve(nid),
+                          account=self._node_account(nid),
+                          node_env_keys=self._node_env_keys(nid))
         pos = default or self._next_node_default()
         self._add_node(nid, nid, argv, default=pos)
         # nid pode coincidir com um id reciclado/órfão (nó fechado antes, possivelmente
@@ -6080,6 +6200,80 @@ class CanvasWindow:
         addb.connect("clicked", add)
         box.append(addb)
         dlg.present()
+
+    def _open_accounts_dialog(self):
+        """CRUD de CONTAS (docs/31 §4.1, host-only — nenhum comando de agente toca conta,
+        ADR-17). Excluir DESREGISTRA e desassocia os nós (E8b: vivo reinicia na hora —
+        badge nunca mente; descarregado só troca cfg); o config-dir FICA no disco
+        (credencial não se apaga por engano — o tooltip diz o caminho)."""
+        if self._store is None:
+            return
+        dlg, box = self._dialog("👤 contas de agente", scroll=True)
+        accts = accounts.list_accounts(self._store)
+        if not accts:
+            box.append(self._hint_label(
+                "Nenhuma conta. Crie uma abaixo — o 1º start do nó pede /login e a "
+                "credencial fica no diretório da conta (o app nunca a toca)."))
+        for a in accts:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            lbl = Gtk.Label(label=f"{a.name} · {a.agent}")
+            lbl.set_halign(Gtk.Align.START)
+            lbl.set_tooltip_text(str(a.config_dir()))
+            row.append(lbl)
+            sp = Gtk.Box()
+            sp.set_hexpand(True)
+            row.append(sp)
+            rm = Gtk.Button(label="excluir")
+            rm.set_tooltip_text("desregistra (o diretório e a credencial FICAM no disco)")
+            rm.connect("clicked", lambda _b, acc=a, d=dlg: self._confirm_dialog(
+                "excluir conta",
+                f"Excluir a conta '{acc.name}' ({acc.agent})? Nós associados voltam à "
+                f"conta padrão (vivos reiniciam). O diretório fica no disco:\n"
+                f"{acc.config_dir()}",
+                primary="Excluir", destructive=True,
+                on_primary=lambda: (self._remove_account(acc), d.destroy())))
+            row.append(rm)
+            box.append(row)
+        box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        nrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        ne = Gtk.Entry()
+        ne.set_placeholder_text("nome (ex.: trabalho)")
+        ne.set_hexpand(True)
+        nrow.append(ne)
+        bases = sorted(installed_agents())
+        combo = Gtk.ComboBoxText()
+        for b in (bases or ["claude"]):
+            combo.append_text(b)
+        combo.set_active(0)
+        nrow.append(combo)
+        addb = Gtk.Button(label="criar")
+
+        def _add(_b):
+            base = combo.get_active_text() or "claude"
+            acct = accounts.add_account(self._store, ne.get_text(), base)
+            if acct is None:
+                return  # nome vazio/duplicado — nada a criar
+            self._audit("account_added", name=acct.name, agent=acct.agent)
+            dlg.destroy()
+            self._open_accounts_dialog()  # reabre já com a nova
+
+        addb.connect("clicked", _add)
+        nrow.append(addb)
+        box.append(nrow)
+        dlg.present()
+
+    def _remove_account(self, acct) -> None:
+        """E8b: desregistra + desassocia TODOS os nós daquela conta/agente (a troca em
+        `_apply_node_account` já cobre sessão/argv/respawn/badge por nó)."""
+        accounts.remove_account(self._store, acct.name, acct.agent)
+        for spec in self.model.node_roster():
+            nid = spec.get("nid")
+            if not nid or self.model.node_cfg(nid, "account") != acct.name:
+                continue
+            if (spec.get("base") or nid) != acct.agent:
+                continue
+            self._apply_node_account(nid, "")
+        self._audit("account_removed", name=acct.name, agent=acct.agent)
 
     def _switch_workspace(self, name: str) -> None:
         if not self._home_base:
@@ -7909,7 +8103,12 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         # Reattach (docs/25 §4-R2): se o run anterior crashou, marca nós-agente com transcript
         # no disco como órfãos (unloaded + flag `orphan`) ANTES de montar os cards → nascem sem
         # processo (RAM zero); o usuário escolhe Reanexar/Novo/Arquivar (R3).
-        detect_orphans(model, roster, state.get("crashed", False), f"{base}/workspaces")
+        def _acct_cfg_dir(nid: str) -> str | None:  # docs/31 E3: transcript no dir da conta
+            a = accounts.resolve(st, nid)
+            return str(a.config_dir()) if a is not None else None
+
+        detect_orphans(model, roster, state.get("crashed", False), f"{base}/workspaces",
+                       config_dir_for=_acct_cfg_dir)
         nodes = []
         for spec in roster:
             nid = spec.get("nid")
@@ -7932,7 +8131,10 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
                     controller.agents[nid] = prof  # já no registry: garante só o profile
             # restaura o auto-aprovar persistido (Maestro mode / toggle permissão total)
             auto = bool(model.node_cfg(nid, "maestro") or model.node_cfg(nid, "autoapprove"))
-            argv = agent_argv(prof, str(wsp), node=nid, ask_bus_dir=ask_bus_dir, auto_approve=auto)
+            acct = accounts.resolve(st, nid, base)  # E2: boot volta na CONTA do nó
+            envk = frozenset(accounts.parse_env(model.node_cfg(nid, "env")))
+            argv = agent_argv(prof, str(wsp), node=nid, ask_bus_dir=ask_bus_dir,
+                              auto_approve=auto, account=acct, node_env_keys=envk)
             nodes.append((nid, model.node_name(nid, nid), argv))
         if not nodes:  # tudo removido / nada instalado -> um shell de exemplo
             nodes = [("shell-1", "shell", ["/bin/bash"])]
