@@ -1013,6 +1013,7 @@ class CanvasWindow:
         sep()
         add("folder-symbolic", "📁", "Árvore de arquivos", "filetree")
         add("view-grid-symbolic", "🗂", "Workspaces", "workspaces")
+        add("avatar-default-symbolic", "👤", "Contas de agente (multi-conta por nó)", "accounts")
         add("drive-harddisk-symbolic", "🧱", "Floors", "floors")
         add("maestro-clock", "⏰", "Routines", "routines")  # A1: bundled (tema não tinha)
         # paleta de comandos — A4: ícone de comando (era "Aa", que colidia com a fonte da nota)
