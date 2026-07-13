@@ -137,8 +137,9 @@ profiles, nerd fonts — foram PROMOVIDOS em prioridade lá, não duplicados aqu
   pós-revisão adversarial Fable com 12 emendas — inclusive: rw_paths por SUBSTITUIÇÃO, os 4
   call-sites de argv, session_capture/orphans hardcoded, resolvedor engine-side; decisões
   D1-D8 VALIDADAS pelo usuário
-  2026-07-12). **Implementado na v0.66.0 (PR #82, draft)** — aguardando a prova de runtime
-  no device (roteiro no §8 do plano) e o merge pra virar ✅.
+  2026-07-12). ✅ **ENTREGUE — v0.66.0 (PR #82,
+  squash-merge 2026-07-13)**, prova de runtime 8/8 no device (isolamento de credencial,
+  usage na conta, boot, E8a/E8b; placar completo no comentário do PR).
 - **Guardas de projeto (não-features)**: manter kanban de sessões cortado (Windsurf confirma
   "orchestration theater"); nunca auto-atualizar/embutir CLI do agente (Jean #460); não escalar
   N agentes antes de UX de review (P12). 🧊 (regras, avaliar incorporar no AGENTS.md quando
