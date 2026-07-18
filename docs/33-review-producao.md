@@ -69,8 +69,10 @@ ADR violado no código atual — incluindo TODOS os invariantes de segurança (A
    anotada `v0.67.0` criada em `e74041b` (convenção antiga: tag no squash do PR de release)
    e publicada no origin. As 20 versões v0.47.0→v0.66.0 ficam sem tag retroativa (decisão:
    seguir dali, não backfill). Releases futuras voltam a taggear no merge.
-6. ⏳ **Decisão do usuário pendente:** A8 (datar entradas novas do CHANGELOG ou ajustar a
-   promessa do cabeçalho).
+6. ✅ **A8 decidido pelo usuário (2026-07-18): entradas novas do CHANGELOG são DATADAS**
+   daqui pra frente (`## [X.Y.Z] — AAAA-MM-DD — resumo`, a partir da v0.68.0; sem retroagir
+   nas ≤0.67.0). Convenção registrada no cabeçalho do CHANGELOG e na regra "Antes do PR"
+   do `AGENTS.md`.
 
 ---
 
