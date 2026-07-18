@@ -17,11 +17,24 @@ from maestro.native.canvas import CanvasWindow  # noqa: E402
 CTRL_SHIFT = Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
 
 
+class _NoImgFormats:
+    def contain_gtype(self, _g):
+        return False
+
+    def get_mime_types(self):
+        return ["text/plain"]
+
+
 def _w(term):
     w = CanvasWindow.__new__(CanvasWindow)
     w._focused_nid = "n1"
     w.frames = {"n1": SimpleNamespace(_term=term)}
     w._connect_btn = None
+    # docs/32: o Ctrl+Shift+V agora roteia por _smart_paste (clipboard sem imagem →
+    # paste_clipboard, rota original deste teste)
+    w.win = SimpleNamespace(get_clipboard=lambda: SimpleNamespace(
+        get_formats=lambda: _NoImgFormats()))
+    w.model = SimpleNamespace(node_cfg=lambda *_a: "")
     return w
 
 

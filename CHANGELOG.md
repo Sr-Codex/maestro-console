@@ -3,6 +3,32 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.67.0] — feat(canvas): paste/drag de imagem e arquivo pro nó (`docs/32`)
+Fecha a dor "mostrar uma imagem/arquivo pro agente sem digitar caminho" (5+ concorrentes
+sofrem; no Linux, paste de imagem direto no CLI é não-confiável por design — caminho de
+arquivo é a rota universal). Plano `docs/32` (PR #86) validado por pesquisa + revisão
+adversarial (Fable 5, 9 emendas COM medições no device: X11, VTE 0.84 sem DropTarget
+nativo). ADR-29.
+- **Ctrl+Shift+V esperto:** clipboard com IMAGEM (gtype ∪ mime — E5) → salva PNG **estável**
+  em `<ws>/pastes/paste-<ts>.png` (nome gerado, sufixo de unicidade — E6; o app nunca apaga)
+  e injeta o caminho ABSOLUTO quoted no prompt **SEM Enter** (D4 — você revisa e envia;
+  imagem vence texto — D7, caso Firefox). Texto/indetectável/falha do read → paste normal
+  (E5: nunca perder o gesto). Cap anti imagem-bomba (E4: >8192px recusa com hint — clipboard
+  X11 é escrevível por qualquer processo; 10000² alocaria ~400MB no CM4).
+- **Drop de arquivo(s) no card** (`Gtk.DropTarget`, o 1º DnD do app): injeta caminhos
+  quoted sem Enter. **Cópia automática** quando o sandbox não enxerga o original (E3:
+  prefixos DERIVADOS de `sandbox.invisible_prefixes()` — /tmp, máscara de contas do
+  ADR-28, /dev, /proc, /run/user) ou quando o nome tem control char (**E1, segurança
+  ADR-17**: `shlex.quote` preserva `\r`/ESC literais e o feed_child injeta cru — nome
+  hostil criado pelo agente viraria auto-submit ao ser arrastado pelo dono; nome não
+  injetável → cópia com nome seguro GERADO).
+- Nó descarregado: no-op ANTES de salvar/copiar (E2 — sem PNG órfão pra nó dormindo);
+  falha de salvar/copiar → hint na TELA via `term.feed`, nunca no stdin (E8).
+- Novo `native/paste.py` (gi-free: nomes/injeção/cópia) + `sandbox.invisible_prefixes()`
+  (fonte única dos mounts invisíveis).
+- Testes: `test_paste.py` (7, gi-free) + `test_paste_ui.py` (10, gi); suíte completa verde
+  (venv 599 · sistema 792).
+
 ## [0.66.0] — feat(contas): conta isolada por nó (`docs/31`) — CLAUDE_CONFIG_DIR/CODEX_HOME por terminal
 Multi-conta simultânea no canvas (trabalho vs pessoal vs cliente, cada nó na sua): dor validada
 por pesquisa (10+ issues no anthropics/claude-code; Clave/AgentsRoom entregaram só em macOS) e
