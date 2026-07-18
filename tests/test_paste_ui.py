@@ -16,8 +16,6 @@ from maestro.engine.state.store import Store
 pytest.importorskip("gi")  # canvas usa PyGObject; o .venv é gi-free → python do sistema
 from canvas_harness import win  # noqa: E402
 
-from maestro.native import paste  # noqa: E402
-
 
 class _Term(SimpleNamespace):
     def __init__(self):
