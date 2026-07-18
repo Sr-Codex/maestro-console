@@ -16,11 +16,13 @@ import json
 import logging
 import math
 import os
+import shutil
 import signal
 import sys
 import threading
 import time
 import unicodedata
+from datetime import datetime
 from pathlib import Path
 
 import gi
@@ -88,6 +90,7 @@ from ..engine.roles import (  # noqa: E402
     save_role_library,
     write_role_sidecar,
 )
+from ..engine.sandbox import invisible_prefixes  # noqa: E402
 from ..engine.session_capture import newest_session_id  # noqa: E402
 from ..engine.state.store import Store  # noqa: E402
 from ..engine.team_templates import (  # noqa: E402
@@ -105,6 +108,7 @@ from ..engine.team_templates import (  # noqa: E402
 from ..engine.teams import BUILTIN_TEAMS, Role, Teams  # noqa: E402
 from ..engine.workspace import Workspace  # noqa: E402
 from ..engine.workspace_registry import WorkspaceRegistry  # noqa: E402
+from . import paste  # noqa: E402  — lógica pura do paste/drop (docs/32)
 from .agents import STATE_COLORS, agent_argv, installed_agents  # noqa: E402
 from .ask_capture import (  # noqa: E402
     LIVE_CAP_MS,
@@ -2392,6 +2396,11 @@ class CanvasWindow:
         self._refresh_account_badge(nid)  # docs/31: badge reflete a conta persistida
         frame._base_argv = argv  # argv "natural" (shell/agente) p/ o respawn voltar a ele
         term = self._make_node_term(nid, argv)  # comando/cwd/env por-nó (Fase 3)
+        # docs/32 §4.2: drop de arquivo do gerenciador → injeta o caminho no prompt.
+        # Medido (E9, vte 0.84 gtk4): o VTE não tem DropTarget embutido — sem conflito.
+        drop = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
+        drop.connect("drop", self._on_node_drop, nid)
+        term.add_controller(drop)
         frame._term = term  # ref p/ remover de self.terms ao fechar o nó
         term._respawn_state = "idle"  # state machine do respawn (hardening defensivo)
         term._respawn_pending = False
@@ -5367,6 +5376,106 @@ class CanvasWindow:
             return None
         return term
 
+    @staticmethod
+    def _term_hint(term, text: str) -> None:
+        """Aviso de 1 linha NA TELA do terminal (padrão UNLOADED_HINT) — nunca
+        `feed_child` (docs/32 E8: mensagem de erro não toca o stdin do agente)."""
+        try:
+            term.feed(f"\r\n  [maestro] {text}\r\n".encode())
+        except Exception:
+            pass
+
+    def _pastes_dir(self, nid: str) -> Path:
+        d = Path(self._node_ws(nid)) / "pastes"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _save_paste_image(self, nid: str, texture) -> str:
+        """Salva a textura do clipboard como PNG ESTÁVEL em <ws>/pastes/ (docs/32 §4.1;
+        nome gerado por timestamp com sufixo de unicidade — E6)."""
+        d = self._pastes_dir(nid)
+        name = paste.paste_filename(datetime.now(), taken=set(os.listdir(d)))
+        out = d / name
+        texture.save_to_png(str(out))
+        return str(out)
+
+    def _smart_paste(self, nid: str, term) -> None:
+        """Ctrl+Shift+V esperto (docs/32 §4.1): imagem no clipboard → PNG estável no
+        workspace + caminho injetado SEM \r (D4; imagem vence texto — D7); texto ou
+        qualquer falha → paste normal (E5: nunca perder o gesto). Nó descarregado →
+        no-op ANTES de salvar (E2)."""
+        cb = self.win.get_clipboard()
+        try:
+            fmts = cb.get_formats()
+            has_img = fmts.contain_gtype(Gdk.Texture) or any(
+                (m or "").startswith("image/") for m in (fmts.get_mime_types() or ()))
+        except Exception:
+            has_img = False
+        if not has_img:
+            term.paste_clipboard()
+            return
+        if self._node_unloaded(nid):
+            return  # E2: não salvar PNG órfão pra um nó dormindo
+
+        def done(_cb, res):
+            try:
+                tex = cb.read_texture_finish(res)
+            except Exception:
+                tex = None
+            if tex is None:
+                term.paste_clipboard()  # E5: clipboard mudou/falhou → degrada pra texto
+                return
+            if max(tex.get_width(), tex.get_height()) > paste.MAX_DIM:
+                self._term_hint(term, "imagem recusada (maior que "
+                                      f"{paste.MAX_DIM}px — docs/32 E4)")
+                return
+            try:
+                path = self._save_paste_image(nid, tex)
+            except Exception as exc:  # E8: disco cheio/ws sumiu — avisa na tela
+                self._term_hint(term, f"falha ao salvar imagem: {exc}")
+                return
+            self._feed_child(term, paste.quote_path(path) + " ")
+            self._audit("paste_image", node=nid, path=path)
+
+        cb.read_texture_async(None, done)
+
+    def _ingest_drop_path(self, nid: str, pth: str) -> str:
+        """Um caminho de drop → caminho INJETÁVEL (docs/32 §4.2): copia quando o sandbox
+        não enxerga o original (E3) ou o nome tem control char (E1 — nunca injetar);
+        senão injeta o original. Retorna já quoted."""
+        if paste.needs_copy(pth, invisible_prefixes()) or not paste.injectable(pth):
+            d = self._pastes_dir(nid)
+            dest = d / paste.copy_name(os.path.basename(pth), datetime.now(),
+                                       taken=set(os.listdir(d)))
+            shutil.copy2(pth, dest)
+            pth = str(dest)
+        return paste.quote_path(pth)
+
+    def _on_node_drop(self, _target, value, _x, _y, nid: str) -> bool:
+        """Drop de arquivo(s) do gerenciador no card (docs/32 §4.2) → injeta caminhos
+        quoted SEM \r. Nó descarregado → recusa ANTES de copiar (E2)."""
+        frame = self.frames.get(nid)
+        term = getattr(frame, "_term", None) if frame is not None else None
+        if term is None or getattr(term, "_destroyed", False) or self._node_unloaded(nid):
+            return False
+        try:
+            files = value.get_files()
+        except Exception:
+            return False
+        paths = [f.get_path() for f in files if f.get_path()]
+        if not paths:
+            return False
+        out = []
+        for pth in paths:
+            try:
+                out.append(self._ingest_drop_path(nid, pth))
+            except Exception as exc:  # E8: cópia falhou — avisa na tela, aborta o gesto
+                self._term_hint(term, f"falha no drop: {exc}")
+                return False
+        self._feed_child(term, " ".join(out) + " ")
+        self._audit("file_drop", node=nid, count=len(paths))
+        return True
+
     def _on_key(self, _c, keyval, _keycode, state):
         ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
         shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
@@ -5388,7 +5497,7 @@ class CanvasWindow:
         if ctrl and shift and keyval in (Gdk.KEY_v, Gdk.KEY_V):
             term = self._focused_term()
             if term is not None:
-                term.paste_clipboard()
+                self._smart_paste(self._focused_nid, term)  # docs/32: imagem vira arquivo
                 return True
         if ctrl and shift and keyval in (Gdk.KEY_c, Gdk.KEY_C):
             term = self._focused_term()

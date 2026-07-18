@@ -112,9 +112,10 @@ profiles, nerd fonts — foram PROMOVIDOS em prioridade lá, não duplicados aqu
 - **Contagem do gasto do modo LIVE do cabo** — o GATE do budget no LIVE entrou na v0.64.0, mas o
   gasto da sessão viva ainda NÃO alimenta o contador (sessão viva tem JSONL próprio; exige mapear
   o session_id do PTY). Lacuna documentada no ADR-26. 🧊 (2026-07-11)
-- **Paste/drag de imagem pro nó** — dor em 5+ concorrentes (supacode, AoE, Maestro OSS, Clave com
-  caminho temp deletado): screenshot do clipboard → salvar em arquivo estável do workspace e colar
-  o caminho; drag de arquivo → caminho estável. Verificar comportamento atual do VTE primeiro. 🧊
+- **Paste/drag de imagem pro nó** — dor em 5+ concorrentes (supacode, AoE, Maestro OSS,
+  Clave com caminho temp deletado). ✅ **implementado — v0.67.0** (plano
+  [`32-plano-paste-imagem.md`](32-plano-paste-imagem.md), PR #86 + PR de implementação;
+  9 emendas Fable com medições no device; aguardando prova de runtime + merge).
 - **Teste de runtime de teclado internacional** (dead keys/acentos PT-BR + CJK) no VTE — dor em 4
   concorrentes; provavelmente já funciona, mas PROVAR e registrar (público PT-BR). 🧊
 - **Perfis de agente = conta/ambiente isolado por nó → REFORMULADO (2026-07-12, revisão

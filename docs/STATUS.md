@@ -1,7 +1,13 @@
 # Estado atual — maestro console
 
-> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-12 · v0.66.0**.
-> Recente: **v0.66.0** — CONTAS por nó (`docs/31`, ADR-28): cada terminal-agente pode apontar
+> Doc-âncora de "o que existe HOJE". Atualizado: **2026-07-18 · v0.67.0**.
+> Recente: **v0.67.0** — paste/drag de imagem e arquivo pro nó (`docs/32`, ADR-29):
+> Ctrl+Shift+V com imagem no clipboard salva PNG estável em `<ws>/pastes/` e injeta o
+> caminho quoted SEM Enter (você revisa); drop de arquivo no card injeta o caminho, com
+> cópia automática quando o sandbox não enxerga o original (/tmp, máscara de contas) ou o
+> nome tem control char (segurança E1/ADR-17 — nome hostil nunca toca o PTY); cap
+> anti imagem-bomba; 9 emendas Fable com medições no device.
+> **v0.66.0** — CONTAS por nó (`docs/31`, ADR-28): cada terminal-agente pode apontar
 > pra uma conta nomeada = config-dir isolado (`CLAUDE_CONFIG_DIR`/`CODEX_HOME`) sob
 > `~/.maestro-accounts/`, escolhida no ⚙ (host-only; recruit herda do manager); badge no
 > header; rw_paths por SUBSTITUIÇÃO + máscara tmpfs das contas alheias no bwrap; usage/

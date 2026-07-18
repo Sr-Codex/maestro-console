@@ -13,6 +13,7 @@ Se o bwrap não existir, **falha de forma segura** (não roda sem sandbox).
 
 from __future__ import annotations
 
+import os
 import shutil
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -24,6 +25,16 @@ class SandboxUnavailable(RuntimeError):
 
 def bwrap_available() -> bool:
     return shutil.which("bwrap") is not None
+
+
+def invisible_prefixes() -> list[str]:
+    """Prefixos do HOST que NÃO existem (ou são outros) dentro do sandbox de um nó —
+    fonte única pro `needs_copy` do paste/drop (docs/32 E3): `--tmpfs /tmp` (privado),
+    a máscara tmpfs da raiz das contas (ADR-28), `/dev`/`/proc` remontados e o
+    runtime-dir do usuário (sockets/portais FUSE, acesso frágil no userns). Mudou um
+    mount do `wrap()`? Atualize AQUI junto."""
+    from .accounts import accounts_root  # import local: evita ciclo em import-time
+    return ["/tmp", str(accounts_root()), "/dev", "/proc", f"/run/user/{os.getuid()}"]
 
 
 def wrap(
