@@ -113,9 +113,10 @@ profiles, nerd fonts — foram PROMOVIDOS em prioridade lá, não duplicados aqu
   gasto da sessão viva ainda NÃO alimenta o contador (sessão viva tem JSONL próprio; exige mapear
   o session_id do PTY). Lacuna documentada no ADR-26. 🧊 (2026-07-11)
 - **Paste/drag de imagem pro nó** — dor em 5+ concorrentes (supacode, AoE, Maestro OSS,
-  Clave com caminho temp deletado). ✅ **implementado — v0.67.0** (plano
-  [`32-plano-paste-imagem.md`](32-plano-paste-imagem.md), PR #86 + PR de implementação;
-  9 emendas Fable com medições no device; aguardando prova de runtime + merge).
+  Clave com caminho temp deletado). ✅ **ENTREGUE — v0.67.0 (PR #87,
+  squash-merge 2026-07-18)**, plano [`32-plano-paste-imagem.md`](32-plano-paste-imagem.md)
+  (9 emendas Fable com medições no device), prova de runtime 5/5 no device (screenshot→
+  caminho→claude leu; drop do Thunar; clipboard pós-fechamento; texto intacto; pan ok).
 - **Teste de runtime de teclado internacional** (dead keys/acentos PT-BR + CJK) no VTE — dor em 4
   concorrentes; provavelmente já funciona, mas PROVAR e registrar (público PT-BR). 🧊
 - **Perfis de agente = conta/ambiente isolado por nó → REFORMULADO (2026-07-12, revisão
