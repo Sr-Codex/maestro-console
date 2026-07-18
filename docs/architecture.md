@@ -3,7 +3,7 @@
 > 📌 **Cópia VERSIONADA da arquitetura** (espelha `_bmad-output/planning-artifacts/architecture.md`,
 > gitignored). A **fundação** (headless, bwrap, envelope JSON, SQLite WAL, mutex) é **fiel ao código**.
 > Ressalvas: §10 lista canvas/papéis como "futuro pós-MVP" mas **já foram entregues**; o §9 (ADRs)
-> espelha só até ~ADR-12 — os **ADRs canônicos e completos (ADR-1..15)** estão em [`ADR.md`](ADR.md).
+> espelha só até ~ADR-12 — os **ADRs canônicos e completos (ADR-1..29)** estão em [`ADR.md`](ADR.md).
 > **Estado atual:** [`STATUS.md`](STATUS.md). Mantido aqui p/ histórico git e backup.
 
 > Produto: **maestro console** 🎼 · Repositório: `maestri-console`

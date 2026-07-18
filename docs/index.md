@@ -1,14 +1,14 @@
 # Índice de documentação — maestro console
 
-> Mapa de TODOS os docs, com o estado de cada um. **Atualizado: 2026-07-02 (v0.51.0).**
+> Mapa de TODOS os docs, com o estado de cada um. **Atualizado: 2026-07-18 (v0.67.0).**
 > Regra: **research/auditoria são point-in-time** (legítimo serem antigos — registram a decisão
 > da época); o que descreve "estado/roadmap" e ficou congelado no MVP recebeu **nota de defasagem**.
 
 ## 🟢 Canônicos (fontes de verdade — sempre atuais)
 | Doc | O que é |
 |---|---|
-| [`../CHANGELOG.md`](../CHANGELOG.md) | Histórico real de versões (v0.1.0→v0.51.0). |
-| [`ADR.md`](ADR.md) | Decisões arquiteturais (ADR-1..20), versionado, imutável. |
+| [`../CHANGELOG.md`](../CHANGELOG.md) | Histórico real de versões (v0.1.0→v0.67.0). |
+| [`ADR.md`](ADR.md) | Decisões arquiteturais (ADR-1..29), versionado, imutável. |
 | [`STATUS.md`](STATUS.md) | Estado atual / o que foi entregue (resumo + ponteiros). |
 | [`13-maestro-mode.md`](13-maestro-mode.md) | **Feature (atual):** Maestro mode seguro + auto-aprovação + cabo headless (ADR-16..20). |
 | [`14-plano-orquestracao-equipe.md`](14-plano-orquestracao-equipe.md) | **Plano cirúrgico:** orquestração de equipe — **Fases A+B+C+D entregues** (v0.47.0→v0.51.0): Team Templates + materializador (FAB), `maestri team` por linguagem natural (confirmação humana obrigatória), editor visual de templates e comportamento de líder de grupo. "Montar equipe" segue clique-pra-posicionar (v0.49.0, §13). |
@@ -35,8 +35,8 @@
 | [`16-pesquisa-diferenciais-n8n-frameworks-agente.md`](16-pesquisa-diferenciais-n8n-frameworks-agente.md) | Research (2026-07-02): n8n + BMAD/GSD/Beast Mode/Claude Code Agent Teams/gstack/CrewAI — diferenciais pro painel visual estilo n8n. |
 | [`17-pesquisa-comunidade-melhorias.md`](17-pesquisa-comunidade-melhorias.md) | Research (2026-07-02): mineração de comunidade (Opus 4.8 + Codex) — dicas de usuários (Maestri + Vibe Kanban/Claude Squad) p/ um gestor visual de agentes. Tema: *less babysitting*. |
 | [`18-plano-estado-por-no.md`](18-plano-estado-por-no.md) | **Plano cirúrgico ENTREGUE:** sistema de estado por nó / "precisa de você" (#1 da pesquisa) — Blocos 1+2 (v0.52.0) + Bloco 3 (v0.53.0): estado "aguardando" + ícones Lucide + atenção-união + minimapa + monitor padrão-ON nos nós-agente. |
-| [`19-plano-medidor-custo.md`](19-plano-medidor-custo.md) | **Plano cirúrgico:** F1 medidor de custo/tokens — **Blocos A+B+C ENTREGUES em v0.54.0** (preço vendorizado + custo + display por nó, absorve PR #9). Bloco D (budget cap) pendente. |
-| [`21-plano-unload-no-ram.md`](21-plano-unload-no-ram.md) | **Plano cirúrgico:** "unload" de nó (item #3, backlog) — descarregar/retomar p/ liberar RAM no CM4 via **kill-and-resume por CAPTURA de sessão** (`--resume`; Congelar/CRIU descartados). Fundação provada (investigação + medição de RAM + spike runtime + revisão adversarial Fable). Sequência A′→B→C→D — pronto pra virar stories. |
+| [`19-plano-medidor-custo.md`](19-plano-medidor-custo.md) | **Plano cirúrgico:** F1 medidor de custo/tokens — **Blocos A+B+C ENTREGUES em v0.54.0** (preço vendorizado + custo + display por nó, absorve PR #9). **Bloco D (budget cap) entregue em v0.55.0 (ADR-22)**; pausa graciosa + retomada em v0.64.0 (ADR-26, `docs/29`). |
+| [`21-plano-unload-no-ram.md`](21-plano-unload-no-ram.md) | **Plano cirúrgico:** "unload" de nó (item #3, backlog) — descarregar/retomar p/ liberar RAM no CM4 via **kill-and-resume por CAPTURA de sessão** (`--resume`; Congelar/CRIU descartados). Fundação provada (investigação + medição de RAM + spike runtime + revisão adversarial Fable). Sequência A′→B→C→D — **ENTREGUE em v0.56.0 (ADR-23)**. |
 | [`25-plano-reattach-orfaos.md`](25-plano-reattach-orfaos.md) | **Plano cirúrgico ENTREGUE (v0.57.0, R1+R2+R3):** reattach de nós órfãos pós-crash (dor P2, `docs/24`). Dirty-flag + handler de sinal (R1) → detecção no boot + flag `orphan` própria (R2) → âmbar "recuperável" + Reanexar/Novo/Arquivar (R3). Revisado adversarialmente pelo Fable (§10; 4 correções, núcleo mais simples). R4 (worktree órfão) adiado. |
 | [`26-plano-ux-dialogos.md`](26-plano-ux-dialogos.md) | **Plano cirúrgico (PLANEJADO):** UX dos ~21 diálogos/cards do canvas. Causa-raiz do "abre em tela cheia" = label `wrap=True` sem `max_width_chars` (GTK4 não clampa janela). Revisado pelo Fable (cortou clamp-de-janela e scroll-automático; rebaixou form-row/SizeGroup). Quick-win: `_hint_label` + `_confirm_dialog` + guarda de regressão no fonte. Aguarda escolha de escopo. |
 | [`27-plano-ux-header-card.md`](27-plano-ux-header-card.md) | Plano do header do card em 1 linha (Fases A/B — v0.59-0.60) + cor própria do `blocked` (v0.61.0). |
@@ -56,7 +56,7 @@
 | [`10-roadmap-fases.md`](10-roadmap-fases.md) | Fases 1-3 **entregues** (apresentadas como futuras); Fases 4-7 ainda válidas. |
 | [`06-maestri-comportamento-auditoria.md`](06-maestri-comportamento-auditoria.md) | Anterior a v0.34-37. |
 | [`07-maestri-ui-ux-auditoria.md`](07-maestri-ui-ux-auditoria.md) | Baseline de UI já superado (minimapa/grid/física/estado já existem). |
-| [`08-pesquisa-diferenciais-melhoria.md`](08-pesquisa-diferenciais-melhoria.md) | Backlog válido; o medidor de custo/tokens segue **não entregue**. |
+| [`08-pesquisa-diferenciais-melhoria.md`](08-pesquisa-diferenciais-melhoria.md) | Backlog válido; o medidor de custo/tokens foi **entregue** (v0.54.0–v0.55.0). |
 | [`09-ideias-apps-similares.md`](09-ideias-apps-similares.md) | Catálogo de ideias; várias já saíram (minimapa/grupos/grid/notas). |
 
 ## 📦 `_bmad-output/` (GITIGNORED — planejamento do MVP, histórico)

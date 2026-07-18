@@ -57,13 +57,16 @@ ADR violado no código atual — incluindo TODOS os invariantes de segurança (A
   nome hostil nunca toca o PTY + injeção sem `\r` (ADR-29).
 - **prd.md / architecture.md:** notas de defasagem presentes e honestas (exceto A5).
 
-### Fixes propostos (aplicáveis nesta mesma branch, decisão do usuário)
+### Fixes — estado
 
-1. Re-carimbar `index.md` (cabeçalho + linhas A1/A2) → v0.67.0 / ADR-1..29 / estados entregues.
-2. Re-carimbar `STATUS.md:48` (range) e `:185` (contagem de testes medida) + nota A9.
-3. Re-carimbar nota do `architecture.md` (ADR-1..29).
-4. Remover a worktree órfã (A10).
-5. A6 (tags) e A8 (datas no changelog): decisão do usuário antes de agir.
+1. ✅ **Aplicado (2026-07-18, nesta branch):** `index.md` re-carimbado (cabeçalho v0.67.0,
+   ADR-1..29, estados de docs/19/21/08 corrigidos pra "entregue").
+2. ✅ **Aplicado:** `STATUS.md:48` (range → v0.67.0 / ADR-1..29) e `:185` (605+ testes medidos).
+3. ✅ **Aplicado:** nota do `architecture.md` → ADR-1..29.
+4. ✅ **Aplicado:** worktree órfã `.claude/worktrees/docs-paste-imagem` removida (limpa,
+   conteúdo mergeado no PR #89) + branch local `docs/index-27-32` deletada.
+5. ⏳ **Decisão do usuário pendente:** A6 (retomar tags de release ou declarar opcionais) e
+   A8 (datar entradas do CHANGELOG ou ajustar o cabeçalho).
 
 ---
 
