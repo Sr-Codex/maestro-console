@@ -145,15 +145,20 @@ profiles, nerd fonts — foram PROMOVIDOS em prioridade lá, não duplicados aqu
   N agentes antes de UX de review (P12). 🧊 (regras, avaliar incorporar no AGENTS.md quando
   fizer sentido)
 
-### 2026-07-13 — CLI claude 2.1.207: TUI interativa NÃO grava transcript em projects/ (upstream)
-Achado no teste de runtime das contas (docs/31): conversa interativa VIVA (com tool call) não
-produz `projects/<slug>/<sid>.jsonl` — nem em nó de conta nem em nó DEFAULT (A/B no device;
-headless `-p` grava normal; apareceu um dir novo `sessions/` vazio). Antes gravava por evento
-(premissa do ADR-23/unload). Impacto: `_capture_node_session`/`detect_orphans` podem não achar
-sessão de nó vivo recém-conversado → unload/reattach degradam pra "começar do zero" (fallback já
-existente). NÃO é da feature de contas (A/B provou). Investigar: transcript agora é flusheado no
-exit? novo layout `sessions/`? 🧊
-
+### 2026-07-13 — CLI claude 2.1.207+: TUI interativa com CLAUDE_CONFIG_DIR custom PERDE o transcript (upstream) — INVESTIGADO 2026-07-18, causa fechada
+Investigação por medição (matriz A/B no device, claude 2.1.208): **TUI + config default grava
+normal** (transcripts reais do mesmo dia); **TUI + `CLAUDE_CONFIG_DIR` custom NÃO grava EM LUGAR
+NENHUM** (turno completado e provado na tela via sonda PTY, SEM sandbox — o bwrap não é a causa);
+**headless `-p` + config custom grava certo** (provado na entrega das contas, v0.66.0). O CLI 2.1.x
+roda um daemon (`claude daemon run`, sockets em `/tmp/cc-daemon-<uid>/`) — o `--tmpfs /tmp` do
+sandbox ainda o torna inacessível nos nós (agravante paralelo pra nó default). Upstream sem issue
+idêntica (buscado 2026-07-18; área em obra: release 2.1.208 cita fixes de daemon; #69140/#49903
+são perdas de transcript relacionadas). **Impacto no app:** budget/medidor INTACTOS (bebem do
+headless); captura de sessão interativa (unload A′/reattach R2) degrada pro fallback "começar do
+zero" — pior pra NÓ DE CONTA (interativo nunca persiste). **Consequência da triagem (Fable
+2026-07-18): auto-unload segue viável, mas o RETOMAR de sessão interativa não é confiável até fix
+upstream — re-escopo é decisão do usuário.** Próximo passo possível: issue upstream (repro mínima
+pronta: `CLAUDE_CONFIG_DIR=<dir> claude` interativo → conversa → nenhum JSONL). 🔬
 ### 2026-07-02 — Paralelizar implementação de features independentes com sub-agentes
 Usar o `Agent` tool (`isolation: "worktree"`, cada sub-agente numa cópia isolada do repo) ou o
 `Workflow` tool (fan-out mais estruturado, só com pedido explícito do usuário) pra implementar
