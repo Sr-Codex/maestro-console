@@ -145,6 +145,16 @@ profiles, nerd fonts — foram PROMOVIDOS em prioridade lá, não duplicados aqu
   N agentes antes de UX de review (P12). 🧊 (regras, avaliar incorporar no AGENTS.md quando
   fizer sentido)
 
+### 2026-07-18 — Vigia de atualização do CLI (canário pós-upgrade)
+Ideia do usuário, motivada pela regressão do transcript (entrada abaixo): o CLI auto-atualiza
+sozinho (2.1.207→208 no meio de uma investigação) e pode quebrar premissas do app em silêncio.
+Proposta: o app registra a versão do CLI a cada boot (`claude --version` → `ui_state`); ao
+detectar upgrade, (a) avisa no canvas ("CLI atualizou X→Y") e (b) roda um CANÁRIO barato das
+premissas que o app depende — ex.: headless `-p` mínimo com config-dir isolado → transcript
+aparece? — e reporta ✅/⚠️. Casa com o ADR-24 (o CLI pertence ao usuário; o app OBSERVA, nunca
+atualiza/embute). Trade-off: o canário gasta um turno mínimo de API → rodar só com opt-in do
+usuário, ou modo "só avisar" sem canário. 🧊
+
 ### 2026-07-13 — CLI claude 2.1.207+: TUI interativa com CLAUDE_CONFIG_DIR custom PERDE o transcript (upstream) — INVESTIGADO 2026-07-18, causa fechada
 Investigação por medição (matriz A/B no device, claude 2.1.208): **TUI + config default grava
 normal** (transcripts reais do mesmo dia); **TUI + `CLAUDE_CONFIG_DIR` custom NÃO grava EM LUGAR
