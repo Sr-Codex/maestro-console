@@ -182,7 +182,7 @@
 ## Stack / device
 - **Linux aarch64** (Kali) no **ClockworkPi uConsole / CM4**; **Python ≥3.11**.
 - Canvas: **GTK4 + VTE-gtk4** (PyGObject), python do sistema. Engine: venv.
-- **605+ testes** (605 coletados no venv em 2026-07-18; os gi rodam no python do sistema) + live opt-in (bwrap:
+- **~818 testes** (625 no venv incl. 26 skip + 193 gi de canvas no python do sistema; medido 2026-07-18) + live opt-in (bwrap:
   socket-em-sandbox, drill do kill-switch); lint **ruff**.
 
 ## Como navegar a documentação

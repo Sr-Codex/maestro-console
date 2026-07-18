@@ -169,7 +169,35 @@ os dirs de conta (mascarados = ok).
   é feature geral); S3 (backdoor de role cross-agent).
 - **P1:** S4 (token no control-plane web), S5 (filtro E1 no cabo LIVE).
 - Já mapeado na Fase 2: S6 = C7 + C8.
-## Fase 4 — Testes (ponto cego dos skipados) — ⏳ pendente
+## Fase 4 — Testes (ponto cego dos skipados) — ✅ CONCLUÍDA 2026-07-18
+
+**Método:** rodar TODAS as suítes nos dois ambientes reais (o CI só roda o venv gi-free) +
+caçar a lacuna de cobertura que deixou o S1 passar.
+
+### Resultados de execução
+
+| Ambiente | Resultado |
+|---|---|
+| **venv** (gi-free, = o que o CI roda) | **599 passa, 26 skip** (625 coletados) em 60s |
+| **python do sistema** (gi/GTK4 canvas — CI PULA via `importorskip`) | **193 passa** em 3.5s (sob Xvfb) |
+| **`sandbox_live` drill** (bwrap real, `MAESTRO_LIVE=1`) | **1 passa** em 30s — confinamento real funciona |
+
+**Veredito:** o ponto cego do CI (193 testes de canvas que rodam só no python do sistema) está
+**VERDE** — nada podre escondido lá. A suíte é saudável. Total real ≈ **818 testes** (625 venv
++ 193 gi), bem acima do "554" que o STATUS dizia (corrigido na Fase 1).
+
+### Achados
+
+| # | Sev | O que |
+|---|-----|------|
+| T1 | 🔴 alta | **Lacuna de cobertura que deixou o S1 passar:** `test_ask_sock.py` testa que o host carimba a identidade pelo LISTENER (`test_identidade_vem_do_canal_nao_do_payload`) — mas **nenhum teste verifica o invariante-mãe do ADR-17**: que um agente NÃO alcança o socket de outro. Os testes montam sockets no mesmo fs, sem bwrap/`--ro-bind / /`, então a premissa "boxes isoladas pela ausência de mount" **nunca foi exercitada** — exatamente a premissa que o S1 falsificou. Todo fix do S1 DEVE vir com um teste de isolamento de box sob sandbox real. |
+| T2 | 🟢 baixa | 26 skips no venv são **legítimos** (gi-gated + `*_live` opt-in), não testes quebrados — todos rodam e passam no ambiente certo. O "+19 skip" do STATUS estava defasado (real: 26). |
+| T3 | ⚪ registro | Deprecation `GLib.unix_signal_add_full` (PyGI) e `NotAppKeyWarning` (aiohttp) — ruído, não falha; anotar pra limpeza futura. |
+
+**Nota de honestidade:** os `*_live` de rede (`orchestrator_live`, `session_live`,
+`realtask_live`) NÃO foram rodados (precisam de CLI de agente logado + rede) — ficam como
+cobertura opt-in não exercitada neste review; o `sandbox_live` (o mais relevant p/ segurança)
+foi rodado e passou.
 ## Fase 5 — Runtime no device (prova real) — ⏳ pendente
 ## Fase 6 — UX por estado — ⏳ pendente
 ## Fase 7 — Veredito adversarial (Fable) — ⏳ pendente
