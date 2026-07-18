@@ -167,8 +167,9 @@ são perdas de transcript relacionadas). **Impacto no app:** budget/medidor INTA
 headless); captura de sessão interativa (unload A′/reattach R2) degrada pro fallback "começar do
 zero" — pior pra NÓ DE CONTA (interativo nunca persiste). **Consequência da triagem (Fable
 2026-07-18): auto-unload segue viável, mas o RETOMAR de sessão interativa não é confiável até fix
-upstream — re-escopo é decisão do usuário.** Próximo passo possível: issue upstream (repro mínima
-pronta: `CLAUDE_CONFIG_DIR=<dir> claude` interativo → conversa → nenhum JSONL). 🔬
+upstream — re-escopo é decisão do usuário.** **Issue upstream ABERTA (2026-07-18):
+[anthropics/claude-code#78843](https://github.com/anthropics/claude-code/issues/78843)** —
+acompanhar o fix; quando corrigir, retirar o asterisco do auto-unload. 🔬
 ### 2026-07-02 — Paralelizar implementação de features independentes com sub-agentes
 Usar o `Agent` tool (`isolation: "worktree"`, cada sub-agente numa cópia isolada do repo) ou o
 `Workflow` tool (fan-out mais estruturado, só com pedido explícito do usuário) pra implementar
