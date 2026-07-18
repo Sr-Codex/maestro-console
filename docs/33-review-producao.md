@@ -122,7 +122,53 @@ runtime**: `win.close()` emite o blur e persiste).
 - **P2 (oportunista):** C10, C11, C12.
 - C2+C3+C7 são o mesmo tema (ciclo de vida/limpeza do nó) → candidatos a 1 branch `fix/`;
   C1+C4 idem (routines); C5+C10 idem (budget/contas).
-## Fase 3 — Segurança — ⏳ pendente
+## Fase 3 — Segurança — ✅ CONCLUÍDA 2026-07-18
+
+**Método:** workflow multi-agente (17 agentes, ~30 min) — 6 lentes de ataque Opus (fuga de
+sandbox, spoof de identidade/autoridade, injeção PTY/in-band, credencial entre contas,
+FS/TOCTOU/recurso, exfil/rede) com o **modelo de ameaça correto injetado** (adversário = agente
+sequestrado, NÃO o dono; riscos residuais aceitos no ADR-17/28/29 não contam) → cada achado
+refutado individualmente pelo Fable. 11 brutos → **8 confirmados, 3 refutados**. Dedup: o
+crítico foi achado por 2 lentes; 2 médios cruzam com a Fase 2 (C7/C8). **Net: 1 crítico +
+3 alta + 1 média novos.**
+
+### ⚠ Veredito da fase
+
+**Achado 1 bug CRÍTICO que reabre o confused-deputy que os ADR-18/21 declararam fechado — e
+foi PROVADO em runtime.** O Maestro mode **não está pronto pra produção** com esse buraco
+aberto. Ressalva importante de contexto: o Maestro mode é **flag default-OFF** e o próprio
+ADR-17 condiciona ligá-lo a "passar em red-team adversarial por etapa (forjar `frm`...)" —
+este red-team **reprovou**, então a trava default-OFF é o que segura o risco hoje. O núcleo
+sandbox em si (confinamento de escrita, fail-safe) continua sólido; o furo é no **transporte
+de identidade**, não no isolamento de FS.
+
+### Bugs de segurança confirmados (S1..S6)
+
+| # | Sev | Onde | O que |
+|---|-----|------|-------|
+| **S1** | 🔴 **CRÍTICA** | `engine/sandbox.py:65` (2 lentes) | **`--ro-bind / /` reexpõe as boxes IRMÃS do ask-bus** (que vive sob `$HOME`, não mascarado). Um agente sequestrado faz `listdir(<bus>/box)` (enumera os nós vítimas), `connect(<bus>/box/<vítima>/sock)` — **conexão a socket pathname NÃO é bloqueada pelo mount read-only** — e o host carimba `frm=vítima` pelo listener que aceitou. Efeito: emite `dismiss`/`reassign`/`recruit`/`wire` **como a vítima**, usando a linhagem host-only dela. **Colapsa o invariante-mãe do ADR-17** ("a segurança vem da AUSÊNCIA do mount das boxes irmãs" — FALSO: o `--ro-bind / /` monta tudo). **Provado em runtime** com os flags reais (`connect OK, reply: HOST-STAMPED frm=victim`). Lê também o `audit.jsonl` (linhagem completa). **Fix é o padrão E5 já usado nas contas:** tmpfs-mascarar `<bus>/box` antes de bindar só a própria box por cima — aplicado às contas, esquecido no bus. |
+| **S2** | 🔴 alta | `engine/briefs.py:78` | **Stamp de brief/role segue symlink plantado pelo agente** no workspace → o **host** escreve fora do sandbox (o workspace é rw pro agente; ele troca `CLAUDE.md` por symlink→`~/.bashrc` e o re-carimbo do host escreve no alvo). Reintroduz a **escrita arbitrária no host** que o ADR-17 eliminou ao trocar mailbox-de-arquivo por socket. |
+| **S3** | 🔴 alta | `native/canvas.py:2088` | **Roles descobertos do cwd** (conteúdo controlado pelo agente) entram na biblioteca e são gravados no `CLAUDE.md`/`AGENTS.md` da vítima **SEM a sanitização de Unicode invisível** que o `briefs.py` aplica → **Rules File Backdoor cross-agent** (zero-width/bidi escondem instrução de LLM — a mesma classe que o ADR-27 fechou pro brief, aberta pro role descoberto). |
+| **S4** | 🔴 alta | `web/server.py:195` | **Control-plane web sem token no bind localhost** (`/api/execute`, `/api/teams`, `/api/resume`): um agente co-local (netns compartilhado — os agentes têm rede) alcança o loopback e **forja autoridade fora do host**, contornando toda a cadeia socket/linhagem. Só vale com a Web UI opcional ligada. |
+| **S5** | 🟡 média | `native/canvas.py:4417` | **Modo LIVE injeta o prompt do cabo (controlado pelo agente) no PTY do vizinho sem o filtro E1** de control chars — só paste/drop aplica `injectable()`. Um `\r` na resposta do cabo = auto-submit no terminal da vítima (a regra E1 do ADR-29 não foi aplicada a ESTE caminho de injeção). |
+| **S6** | 🟡 média | `native/canvas.py:8239` / `:5428` | **Cross-confirma C7 e C8 da Fase 2** por ângulo de segurança: `_acct_cfg_dir` sem `base` (orphan lê config-dir errado) e cap de imagem-bomba checado após o decode (400MB já alocados). Dois achados, duas fases → prioridade reforçada. |
+
+**Refutados (corretos, registro):** ler o `~/.claude` do **próprio dono** via `--ro-bind / /`
+(baseline aceito do ADR-6 — sandbox confina escrita, não leitura; egress é risco aceito do
+ADR-17); credencial **entre contas registradas** (esse isolamento É imposto — máscara tmpfs E5
+cobre a raiz das contas); SSE `/api/events` cross-nó (o RunManager roda 1 equipe por vez e o
+`output_bus` é canal de visualização do dono, não caminho de dados mediado). As 3 refutações
+foram verificadas como consistentes com o S1: o que vaza é o **bus** (não mascarado = bug), não
+os dirs de conta (mascarados = ok).
+
+### Priorização
+
+- **P0 absoluto:** **S1** — bloqueia qualquer uso do Maestro mode; fix é padrão conhecido
+  (tmpfs no bus). Até corrigir, **manter Maestro mode OFF** (a trava default-OFF já segura).
+- **P0:** S2 (escrita arbitrária no host via symlink) — vale mesmo SEM Maestro mode (brief/role
+  é feature geral); S3 (backdoor de role cross-agent).
+- **P1:** S4 (token no control-plane web), S5 (filtro E1 no cabo LIVE).
+- Já mapeado na Fase 2: S6 = C7 + C8.
 ## Fase 4 — Testes (ponto cego dos skipados) — ⏳ pendente
 ## Fase 5 — Runtime no device (prova real) — ⏳ pendente
 ## Fase 6 — UX por estado — ⏳ pendente
