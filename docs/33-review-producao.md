@@ -65,8 +65,12 @@ ADR violado no código atual — incluindo TODOS os invariantes de segurança (A
 3. ✅ **Aplicado:** nota do `architecture.md` → ADR-1..29.
 4. ✅ **Aplicado:** worktree órfã `.claude/worktrees/docs-paste-imagem` removida (limpa,
    conteúdo mergeado no PR #89) + branch local `docs/index-27-32` deletada.
-5. ⏳ **Decisão do usuário pendente:** A6 (retomar tags de release ou declarar opcionais) e
-   A8 (datar entradas do CHANGELOG ou ajustar o cabeçalho).
+5. ✅ **A6 decidido pelo usuário (2026-07-18): tagging retomado "daqui pra frente"** — tag
+   anotada `v0.67.0` criada em `e74041b` (convenção antiga: tag no squash do PR de release)
+   e publicada no origin. As 20 versões v0.47.0→v0.66.0 ficam sem tag retroativa (decisão:
+   seguir dali, não backfill). Releases futuras voltam a taggear no merge.
+6. ⏳ **Decisão do usuário pendente:** A8 (datar entradas novas do CHANGELOG ou ajustar a
+   promessa do cabeçalho).
 
 ---
 
