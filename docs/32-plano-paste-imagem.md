@@ -3,8 +3,7 @@
 > Promovido da fila (`docs/15`, item "Paste/drag de imagem pro nó", dor em 5+ concorrentes;
 > escolhido pelo usuário 2026-07-18 como "faixa B" da triagem do Fable — independe do bug
 > upstream #78843). **Design v2 pós-revisão adversarial (Fable 5, 9 emendas — §9,
-> com MEDIÇÕES no device). Status: aguardando validação do usuário (§10).** Nada vira
-> código antes.
+> com MEDIÇÕES no device). Decisões D1-D7 VALIDADAS pelo usuário (2026-07-18, §10).**
 
 ## 1. Objetivo
 
@@ -188,9 +187,11 @@ shell/custom (sem sandbox) enxerga /tmp — cópia mantida por regra una (docume
 pra não re-investigar. Acertos sem emenda: interceptador/feed sem `\r`, caminho absoluto,
 `pastes/` estável, nome gerado, conta/1-PR.
 
-## 10. DECISÕES — pendentes de validação do usuário
+## 10. DECISÕES — VALIDADAS com o usuário (2026-07-18, pós-Fable)
 
-| # | Decisão | Recomendação |
+Todas as recomendações aprovadas como estão ("ok", 2026-07-18):
+
+| # | Decisão | Validado |
 |---|---|---|
 | D1 | Caminho injetado: absoluto vs relativo | **absoluto** (cwd varia; sandbox espelha o path) |
 | D2 | Destino: `<ws>/pastes/` | **sim** (padrão `notes/`; estável, nunca apagado pelo app) |
