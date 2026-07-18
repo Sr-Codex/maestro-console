@@ -76,7 +76,52 @@ ADR violado no código atual — incluindo TODOS os invariantes de segurança (A
 
 ---
 
-## Fase 2 — Código (correctness) — ⏳ pendente
+## Fase 2 — Código (correctness) — ✅ CONCLUÍDA 2026-07-18
+
+**Método:** workflow multi-agente (23 agentes, ~37 min) — 7 caçadores Opus (um por área:
+engine/orquestração, budget+contas, sandbox/socket, ciclo de vida do nó, persistência de UI,
+paste/ask, interfaces secundárias) → cada achado bruto passou por **refutação adversarial
+individual do Fable** (instrução: na dúvida, refutar). 16 brutos → **14 confirmados, 2
+refutados** (1 por definição do protocolo ADR-7; 1 por medição em runtime GTK sob Xvfb).
+Dedup: 2 pares de áreas acharam o mesmo bug → **12 bugs únicos**.
+
+### Veredito da fase
+
+O núcleo orquestrador/sandbox/budget saiu **limpo nos caminhos principais** (nenhum bug no
+delegate/envelope/mutex/sandbox em si). Os bugs reais se concentram em **(a) reciclagem de id
+de nó** (limpeza incompleta ao fechar), **(b) routines** (reentrância + lost update) e
+**(c) guards que existem num caminho mas faltam no irmão** — o mesmo padrão-classe que os
+ADR-18/21/26 já tinham fechado em outros pontos ("invariante em TODAS as entradas").
+
+### Bugs confirmados (C1..C12)
+
+| # | Sev | Onde | O que |
+|---|-----|------|-------|
+| C1 | 🔴 alta | `engine/routines.py:104` (+`canvas.py:7928`, achado 2×) | Routine cujo run dura > 30s (tick) é **re-disparada concorrentemente** — `last_run` só grava no fim e não há guarda "já rodando": prompt roda N×, `run_count` infla, custo multiplica. |
+| C2 | 🔴 alta | `canvas.py:2639` (achado 2×) | **`_close_node` limpa só `session/unloaded/orphan`** — `account`, `maestro`, `autoapprove`, `role`, `command`, `cwd`, `env`, `birth_group` + nome/posição/tamanho ficam órfãos; como `_unique_nid` **recicla o id**, um nó novo **herda credencial de conta e permission-bypass** do nó fechado. |
+| C3 | 🔴 alta | `canvas.py:4898` | **`_kill_all_agents` não aplica o guard anti-race do ADR-23** (zera `_respawn_state`/`_respawn_pending`, cancela `_respawn_force_src`) que o `_unload_node` aplica — respawn em voo **ressuscita nó após o kill-switch** (backstop do ADR-17 derrotado pela race). |
+| C4 | 🟡 média | `engine/routines.py:106` | `run_routine_once` grava o objeto Routine INTEIRO com snapshot velho → **pause do usuário durante o run é revertido** (lost update de `enabled`). |
+| C5 | 🟡 média | `engine/budget.py:51` | `record_spend` só detecta rotação de sessão quando `new < last`; sessão nova com 1º turno ≥ total da anterior cai no ramo "continuação" e **subconta** (brecha na garantia anti-laundering do ADR-22; `budget_last_*` nunca é limpo). |
+| C6 | 🟡 média | `engine/ask_sock.py:217` | `Thread.start()` sem try em `_accept`: falha de criação de thread (pressão de RAM no CM4) **mata o accept-loop permanentemente** + vaza permit do semáforo e o fd. |
+| C7 | 🟡 média | `canvas.py:8239` | `_acct_cfg_dir` chama `accounts.resolve` **sem o `base`** (único ponto divergente): contas homônimas em agentes diferentes → config-dir errado → **crash não marca o nó como órfão**. |
+| C8 | 🟡 média | `canvas.py:5428` | Guard `MAX_DIM` (E4 anti imagem-bomba) roda **DEPOIS do decode completo** da textura — não previne a alocação que existe pra impedir. |
+| C9 | 🟡 média | `engine/floors.py:89` | Floors **sem escopo por projeto** (tabela keyed só por `name`): run/merge de floor pode operar **no repo errado**. |
+| C10 | 🟢 baixa | `engine/accounts.py:178` | `resolve()` de conta órfã re-sintetiza `slug=slugify(name)` ignorando sufixo de colisão congelado pelo `add_account` → pode apontar pro **config-dir de OUTRA conta**. |
+| C11 | 🟢 baixa | `canvas.py:5420` | TOCTOU no paste: o callback async não re-checa `unloaded/_destroyed` → guard E2 derrotado, injeção em terminal morto. |
+| C12 | 🟢 baixa | `engine/workspace_registry.py:87` | Workspace nomeado `..` passa no `_SAFE_NAME` e `db_path('..')` resolve pro **DB default** — isolamento de estado quebrado. |
+
+**Refutados (registro):** envelope >4KB re-rodando agente (é o comportamento definido pelo
+ADR-7 — falhar alto); nota "perde corpo se fechar sem blur" (refutado por **medição em
+runtime**: `win.close()` emite o blur e persiste).
+
+### Priorização proposta (fixes = branches próprias, fora desta)
+
+- **P0 (bloqueia o selo "produção"):** C2 (herança de credencial/bypass por id reciclado),
+  C3 (kill-switch derrotável por race), C1 (routine runaway = custo real multiplicado).
+- **P1:** C4, C5, C6, C7, C8, C9.
+- **P2 (oportunista):** C10, C11, C12.
+- C2+C3+C7 são o mesmo tema (ciclo de vida/limpeza do nó) → candidatos a 1 branch `fix/`;
+  C1+C4 idem (routines); C5+C10 idem (budget/contas).
 ## Fase 3 — Segurança — ⏳ pendente
 ## Fase 4 — Testes (ponto cego dos skipados) — ⏳ pendente
 ## Fase 5 — Runtime no device (prova real) — ⏳ pendente
