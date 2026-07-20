@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .safe_fs import safe_read_text, safe_write_text
 from .teams import Role
 
 
@@ -53,14 +54,17 @@ def write_role_files(workspace: str | Path, role: Role) -> dict[str, str]:
     ws.mkdir(parents=True, exist_ok=True)
     paths: dict[str, str] = {}
 
+    # S2 (review docs/33): ws é RW pro agente — safe_write_text recusa seguir symlink (arquivo
+    # ou pai) que faria o host escrever fora do sandbox.
     rj = ws / "role.json"
-    rj.write_text(json.dumps(role_sidecar(role), ensure_ascii=False, indent=2) + "\n")
+    safe_write_text(rj, json.dumps(role_sidecar(role), ensure_ascii=False, indent=2) + "\n",
+                    within=ws)
     paths["role.json"] = str(rj)
 
     md = _instruction_md(role)
     for fname in ("CLAUDE.md", "AGENTS.md"):
         p = ws / fname
-        p.write_text(md)
+        safe_write_text(p, md, within=ws)
         paths[fname] = str(p)
     return paths
 
@@ -121,10 +125,13 @@ def save_role_library(path: str | Path, roles: list[Role]) -> None:
 
 def write_role_sidecar(directory: str | Path, role: Role) -> str:
     """Escreve o sidecar PORTÁTIL `.maestri/role.json` no diretório (cwd do terminal)."""
-    d = Path(directory) / ".maestri"
+    base = Path(directory)
+    d = base / ".maestri"
     d.mkdir(parents=True, exist_ok=True)
     rj = d / "role.json"
-    rj.write_text(json.dumps(role_sidecar(role), ensure_ascii=False, indent=2) + "\n")
+    # within=base: se `.maestri` (pai) virou symlink pra fora, a contenção recusa (S2).
+    safe_write_text(rj, json.dumps(role_sidecar(role), ensure_ascii=False, indent=2) + "\n",
+                    within=base)
     return str(rj)
 
 
@@ -160,8 +167,8 @@ def install_role_block(target_dir: str | Path, role: Role) -> None:
     block = role_block_text(role)
     for fname in ("CLAUDE.md", "AGENTS.md"):
         p = d / fname
-        existing = p.read_text(encoding="utf-8") if p.exists() else ""
-        p.write_text(_replace_block(existing, block), encoding="utf-8")
+        existing = safe_read_text(p)  # S2: symlink → "" (não segue); write não escapa do ws
+        safe_write_text(p, _replace_block(existing, block), within=d)
 
 
 def remove_role_block(target_dir: str | Path) -> None:
