@@ -35,7 +35,7 @@ def test_positions_api(tmp_path):
             token="t",
         )
         try:
-            async with TestClient(TestServer(app)) as c:
+            async with TestClient(TestServer(app), headers={"X-Maestro-Token": "t"}) as c:
                 r = await c.post("/api/positions", json={"agent_id": "claude", "x": 50, "y": 60})
                 assert r.status == 200
                 pos = await (await c.get("/api/positions")).json()
@@ -52,7 +52,7 @@ def test_positions_api(tmp_path):
 def test_canvas_js_servido():
     async def go():
         app = make_app(None, host="127.0.0.1", port=8765, token="t")
-        async with TestClient(TestServer(app)) as c:
+        async with TestClient(TestServer(app), headers={"X-Maestro-Token": "t"}) as c:
             r = await c.get("/static/canvas.js")
             return r.status, await r.text()
 

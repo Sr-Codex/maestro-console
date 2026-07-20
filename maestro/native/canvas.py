@@ -8239,6 +8239,13 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         ask_bus_dir = f"{base}/ask-bus"
         install_client(ask_bus_dir)  # instala o maestro-ask no mailbox (montado nos agentes)
         install_maestri_client(ask_bus_dir)  # instala o `maestri` (Maestro mode, Fase 6)
+        # S4 (review docs/33): cria o token do web AGORA (eager), antes de qualquer spawn de
+        # agente. O sandbox esconde `<home>/web_token` via `--ro-bind /dev/null`, mas o bwrap
+        # só monta o overlay se o arquivo JÁ existe no spawn. Se o canvas lançasse agentes
+        # antes de `maestro web` rodar a 1ª vez, o token não existiria → sem overlay → o agente
+        # o leria quando a web o criasse depois. Criá-lo aqui garante que o overlay sempre vale.
+        from ..web.security import ensure_token, web_token_path
+        ensure_token(web_token_path(base))
         model = CanvasModel(st)
         # ROSTER persistido: QUAIS terminais existem (abre igual fechou). 1ª vez = semeia
         # com os agentes instalados; depois é a fonte da verdade (inclui shells/instâncias).

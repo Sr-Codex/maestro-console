@@ -33,7 +33,7 @@ def test_viewport_api(tmp_path):
             token="t",
         )
         try:
-            async with TestClient(TestServer(app)) as c:
+            async with TestClient(TestServer(app), headers={"X-Maestro-Token": "t"}) as c:
                 assert await (await c.get("/api/viewport")).json() == {}
                 r = await c.post("/api/viewport", json={"x": 5, "y": 6, "w": 800, "h": 320})
                 assert r.status == 200
@@ -48,7 +48,7 @@ def test_viewport_api(tmp_path):
 def test_canvas_js_tem_pan_zoom():
     async def go():
         app = make_app(None, host="127.0.0.1", port=8765, token="t")
-        async with TestClient(TestServer(app)) as c:
+        async with TestClient(TestServer(app), headers={"X-Maestro-Token": "t"}) as c:
             return await (await c.get("/static/canvas.js")).text()
 
     js = asyncio.run(go())

@@ -36,6 +36,15 @@ def _ask_bus_box_dir() -> str | None:
     return str(box) if box.exists() else None
 
 
+def _host_secret_files() -> list[str]:
+    """Arquivos host-only a ESCONDER do agente em TODO spawn (S4): o token do web, que o
+    `--ro-bind / /` reexporia (o agente co-local o leria e forjaria autoridade no control-plane
+    mesmo com o token exigido). Import local evita ciclo (bootstrap importa a engine)."""
+    from ..bootstrap import default_home  # import local: evita ciclo
+    from ..web.security import web_token_path
+    return [str(web_token_path(default_home()))]
+
+
 def invisible_prefixes() -> list[str]:
     """Prefixos do HOST que NÃO existem (ou são outros) dentro do sandbox de um nó —
     fonte única pro `needs_copy` do paste/drop (docs/32 E3): `--tmpfs /tmp` (privado),
@@ -65,6 +74,12 @@ def wrap(
     contas — credencial de outra conta some da vista). A ORDEM importa (bwrap monta
     em sequência): o tmpfs entra ANTES dos binds de rw_paths/shared_paths, pra um
     bind dentro da raiz mascarada (a PRÓPRIA conta do nó) reaparecer por cima.
+
+    Esconde AUTOMATICAMENTE (todo spawn, na CAMADA de sandbox — não no chamador) os
+    ARQUIVOS host-only que o `--ro-bind / /` reexporia legíveis: o **token do web**
+    (`<home>/web_token`, S4 do review docs/33) via `--ro-bind /dev/null` (o agente lê
+    "inacessível", nunca o segredo; tmpfs não serve p/ arquivo). Cobre interativo E
+    headless/floor (`run_agent`).
     """
     if not bwrap_available():
         raise SandboxUnavailable("bwrap não encontrado; recusando rodar sem sandbox")
@@ -108,6 +123,9 @@ def wrap(
         mp = str(Path(p).expanduser())
         if Path(mp).exists():
             args += ["--tmpfs", mp]  # esconde (ex.: contas alheias, boxes irmãs); vazio e volátil
+    for sf in _host_secret_files():  # arquivos host-only: overlay /dev/null → inacessível
+        if Path(sf).exists():
+            args += ["--ro-bind", "/dev/null", sf]
     for p in rw_paths:
         rp = str(Path(p).expanduser())
         if Path(rp).exists():

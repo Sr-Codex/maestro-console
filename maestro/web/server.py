@@ -33,8 +33,15 @@ async def security_mw(request: web.Request, handler):
         # CORS fechado: valida Origin (rejeita cross-origin não autorizado)
         if not origin_allowed(request.headers.get("Origin"), app["allowed_origins"]):
             return web.json_response({"error": "origin_not_allowed"}, status=403)
-        # token obrigatório fora de localhost (header, nunca query)
-        if app["require_token"] and not token_ok(request.headers.get(TOKEN_HEADER), app["token"]):
+        # S4 (review docs/33): endpoints MUTADORES (control-plane: execute/cancel/resume,
+        # teams POST/DELETE, positions/viewport POST) exigem token SEMPRE — inclusive em
+        # localhost. Um agente co-local (netns compartilhado, sem --unshare-net) alcança o
+        # loopback e forjaria autoridade. Leitura (GET) mantém a isenção de localhost (só
+        # disclosure). O token do arquivo é escondido do agente no sandbox (secret_files).
+        mutating = request.method not in ("GET", "HEAD", "OPTIONS")
+        if (mutating or app["require_token"]) and not token_ok(
+            request.headers.get(TOKEN_HEADER), app["token"]
+        ):
             return web.json_response({"error": "unauthorized"}, status=401)
     return await handler(request)
 
@@ -218,14 +225,16 @@ def make_app(controller, *, host: str, port: int, token: str) -> web.Application
 def serve(*, host: str = "127.0.0.1", port: int = 8765, home=None) -> None:  # pragma: no cover
     """Sobe o servidor reusando a engine (bootstrap). Bind padrão localhost."""
     from ..bootstrap import build_controller, default_home
-    from .security import ensure_token, is_local
+    from .security import ensure_token, is_local, web_token_path
 
     base = default_home() if home is None else home
     controller, store = build_controller(home=base)
-    token = ensure_token(f"{base}/web_token")
+    token = ensure_token(web_token_path(base))
     app = make_app(controller, host=host, port=port, token=token)
+    # S4: ações de controle exigem token MESMO em localhost — imprime sempre p/ o humano
+    # colar no campo "token" da UI (persiste no localStorage; cola 1x).
+    print(f"token (header {TOKEN_HEADER}): {token}")
     if not is_local(host):
-        print(f"token (header {TOKEN_HEADER}): {token}")
         print("⚠️ exposto na LAN — prefira SSH port forwarding p/ acesso remoto seguro")
     print(f"maestro web em http://{host}:{port}")
     try:

@@ -51,7 +51,7 @@ def test_sse_endpoint_entrega_eventos(tmp_path):
             token="t",
         )
         try:
-            async with TestClient(TestServer(app)) as c:
+            async with TestClient(TestServer(app), headers={"X-Maestro-Token": "t"}) as c:
                 resp = await c.get("/api/events")
                 await c.post("/api/execute", json={"team": "coder-reviewer", "intent": "x"})
                 vistos = []
