@@ -312,3 +312,31 @@ arquitetural. **Dois furos são exploráveis SEM opt-in nenhum e são co-bloquea
   C3 derrota o kill-switch por race.
 - 🟠 **S4** (bypass do control-plane web) — **P0-quando a Web UI estiver ligada**; manter off até
   o fix.
+
+---
+
+## ✅ RESOLUÇÃO DOS BLOQUEADORES (pós-review, 2026-07-20)
+
+Todos os **4 bloqueadores P0/P0-condicional** foram corrigidos, mergeados na `main` e provados
+em runtime. **Cada PR de fix passou por revisão adversarial (Fable) ANTES do merge** — e a
+revisão achou furo em TODOS os 4: a v1 de cada fix corrigia só a entrada óbvia e recaía na mesma
+classe que o próprio review identificou ("invariante em todas as entradas"). A correção
+estrutural foi mover os invariantes de segurança pra dentro do `sandbox.wrap()` (camada
+compartilhada → cobre interativo + headless/floor + qualquer caminho futuro).
+
+| Achado | PR | Versão | O que a revisão do PR endureceu |
+|---|---|---|---|
+| **C2/C3/C7** ciclo de vida | #90 | v0.68.0 | C2 vazava a sessão da ENGINE + usage + budget (não só ui_state); C7 sem fallback `or nid` |
+| **S2** symlink→host | #91 | v0.69.0 | 4 de 8 stampers não convertidos (write-no-host ainda); `realpath` check-then-open → **TOCTOU no pai** (reescrito com `dir_fd`+`O_NOFOLLOW`) |
+| **S1** spoof de socket (CRÍTICO) | #92 | v0.70.0 | máscara só no spawn interativo → **headless/floor continuava spoofável** (movida pro `wrap()`) |
+| **S4** control-plane web | #93 | v0.71.0 | token só escondido se já existisse no spawn + **headless não escondia** (movido pro `wrap()` + `ensure_token` eager no boot) |
+
+**Provas:** cada furo virou teste de **mutação** (falha sem o fix); os de segurança têm prova sob
+**bwrap real** (agente lê socket/token inacessível). Suíte final na `main` integrada: 626 venv +
+gi de segurança/ciclo-de-vida + T1/sandbox live ✅, ruff limpo.
+
+**Veredito atualizado:** os bloqueadores que sustentavam o "não pronto" estão **fechados**. O
+Maestro mode e a Web UI deixam de depender das travas default-OFF pra segurança (embora sigam
+opt-in por UX). **Fica pra depois (não-bloqueador):** os P1/P2 acima (S3, S5, C1/C4, C5/C10,
+U1-U8, flock, CVE de deps) + o resíduo aceito do `audit.jsonl` (disclosure read-only) + a Fase 5
+sensorial no device (`docs/34`).
