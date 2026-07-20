@@ -55,6 +55,7 @@ def wrap(
     setenv: Mapping[str, str] | None = None,
     allow_network: bool = True,
     mask_paths: Sequence[str] = (),
+    secret_files: Sequence[str] = (),
 ) -> list[str]:
     """Retorna o argv do agente envelopado em bwrap. Levanta se bwrap ausente.
 
@@ -65,6 +66,10 @@ def wrap(
     contas — credencial de outra conta some da vista). A ORDEM importa (bwrap monta
     em sequência): o tmpfs entra ANTES dos binds de rw_paths/shared_paths, pra um
     bind dentro da raiz mascarada (a PRÓPRIA conta do nó) reaparecer por cima.
+    secret_files: ARQUIVOS host-only escondidos do agente via `--ro-bind /dev/null`
+    (o `--ro-bind / /` os reexporia, legíveis). Lista GENÉRICA (S4 do review docs/33:
+    o token do web; pronta pra receber o audit.jsonl etc.) — o agente lê "inacessível",
+    nunca o segredo. tmpfs não serve p/ arquivo; /dev/null overlaya o conteúdo.
     """
     if not bwrap_available():
         raise SandboxUnavailable("bwrap não encontrado; recusando rodar sem sandbox")
@@ -108,6 +113,10 @@ def wrap(
         mp = str(Path(p).expanduser())
         if Path(mp).exists():
             args += ["--tmpfs", mp]  # esconde (ex.: contas alheias, boxes irmãs); vazio e volátil
+    for f in secret_files:  # arquivos host-only: overlay /dev/null → leitura inacessível
+        sf = str(Path(f).expanduser())
+        if Path(sf).exists():
+            args += ["--ro-bind", "/dev/null", sf]
     for p in rw_paths:
         rp = str(Path(p).expanduser())
         if Path(rp).exists():

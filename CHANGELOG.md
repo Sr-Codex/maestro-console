@@ -3,6 +3,25 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.71.0] — 2026-07-20 — fix(seg): control-plane web exige token + esconde o token do agente (S4 do review)
+Corrige o bug **S4** do review de prontidão-pra-produção (`docs/33`) — "P0-quando-Web-UI-ligada".
+O `require_token = not is_local(host)` isentava o localhost de token em TODO `/api/`; um agente
+co-local (netns compartilhado, sem `--unshare-net`) alcança `127.0.0.1:8765` e forjava autoridade
+no control-plane (`/api/execute`, `/api/teams`, `/api/resume`...) sem token. Agravante: o token
+vive em `{base}/web_token` sob `$HOME` → o agente o LÊ pelo `--ro-bind / /` (mesmo root do S1),
+então só exigir token seria teatro. **Fix (decisão do usuário: B + X):**
+- **B — mutadores exigem token SEMPRE** (inclusive localhost): o middleware passa a exigir token
+  em todo método não-GET de `/api/` (execute/cancel/resume, teams POST/DELETE, positions/viewport
+  POST). Leitura (GET) mantém a isenção de localhost (só disclosure, sem atrito p/ ver a UI).
+- **X — esconder o token do sandbox** via nova lista GENÉRICA `secret_files` no `sandbox.wrap`
+  (`--ro-bind /dev/null` no arquivo → o agente lê inacessível, nunca o segredo). `agent_argv`
+  popula com o `web_token`; a lista já fica pronta pro `audit.jsonl` etc. entrarem depois.
+- `serve()` imprime o token SEMPRE (o humano cola no campo da UI — persiste no localStorage, 1×);
+  frontend relabelado ("token do terminal — necessário p/ ações").
+Testes: `tests/test_s4_control_plane.py` (gi-free, CI — mutador sem token=401, leitura aberta,
+token escondido no argv); prova sob bwrap REAL de que o agente lê o token vazio/inacessível.
+Testes web existentes atualizados (mutação agora manda o token).
+
 ## [0.70.0] — 2026-07-20 — fix(seg): isola as boxes de socket entre agentes (S1 CRÍTICO do review)
 Corrige o bug **S1 (CRÍTICO)** do review de prontidão-pra-produção (`docs/33`) — spoof total de
 identidade no Maestro mode, provado em runtime. O `--ro-bind / /` do sandbox reexpõe

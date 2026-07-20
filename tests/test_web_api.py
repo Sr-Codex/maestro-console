@@ -22,7 +22,7 @@ def _build(tmp_path, ask):
 
 
 async def _client(app):
-    return TestClient(TestServer(app))
+    return TestClient(TestServer(app), headers={"X-Maestro-Token": "t"})
 
 
 def test_agents_e_teams(tmp_path):

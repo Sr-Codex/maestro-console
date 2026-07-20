@@ -100,6 +100,12 @@ def agent_argv(
     if account is not None:  # conta isolada: config-dir SUBSTITUI os paths default (E1)
         rw = [ensure_config_dir(account)]
         setenv.update(account.sandbox_env(skip=node_env_keys))
+    secrets: list[str] = []  # arquivos host-only escondidos do agente (S4/X — lista genérica)
+    if node and ask_bus_dir:
+        # S4 (review docs/33): o token do web (`{base}/web_token`, irmão do ask-bus) vaza
+        # pelo `--ro-bind / /` — um agente co-local o leria e forjaria autoridade no
+        # control-plane mesmo com o token exigido. Esconde-o (audit.jsonl pode entrar aqui).
+        secrets.append(os.path.join(os.path.dirname(str(ask_bus_dir)), "web_token"))
     return sandbox_wrap(
         inner,
         workspace=workspace,
@@ -111,4 +117,5 @@ def agent_argv(
         # (interativo + headless/floro), não só este caminho; a própria box reaparece por
         # `shared_paths=[box]` (ordem tmpfs→bind no wrap).
         mask_paths=mask_paths(account.root if account is not None else None),
+        secret_files=secrets,
     )
