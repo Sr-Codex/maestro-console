@@ -100,12 +100,19 @@ def agent_argv(
     if account is not None:  # conta isolada: config-dir SUBSTITUI os paths default (E1)
         rw = [ensure_config_dir(account)]
         setenv.update(account.sandbox_env(skip=node_env_keys))
+    # some a raiz das contas de TODO nó, inclusive default (E5); root injetável (teste)
+    masks = mask_paths(account.root if account is not None else None)
+    if node and ask_bus_dir:
+        # S1 (review docs/33): tmpfs esconde TODAS as boxes IRMÃS (sockets). Sem isto, o
+        # `--ro-bind / /` reexpõe `<bus>/box/<todos>` e um agente conecta no socket de outro
+        # → o host carimba `frm=vítima` (spoof total de identidade, quebra o invariante-mãe
+        # do ADR-17). A PRÓPRIA box reaparece pelo `shared` bind (ordem tmpfs→bind no wrap).
+        masks = [*masks, os.path.join(str(ask_bus_dir), "box")]
     return sandbox_wrap(
         inner,
         workspace=workspace,
         rw_paths=rw,
         shared_paths=shared,
         setenv=setenv,
-        # some a raiz das contas de TODO nó, inclusive default (E5); root injetável (teste)
-        mask_paths=mask_paths(account.root if account is not None else None),
+        mask_paths=masks,
     )

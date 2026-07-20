@@ -3,6 +3,25 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.70.0] — 2026-07-20 — fix(seg): isola as boxes de socket entre agentes (S1 CRÍTICO do review)
+Corrige o bug **S1 (CRÍTICO)** do review de prontidão-pra-produção (`docs/33`) — spoof total de
+identidade no Maestro mode, provado em runtime. O `--ro-bind / /` do sandbox reexpõe
+`<bus>/box/<todos>` (o ask-bus vive sob `$HOME`); um agente hostil fazia `connect(<bus>/box/
+<vítima>/sock)` — conexão a socket pathname NÃO é bloqueada pelo mount read-only — e o host
+carimbava `frm=vítima` pelo listener que aceitou → emitia `dismiss`/`reassign`/`recruit`/`wire`
+**como a vítima**, usando a linhagem host-only dela. **Colapsava o invariante-mãe do ADR-17**
+("a segurança vem da AUSÊNCIA do mount das boxes irmãs" — falso: o `--ro-bind / /` monta tudo).
+Reabria o confused-deputy que os ADR-18/21 declararam fechado. **Fix (padrão E5 das contas):**
+`agent_argv` mascara `<bus>/box` com tmpfs em TODO spawn de agente — as boxes irmãs somem; a
+PRÓPRIA box reaparece pelo bind existente (ordem tmpfs→bind no `wrap` já validada). Uma linha,
+reusa a máquina de máscara já testada. Até este fix, o Maestro mode devia ficar OFF (a trava
+default-OFF era o que segurava o risco). **Fecha também a lacuna de teste T1** (Fase 4 do review):
+`tests/test_sock_isolation.py` — unit gi-free (o argv mascara ANTES de bindar, roda no CI) + o
+teste de isolamento sob **bwrap REAL** (gated `MAESTRO_LIVE`) que FALTAVA e deixou o S1 passar;
+provado que ele **FALHA sem o fix** (box irmã visível) e passa com ele. O bus do teste fica FORA
+de `/tmp` de propósito (senão o `--tmpfs /tmp` mascara por acidente e o teste vira vácuo — a
+armadilha que a investigação da Fase 3 flagou).
+
 ## [0.69.0] — 2026-07-20 — fix(seg): stamp de brief/role não segue symlink → escrita no host (S2 do review)
 Corrige o bug **S2** do review de prontidão-pra-produção (`docs/33`) — co-manchete com o S1 por
 ser explorável **sem opt-in nenhum** (brief/role de equipe é uso normal). O workspace de cada
