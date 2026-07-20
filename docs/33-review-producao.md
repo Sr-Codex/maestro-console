@@ -206,12 +206,15 @@ real, python do sistema) para o subconjunto que é state-machine/persistência �
 cenários que **reproduzem os bugs**. Cada teste asserta o comportamento CORRETO → falha = bug
 reproduzido no runtime, não só na leitura. Harness em `scratchpad/fase5_repro.py`.
 
-### 🔴 Os 2 P0 estão agora PROVADOS EM RUNTIME (não mais só code-review)
+### 🔴 Os 2 P0 exercitados no runtime real (C2 provado inteiro; C3 = condição necessária)
+
+> Rótulo do C3 corrigido pós-Fase 7 (o Fable cobrou honestidade): o harness prova a **condição
+> necessária** da race, não a ressurreição em si. Ver Fase 7.
 
 | Cenário | Método REAL rodado | Resultado |
 |---|---|---|
-| **B3 → C2** | `_close_node("claude-2")` com `account=cliente-secreta`, `autoapprove=1`, `role=hacker` | 🔴 **REPRODUZIDO:** `_unique_nid("claude")` devolve `claude-2` (id reciclado) E a config órfã **permanece no store** → nó novo herdaria a conta cliente + o bypass de permissão. |
-| **B4 → C3** | `_kill_all_agents()` com nó em respawn (`_respawn_state="killing"`) | 🔴 **REPRODUZIDO:** pós-kill-switch o estado segue `killing`/`pending=True` → `_on_child_exited` ressuscitaria o nó. O guard do ADR-23 que o `_unload_node` tem, o kill-switch NÃO tem. |
+| **B3 → C2** | `_close_node("claude-2")` com `account=cliente-secreta`, `autoapprove=1`, `role=hacker` | 🔴 **REPRODUZIDO INTEIRO:** `_unique_nid("claude")` devolve `claude-2` (id reciclado) E a config órfã **permanece no store** → nó novo herdaria a conta cliente + o bypass de permissão. Fable confirmou: sem over-mocking. |
+| **B4 → C3** | `_kill_all_agents()` com nó em respawn (`_respawn_state="killing"`) | 🔴 **CONDIÇÃO NECESSÁRIA PROVADA:** pós-kill-switch o estado segue `killing`/`pending=True` (o guard do ADR-23 que o `_unload_node` tem, o kill-switch NÃO tem). A ressurreição em si (`_on_child_exited→_do_respawn`) é por leitura de código, não foi executada no harness — bug real, prova um passo aquém do rótulo original. |
 | **Bloco A** (persistência) | node_cfg (theme/font/account/autoapprove/shortcut) + zoom via Store, reaberto num Store novo | ✅ **Tudo volta igual** — "abre igual fechou" confirmado na amostra. |
 | **U8** (pan) | `get_ui("cam"/"camera")` após set | ✅ Confirmado vazio → **pan não persiste** (achado da Fase 6). |
 
@@ -261,10 +264,51 @@ uniforme: passar as 4 pelo `_confirm_dialog` já existente.
 sim precisar de você — decisão de design registrada); o próprio U1 numa 2ª instância que citou o
 diálogo honesto (o Fable manteve a 1ª formulação, que aponta o tooltip/hint enganoso ANTES do
 diálogo — a mais forte).
-## Fase 7 — Veredito adversarial (Fable) — 🔄 EM CURSO 2026-07-20
+## Fase 7 — Veredito adversarial (Fable) — ✅ CONCLUÍDA 2026-07-20
 
-Delegado a um agente **Fable 5** (`model: fable`) como advogado do diabo independente, com
-mandato de **validar a CONDUTA do review** (não só reconferir achados): auditar a metodologia,
-TENTAR DERRUBAR o crítico S1 lendo o código real, checar se o harness de runtime (`fase5_repro.py`)
-não é over-mocking que fabrica C2/C3, e apontar super/subestimação ou vetores não cobertos.
-Veredito consolidado será registrado aqui ao retornar.
+Agente **Fable 5** independente auditou a CONDUTA do review + reconferiu os achados-âncora
+contra o código (evidência `file:line` própria dele, não a nossa). **Veredito: conduta sólida
+e honesta; "não pronto pra produção" é JUSTO; núcleo sólido é JUSTO.** Nenhum achado
+materialmente inflado; S1 sustenta os 4 elos; C2 provado de verdade. **3 correções cobradas —
+aplicadas abaixo.**
+
+### O que o Fable confirmou (contra código real)
+- **Metodologia genuína, não teatro:** provou amostrando que a refutação da Fase 3 discriminou
+  certo (contas mascaradas por tmpfs E5 = seguras; o que vaza é o *bus*, árvore diferente não
+  mascarada). **S1 sustenta os 4 elos** — reexposição do bus sob `$HOME` via `--ro-bind / /`,
+  connect a socket `S_ISSOCK` não bloqueado por mount RO, boxes irmãs + `audit.jsonl` visíveis,
+  `frm` carimbado pelo listener explorável. Não derrubou nenhum elo.
+- **C2 = prova limpa:** `_scaffold_close` só stuba fronteiras reais (widget/controller); as
+  chaves que vazam nem passam por método stubado → o bug não é artefato do harness.
+- **Refutados = corretos:** nenhum refutado deveria ter sido confirmado.
+
+### 3 correções cobradas (APLICADAS)
+1. **DESINFLAR o rótulo do C3:** o harness prova a **condição necessária** (kill-switch deixa o
+   respawn armado), não executa `_on_child_exited→_do_respawn` pra observar a ressurreição. →
+   Corrigido de "provado em runtime" para "condição necessária provada; ressurreição por
+   code-review" (ver Fase 5). O bug é real; só o rótulo estava um passo além.
+2. **ELEVAR S2 a co-manchete com S1:** o S2 (symlink→escrita arbitrária no host) **NÃO é gated
+   por Maestro mode** — brief/role é feature geral de equipe. Na prática é MAIS perigoso pro
+   usuário default que o S1, porque não exige opt-in. O resumo "a trava default-OFF segura o S1"
+   **não cobre o S2**. → Veredito de produção reescrito abaixo.
+3. **RE-ENQUADRAR S4 como "P0-quando-Web-UI-ligada"** (não P1 solto): bind localhost pula o token
+   e os agentes compartilham a netns → forjam autoridade por `/api/execute`. Mesma moldura do S1.
+
+### Vetores NÃO cobertos por nenhuma fase (adicionados pelo Fable)
+- **`flock` ausente:** a premissa "1 instância por vez" (`canvas.py:8219`) é documentada mas
+  **não imposta** — 2 instâncias racejariam o sentinela de crash + o SQLite. Baixo, mas real.
+- **Frescor/CVE de dependências** (supply-chain) — nenhuma fase tocou; "produção" costuma incluir.
+
+### ⚖ VEREDITO DE PRODUÇÃO (reescrito pós-Fable)
+**O app NÃO está pronto pra produção.** O núcleo é sólido (confinamento de escrita, fail-safe,
+mutex/envelope/delegate limpos); os bugs são a classe recorrente **"invariante aplicado numa
+entrada, esquecido na irmã"** — localizada e corrigível com padrão conhecido, não podridão
+arquitetural. **Dois furos são exploráveis SEM opt-in nenhum e são co-bloqueadores:**
+- 🔴 **S1** (spoof de socket) — segurado pela trava default-OFF do Maestro mode **enquanto ele
+  ficar OFF**; corrigir antes de qualquer uso de Maestro mode.
+- 🔴 **S2** (escrita arbitrária no host via symlink) — **NÃO tem trava**; vale com brief/role de
+  equipe, que é uso normal. **Este é o mais urgente do ponto de vista do usuário default.**
+- 🔴 **C2/C3** (ciclo de vida do nó) — C2 vaza credencial+bypass por id reciclado (uso normal);
+  C3 derrota o kill-switch por race.
+- 🟠 **S4** (bypass do control-plane web) — **P0-quando a Web UI estiver ligada**; manter off até
+  o fix.
