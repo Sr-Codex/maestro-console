@@ -11,16 +11,22 @@ identidade no Maestro mode, provado em runtime. O `--ro-bind / /` do sandbox ree
 carimbava `frm=vítima` pelo listener que aceitou → emitia `dismiss`/`reassign`/`recruit`/`wire`
 **como a vítima**, usando a linhagem host-only dela. **Colapsava o invariante-mãe do ADR-17**
 ("a segurança vem da AUSÊNCIA do mount das boxes irmãs" — falso: o `--ro-bind / /` monta tudo).
-Reabria o confused-deputy que os ADR-18/21 declararam fechado. **Fix (padrão E5 das contas):**
-`agent_argv` mascara `<bus>/box` com tmpfs em TODO spawn de agente — as boxes irmãs somem; a
-PRÓPRIA box reaparece pelo bind existente (ordem tmpfs→bind no `wrap` já validada). Uma linha,
-reusa a máquina de máscara já testada. Até este fix, o Maestro mode devia ficar OFF (a trava
-default-OFF era o que segurava o risco). **Fecha também a lacuna de teste T1** (Fase 4 do review):
-`tests/test_sock_isolation.py` — unit gi-free (o argv mascara ANTES de bindar, roda no CI) + o
-teste de isolamento sob **bwrap REAL** (gated `MAESTRO_LIVE`) que FALTAVA e deixou o S1 passar;
-provado que ele **FALHA sem o fix** (box irmã visível) e passa com ele. O bus do teste fica FORA
-de `/tmp` de propósito (senão o `--tmpfs /tmp` mascara por acidente e o teste vira vácuo — a
-armadilha que a investigação da Fase 3 flagou).
+Reabria o confused-deputy que os ADR-18/21 declararam fechado. **Fix (padrão E5 das contas):** o
+PRÓPRIO `sandbox.wrap()` mascara `<home>/ask-bus/box` com tmpfs em TODO spawn — as boxes irmãs
+somem; a PRÓPRIA box reaparece pelo bind de `shared_paths` (ordem tmpfs→bind já validada). A
+máscara mora na **camada de sandbox, não no chamador**. Até este fix, o Maestro mode devia ficar
+OFF (a trava default-OFF era o que segurava o risco). **Fecha também a lacuna de teste T1** (Fase 4):
+`tests/test_sock_isolation.py` — unit gi-free (interativo E headless mascaram, roda no CI) + o
+teste sob **bwrap REAL** (gated `MAESTRO_LIVE`) que FALTAVA; provado que FALHA sem o fix (box irmã
+visível) e passa com ele. Bus FORA de `/tmp` (senão o `--tmpfs /tmp` mascara por acidente = vácuo).
+
+**Correção pós-revisão adversarial (Fable) do próprio PR:** a v1 punha a máscara em `agent_argv`
+(SÓ o spawn INTERATIVO) — o CHANGELOG dizia "TODO spawn" mas era falso: `run_agent` (headless/
+**floor**, `agent_run.py`) chama `sandbox.wrap` direto e NÃO mascarava → o mesmo spoof continuava
+por esse caminho (PoC-provado sob bwrap real: floor enxerga E conecta na box da vítima). A máscara
+foi MOVIDA pra dentro do `sandbox.wrap()` (cobre interativo + headless/floor + qualquer caminho
+futuro, sem depender de disciplina do chamador). Teste novo `test_headless_floor_tambem_mascara`
+(prova de mutação: falha sem o fix no wrap).
 
 ## [0.69.0] — 2026-07-20 — fix(seg): stamp de brief/role não segue symlink → escrita no host (S2 do review)
 Corrige o bug **S2** do review de prontidão-pra-produção (`docs/33`) — co-manchete com o S1 por

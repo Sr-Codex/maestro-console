@@ -2,11 +2,13 @@
 
 O `--ro-bind / /` do sandbox reexpõe `<bus>/box/<todos>` (o ask-bus vive sob $HOME). Sem
 mascarar, um agente hostil conecta no socket de OUTRO e o host carimba `frm=vítima` (spoof
-total de identidade — quebra o invariante-mãe do ADR-17). O fix: tmpfs em `<bus>/box` esconde
-as irmãs; a PRÓPRIA box reaparece pelo bind (ordem tmpfs→bind no wrap).
+total de identidade — quebra o invariante-mãe do ADR-17). O fix: `sandbox.wrap` mascara
+`<home>/ask-bus/box` (tmpfs) em TODO spawn — a máscara mora na CAMADA de sandbox, não no
+chamador, pra cobrir interativo E headless/floor (run_agent); a PRÓPRIA box reaparece pelo
+bind de shared_paths (ordem tmpfs→bind).
 
-Dois níveis: unit gi-free (o argv esconde+re-expõe na ordem certa, roda no CI) e o teste T1 —
-o isolamento sob bwrap REAL, que FALTAVA e deixou o S1 passar (gated por MAESTRO_LIVE).
+Níveis: unit gi-free (o argv mascara, interativo E headless; roda no CI) + o teste T1 do
+isolamento sob bwrap REAL, que FALTAVA e deixou o S1 passar (gated por MAESTRO_LIVE).
 """
 
 import os
@@ -26,52 +28,76 @@ def _pair_index(args, flag, value):
     return -1
 
 
-def test_agent_argv_mascara_boxes_irmas_antes_de_bindar_a_propria(tmp_path, monkeypatch):
-    """Unit (CI): o argv põe `--tmpfs <bus>/box` ANTES de `--bind <bus>/box/<nó>` — as irmãs
-    somem, a própria reaparece por cima."""
+def _seed_bus(base):
+    """Cria `<base>/ask-bus/box/<nó>` — a máscara só monta o que existe."""
+    box = base / "ask-bus" / "box"
+    (box / "claude-2").mkdir(parents=True)
+    return box
+
+
+def test_interativo_mascara_boxes_irmas_antes_de_bindar_a_propria(tmp_path, monkeypatch):
+    """Unit (CI): o argv interativo põe `--tmpfs <bus>/box` ANTES de `--bind <bus>/box/<nó>`."""
     monkeypatch.setattr(sandbox, "bwrap_available", lambda: True)
+    monkeypatch.setenv("MAESTRO_HOME", str(tmp_path))  # default_home() → tmp_path
+    box_parent = str(_seed_bus(tmp_path))
     prof = load_profiles()["claude"]
     ws = tmp_path / "ws"
     ws.mkdir()
-    bus = tmp_path / "bus"
-    args = agent_argv(prof, str(ws), node="claude-2", ask_bus_dir=str(bus))
-    box_parent = str(bus / "box")
-    own_box = str(bus / "box" / "claude-2")
+    args = agent_argv(prof, str(ws), node="claude-2", ask_bus_dir=str(tmp_path / "ask-bus"))
     i_mask = _pair_index(args, "--tmpfs", box_parent)
-    i_bind = _pair_index(args, "--bind", own_box)
+    i_bind = _pair_index(args, "--bind", str(tmp_path / "ask-bus" / "box" / "claude-2"))
     assert i_mask != -1, "as boxes irmãs NÃO foram mascaradas (--tmpfs <bus>/box ausente)"
     assert i_bind != -1, "a própria box não foi re-bindada"
     assert i_mask < i_bind, "ordem errada: o tmpfs tem de vir ANTES do bind da própria box"
 
 
+def test_headless_floor_tambem_mascara(tmp_path, monkeypatch):
+    """Unit (CI) — o FURO da revisão Fable: o caminho headless/floor (`run_agent` chama
+    `sandbox.wrap` direto, sem box própria) TAMBÉM tem de esconder as boxes irmãs. Como a
+    máscara mora no wrap(), um `wrap()` cru (sem shared box) já mascara `<bus>/box`."""
+    monkeypatch.setattr(sandbox, "bwrap_available", lambda: True)
+    monkeypatch.setenv("MAESTRO_HOME", str(tmp_path))
+    box_parent = str(_seed_bus(tmp_path))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    git_dir = tmp_path / "git"
+    git_dir.mkdir()
+    args = sandbox.wrap(["cli"], workspace=ws, shared_paths=[str(git_dir)])  # como o floor
+    assert _pair_index(args, "--tmpfs", box_parent) != -1, \
+        "caminho headless/floor NÃO mascara as boxes irmãs (spoof continua por run_agent)"
+
+
 @pytest.mark.skipif(not os.environ.get("MAESTRO_LIVE"),
                     reason="T1: isolamento sob bwrap REAL — MAESTRO_LIVE=1 pra rodar")
 def test_t1_box_irma_invisivel_sob_bwrap_real():
-    """T1 (o teste que faltava, review docs/33 Fase 4): sob bwrap REAL com os flags de
-    produção, um agente NÃO enxerga nem conecta na box de outro. Espelha a prova da Fase 3,
-    mas asserta o FIX. Prova as duas pontas: `listdir(<bus>/box)` não lista a vítima e
-    `connect(<bus>/box/victim/sock)` falha.
+    """T1 (o teste que faltava, review docs/33 Fase 4): sob bwrap REAL um agente NÃO enxerga
+    nem conecta na box de outro. Espelha a prova da Fase 3, mas asserta o FIX (as duas pontas:
+    `listdir(<bus>/box)` não lista a vítima e `connect(<bus>/box/victim/sock)` falha).
 
-    CRÍTICO: o bus fica FORA de /tmp — senão o `--tmpfs /tmp` do sandbox mascara o bus por
-    acidente e o teste passa VÁCUO (a armadilha que a investigação da Fase 3 flagou: a 1ª
-    prova pôs o bus em /tmp e "refutou" o achado por artefato de teste)."""
+    CRÍTICO: o bus fica FORA de /tmp — senão o `--tmpfs /tmp` mascara por acidente e o teste
+    passa VÁCUO (a armadilha que a Fase 3 flagou)."""
     if not sandbox.bwrap_available():
         pytest.skip("bwrap ausente")
     import shutil
     import tempfile
     from pathlib import Path
     base = Path(tempfile.mkdtemp(prefix="maestro-sock-t1-", dir=os.path.expanduser("~")))
+    old = os.environ.get("MAESTRO_HOME")
+    os.environ["MAESTRO_HOME"] = str(base)  # default_home() → base; wrap mascara <base>/ask-bus/box
     try:
         _run_t1(base)
     finally:
+        if old is None:
+            os.environ.pop("MAESTRO_HOME", None)
+        else:
+            os.environ["MAESTRO_HOME"] = old
         shutil.rmtree(base, ignore_errors=True)
 
 
 def _run_t1(base):
-    bus = base / "bus"
+    bus = base / "ask-bus"  # = default_home()/ask-bus → wrap mascara bus/box
     (bus / "box" / "victim").mkdir(parents=True)
     (bus / "box" / "attacker").mkdir(parents=True)
-    # socket VIVO da vítima (o alvo do spoof)
     victim_sock = str(bus / "box" / "victim" / "sock")
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     srv.bind(victim_sock)
@@ -80,7 +106,6 @@ def _run_t1(base):
         prof = load_profiles()["claude"]
         ws = base / "ws"
         ws.mkdir()
-        # de DENTRO do sandbox do atacante: tenta enumerar as irmãs e conectar na vítima
         probe = (
             "import os, socket, json\n"
             f"box=os.path.join({str(bus)!r}, 'box')\n"
@@ -91,14 +116,13 @@ def _run_t1(base):
             "ok=False\n"
             "try:\n"
             "    s=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\n"
-            f"    s.connect(os.path.join(box,'victim','sock'))\n"
+            "    s.connect(os.path.join(box,'victim','sock'))\n"
             "    ok=True\n"
             "except OSError:\n"
             "    ok=False\n"
             "print(json.dumps({'siblings': siblings, 'connected': ok}))\n"
         )
         argv = agent_argv(prof, str(ws), node="attacker", ask_bus_dir=str(bus))
-        # troca o launch interativo pelo probe: roda o python do probe DENTRO do mesmo bwrap
         i = argv.index("--")
         wrapped = argv[:i + 1] + ["python3", "-c", probe]
         import subprocess
