@@ -106,6 +106,9 @@ def agent_argv(
         rw_paths=rw,
         shared_paths=shared,
         setenv=setenv,
-        # some a raiz das contas de TODO nó, inclusive default (E5); root injetável (teste)
+        # some a raiz das contas de TODO nó, inclusive default (E5); root injetável (teste).
+        # A máscara das boxes IRMÃS do ask-bus (S1) mora no PRÓPRIO wrap() — cobre TODO spawn
+        # (interativo + headless/floro), não só este caminho; a própria box reaparece por
+        # `shared_paths=[box]` (ordem tmpfs→bind no wrap).
         mask_paths=mask_paths(account.root if account is not None else None),
     )

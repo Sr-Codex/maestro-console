@@ -156,6 +156,7 @@ def test_wrap_mask_antes_do_bind_da_propria_conta(tmp_path, monkeypatch):
 
 def test_wrap_mask_inexistente_e_pulada(tmp_path, monkeypatch):
     monkeypatch.setattr(sandbox, "bwrap_available", lambda: True)
+    monkeypatch.setenv("MAESTRO_HOME", str(tmp_path))  # isola: sem <home>/ask-bus/box real (S1)
     ws = tmp_path / "ws"
     ws.mkdir()
     args = sandbox.wrap(["cli"], workspace=ws, mask_paths=[str(tmp_path / "nao-existe")])
