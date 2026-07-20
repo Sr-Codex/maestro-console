@@ -2636,9 +2636,10 @@ class CanvasWindow:
             self._sock_server.remove_node(nid)
         self._agent_nids.discard(nid)  # sai do fleet
         self._recruited_by.pop(nid, None)  # sai da linhagem
-        self.model.clear_node_cfg(nid, "session")  # unload A′: id órfão não herda sessão morta
-        self.model.clear_node_cfg(nid, "unloaded")  # unload B: nem a flag de descarregado
-        self.model.clear_node_cfg(nid, "orphan")  # reattach R2: id reciclado não nasce órfão
+        # C2 (review docs/33): apaga TODO o estado por-nó — não só session/unloaded/orphan.
+        # Sem isto, account/autoapprove/maestro/role/... ficavam órfãos e o id reciclado por
+        # _unique_nid herdava a conta/credencial + o bypass de permissão do nó fechado.
+        self.model.purge_node_state(nid)
         self._ram_alerted.discard(nid)  # unload D: id reciclado não herda alerta de RAM
         base = self._agent_base(nid)  # desregistra a INSTÂNCIA do controller (libera o id)
         if self.controller is not None and base is not None and nid != base:

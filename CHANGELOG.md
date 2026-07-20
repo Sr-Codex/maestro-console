@@ -3,6 +3,19 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.68.0] — 2026-07-20 — fix(canvas): fechar nó apaga TODO o estado por-nó (C2 do review de produção)
+Corrige o bug **C2** do review de prontidão-pra-produção (`docs/33`, achado provado em runtime):
+`_close_node` limpava só `session`/`unloaded`/`orphan`, deixando `account`, `autoapprove`,
+`maestro`, `role`, `command`, `cwd`, `env`, `birth_group`, nome e tamanho **órfãos** no
+`ui_state`. Como `_unique_nid` **recicla** o id do nó fechado, um nó novo herdava a **conta/
+credencial** e o **bypass de permissão** do nó anterior (vazamento de conta + escalada de
+privilégio, em uso normal — sem depender de Maestro mode). **Fix:** novo `Store.delete_ui_prefix`
+(apaga por PREFIXO, com escape de metacaractere LIKE) + `CanvasModel.purge_node_state(nid)` que
+limpa `nodecfg_{nid}_*` inteiro + nome + tamanho; `_close_node` passa a chamá-lo. Limpar por
+prefixo (não chave-a-chave) fecha a classe: uma chave de config nova entra coberta de graça.
+Testes: `tests/test_close_node_purge.py` (gi-free, roda no CI — 4 casos incl. não-varrer irmãos
+e escape do LIKE); regressão provada no harness de runtime do review (canvas real sob Xvfb).
+
 ## [0.67.0] — feat(canvas): paste/drag de imagem e arquivo pro nó (`docs/32`)
 Fecha a dor "mostrar uma imagem/arquivo pro agente sem digitar caminho" (5+ concorrentes
 sofrem; no Linux, paste de imagem direto no CLI é não-confiável por design — caminho de
