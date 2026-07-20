@@ -6,6 +6,118 @@ usuário no review de produção, `docs/33` A8, 2026-07-18): toda entrada nova c
 data no título — `## [X.Y.Z] — AAAA-MM-DD — resumo`; entradas ≤0.67.0 ficam sem data
 (histórico, não retroagir).
 
+## [0.71.0] — 2026-07-20 — fix(seg): control-plane web exige token + esconde o token do agente (S4 do review)
+Corrige o bug **S4** do review de prontidão-pra-produção (`docs/33`) — "P0-quando-Web-UI-ligada".
+O `require_token = not is_local(host)` isentava o localhost de token em TODO `/api/`; um agente
+co-local (netns compartilhado, sem `--unshare-net`) alcança `127.0.0.1:8765` e forjava autoridade
+no control-plane (`/api/execute`, `/api/teams`, `/api/resume`...) sem token. Agravante: o token
+vive em `{base}/web_token` sob `$HOME` → o agente o LÊ pelo `--ro-bind / /` (mesmo root do S1),
+então só exigir token seria teatro. **Fix (decisão do usuário: B + X):**
+- **B — mutadores exigem token SEMPRE** (inclusive localhost): o middleware passa a exigir token
+  em todo método não-GET de `/api/` (execute/cancel/resume, teams POST/DELETE, positions/viewport
+  POST). Leitura (GET) mantém a isenção de localhost (só disclosure, sem atrito p/ ver a UI).
+- **X — esconder o token do sandbox**: o PRÓPRIO `sandbox.wrap()` overlaya `<home>/web_token`
+  com `--ro-bind /dev/null` (o agente lê inacessível, nunca o segredo) — na CAMADA de sandbox,
+  cobre interativo E headless/floor. Path via `security.web_token_path(base)` (fonte ÚNICA,
+  usada por serve/boot/sandbox — não divergem).
+- `serve()` imprime o token SEMPRE; frontend relabelado ("token do terminal — necessário p/ ações").
+- **Boot do canvas cria o token EAGER** (`ensure_token` no start) — o bwrap só monta o overlay se
+  o arquivo já existe no spawn; sem isto, lançar agentes antes de `maestro web` rodar a 1ª vez
+  deixaria o token legível.
+
+**Correções pós-revisão adversarial (Fable) do próprio PR:** (1) o overlay era condicional à
+existência do token no spawn — se o canvas lançasse agentes antes da web rodar, o token vazava
+(fechado pelo `ensure_token` eager no boot); (2) o `secret_files` era populado só no `agent_argv`
+(interativo) — o `run_agent` (headless/floor) NÃO escondia o token; movido pra dentro do `wrap()`,
+cobre todo caminho; (3) path do token duplicado em 2 sítios → `web_token_path` único.
+Testes: `tests/test_s4_control_plane.py` (gi-free, CI — mutador sem token=401, leitura aberta,
+token escondido no wrap p/ interativo E headless; prova de mutação); prova sob bwrap REAL de que
+o agente (headless) lê o token vazio/inacessível. Testes web existentes mandam o token na mutação.
+
+## [0.70.0] — 2026-07-20 — fix(seg): isola as boxes de socket entre agentes (S1 CRÍTICO do review)
+Corrige o bug **S1 (CRÍTICO)** do review de prontidão-pra-produção (`docs/33`) — spoof total de
+identidade no Maestro mode, provado em runtime. O `--ro-bind / /` do sandbox reexpõe
+`<bus>/box/<todos>` (o ask-bus vive sob `$HOME`); um agente hostil fazia `connect(<bus>/box/
+<vítima>/sock)` — conexão a socket pathname NÃO é bloqueada pelo mount read-only — e o host
+carimbava `frm=vítima` pelo listener que aceitou → emitia `dismiss`/`reassign`/`recruit`/`wire`
+**como a vítima**, usando a linhagem host-only dela. **Colapsava o invariante-mãe do ADR-17**
+("a segurança vem da AUSÊNCIA do mount das boxes irmãs" — falso: o `--ro-bind / /` monta tudo).
+Reabria o confused-deputy que os ADR-18/21 declararam fechado. **Fix (padrão E5 das contas):** o
+PRÓPRIO `sandbox.wrap()` mascara `<home>/ask-bus/box` com tmpfs em TODO spawn — as boxes irmãs
+somem; a PRÓPRIA box reaparece pelo bind de `shared_paths` (ordem tmpfs→bind já validada). A
+máscara mora na **camada de sandbox, não no chamador**. Até este fix, o Maestro mode devia ficar
+OFF (a trava default-OFF era o que segurava o risco). **Fecha também a lacuna de teste T1** (Fase 4):
+`tests/test_sock_isolation.py` — unit gi-free (interativo E headless mascaram, roda no CI) + o
+teste sob **bwrap REAL** (gated `MAESTRO_LIVE`) que FALTAVA; provado que FALHA sem o fix (box irmã
+visível) e passa com ele. Bus FORA de `/tmp` (senão o `--tmpfs /tmp` mascara por acidente = vácuo).
+
+**Correção pós-revisão adversarial (Fable) do próprio PR:** a v1 punha a máscara em `agent_argv`
+(SÓ o spawn INTERATIVO) — o CHANGELOG dizia "TODO spawn" mas era falso: `run_agent` (headless/
+**floor**, `agent_run.py`) chama `sandbox.wrap` direto e NÃO mascarava → o mesmo spoof continuava
+por esse caminho (PoC-provado sob bwrap real: floor enxerga E conecta na box da vítima). A máscara
+foi MOVIDA pra dentro do `sandbox.wrap()` (cobre interativo + headless/floor + qualquer caminho
+futuro, sem depender de disciplina do chamador). Teste novo `test_headless_floor_tambem_mascara`
+(prova de mutação: falha sem o fix no wrap).
+
+## [0.69.0] — 2026-07-20 — fix(seg): stamp de brief/role não segue symlink → escrita no host (S2 do review)
+Corrige o bug **S2** do review de prontidão-pra-produção (`docs/33`) — co-manchete com o S1 por
+ser explorável **sem opt-in nenhum** (brief/role de equipe é uso normal). O workspace de cada
+agente é RW pro próprio agente; o host (que NÃO roda em sandbox) carimba brief/role em
+`CLAUDE.md`/`AGENTS.md`/`role.json` nesse workspace a cada start. Um agente hostil trocava o
+arquivo (ou um pai como `.maestri`) por um **symlink** pra um alvo no host (`~/.bashrc`,
+`~/.ssh/authorized_keys`) e o write do host o **seguia** → escrita arbitrária no host
+(reintroduz a escrita-arb que o ADR-17 eliminou ao trocar mailbox-de-arquivo por socket).
+**Fix:** novo `engine/safe_fs.py` (`safe_write_text`/`safe_read_text`) **TOCTOU-safe** — desce de
+`within` (root host-controlado) componente a componente com `O_NOFOLLOW` via `dir_fd`; um pai
+symlinkado é recusado NO open (não numa checagem prévia de `realpath` que uma race furaria), e o
+arquivo final abre com `O_NOFOLLOW` (se já é symlink, remove o LINK e recria regular). Aplicado em
+**TODAS** as entradas que o host carimba no workspace do agente — `briefs.py` (install/remove),
+`roles.py` (`write_role_files`/`write_role_sidecar`/`install_role_block`/`remove_role_block`) e
+`ask_bus.py` (`install_maestro_skill`/`install_ask_skill`/`install_connected_notes_skill`).
+**Correções pós-revisão adversarial (Fable) do próprio PR:** a v1 (a) deixou 4 stampers de fora
+(`ask_bus` + `remove_role_block`) — ainda escreviam no host via symlink, PoC-provado; e (b) usava
+`realpath` check-then-open, vulnerável a **race no pai** (swap concorrente de `.maestri`→symlink na
+janela) — PoC venceu na 2ª iteração. Ambos fechados aqui. Testes: `tests/test_safe_fs.py` (gi-free,
+CI — 14 casos: symlink de arquivo/pai/intermediário, `..`, **race concorrente do pai** provada
+não-vácua, e as 6 entradas reais).
+
+## [0.68.0] — 2026-07-20 — fix(canvas): ciclo de vida do nó — 3 bugs do review de produção (C2/C3/C7)
+Corrige três bugs de ciclo de vida do nó achados no review de prontidão-pra-produção (`docs/33`),
+todos da classe "invariante aplicado numa entrada, esquecido na irmã". C2 e C3 provados em
+runtime (canvas real sob Xvfb).
+
+**C2 — fechar nó vazava estado por id reciclado.** `_close_node` limpava só `session`/`unloaded`/
+`orphan`, deixando `account`, `autoapprove`, `maestro`, `role`, `command`, `cwd`, `env`,
+`birth_group`, nome e tamanho **órfãos** no `ui_state`. Como `_unique_nid` **recicla** o id, um nó
+novo herdava a **conta/credencial** e o **bypass de permissão** do anterior (vazamento de conta +
+escalada, em uso normal — sem Maestro mode). Fix: `Store.delete_ui_prefix` (apaga por PREFIXO,
+escape de metacaractere LIKE) + `CanvasModel.purge_node_state(nid)` (limpa `nodecfg_{nid}_*` +
+nome + tamanho); `_close_node` chama purge. Por prefixo fecha a classe (chave nova entra coberta).
+**Endurecido pós-revisão adversarial (Fable):** a v1 fechava só o trilho `ui_state`/`nodecfg`; a
+CLASSE seguia aberta em 3 estados por-nid — a **sessão da tabela `sessions` da engine** (o id
+reciclado RETOMARIA a conversa do nó morto via `--resume`; agora `_close_node` chama
+`Store.delete_session`), `usage_{nid}` (o $ do HUD herdaria) e `budget_last_{nid}` (baseline stale
+subcontaria a frota — ADR-22). `purge_node_state` passou a limpar os dois últimos.
+
+**C3 — kill-switch derrotável por race.** `_kill_all_agents` dava SIGKILL sem zerar o respawn em
+voo (`_respawn_state`/`_respawn_pending`/`_respawn_force_src`), então um respawn "killing" fazia o
+`_on_child_exited` **ressuscitar** o nó logo após o kill-switch — a mesma race que o `_unload_node`
+já fechava (ADR-23). Fix: guard extraído p/ `_disarm_respawn(term)`, agora chamado nos DOIS
+caminhos de kill (unload + kill-switch) — um 3º caminho futuro não repete o bug.
+
+**C7 — detecção de órfão lia o config-dir errado.** `_acct_cfg_dir` (boot) chamava
+`accounts.resolve(st, nid)` **sem o `base`** do agente, divergindo dos outros 4 pontos de
+resolução. Com contas homônimas em agentes diferentes (ou associação órfã), o config-dir saía
+errado/None → o transcript do crash no dir da conta não era achado → o nó de crash **não virava
+órfão** (perda de recuperação). Fix: passa o base derivado do roster (`_base_of`) — com fallback
+`or nid` (paridade com os outros pontos: spec de agente sem `base` resolve com `agent=nid`, não
+`None`, senão pularia a síntese da conta órfã e cairia no dir default — o próprio C7 num sub-caso).
+
+Testes: `tests/test_close_node_purge.py` (C2, gi-free — 4 casos incl. não-varrer irmãos e escape
+do LIKE), `test_kill_all_desarma_respawn_em_voo` (C3, gi), `test_c7_base_desambigua_homonimos_
+config_dir` (C7, gi-free). Suíte: 604 venv + 69 gi de ciclo de vida verdes; harness de runtime do
+review confirma C2 e C3 corrigidos.
+
 ## [0.67.0] — feat(canvas): paste/drag de imagem e arquivo pro nó (`docs/32`)
 Fecha a dor "mostrar uma imagem/arquivo pro agente sem digitar caminho" (5+ concorrentes
 sofrem; no Linux, paste de imagem direto no CLI é não-confiável por design — caminho de

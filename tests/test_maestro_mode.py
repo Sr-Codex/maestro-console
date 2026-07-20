@@ -241,6 +241,26 @@ def test_kill_all_ceifa_e_desarma(tmp_path):
     assert any(e["event"] == "kill_all" and e["killed"] == 2 for e in read_events(tmp_path))
 
 
+def test_kill_all_desarma_respawn_em_voo(tmp_path):
+    """C3 (review docs/33): kill-switch com respawn EM VOO ("killing"/pending) deve zerar o
+    estado ANTES do SIGKILL — senão o _on_child_exited RESSUSCITA o nó logo após, derrotando
+    o kill-switch (a mesma race que o _unload_node já fechava; faltava aqui)."""
+    import signal
+
+    w, _ = _make_win()
+    w._ask_bus_dir = str(tmp_path)
+    w._agent_nids = {"a1"}
+    t = SimpleNamespace(_respawn_state="killing", _respawn_pending=True, _respawn_force_src=None)
+    w.frames = {"a1": SimpleNamespace(_term=t)}
+    w._signal_child = lambda term, sig: True
+
+    CanvasWindow._kill_all_agents(w)
+
+    assert t._respawn_state == "idle"      # desarmado
+    assert t._respawn_pending is False     # sem restart pendente → não ressuscita
+    assert signal.SIGKILL  # (import usado)
+
+
 def test_profundidade_da_arvore(tmp_path):
     """Linhagem host-derivada: mgr→a1→a2 ok; a2 (profundidade 2) NÃO pode recrutar mais."""
     w, created = _make_win()
