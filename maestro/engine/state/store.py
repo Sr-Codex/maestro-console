@@ -665,3 +665,17 @@ class Store:
         """Remove a linha de ui_state (idempotente) — p/ limpar estado por-nó ao fechar."""
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM ui_state WHERE k=?", (key,))
+
+    def delete_ui_prefix(self, prefix: str) -> None:
+        """Remove TODAS as linhas de ui_state cujo k começa com `prefix` (idempotente).
+
+        Escapa os metacaracteres de LIKE (`%`, `_`, `\\`) do prefixo p/ que ele case
+        LITERALMENTE — ids de nó contêm caracteres que o LIKE interpretaria (ex.: o `_`
+        do próprio `nodecfg_`). Usado ao FECHAR um nó p/ apagar de uma vez toda a config
+        por-nó (`nodecfg_{nid}_*`) — enumerar chaves conhecidas dessincronizaria quando
+        uma chave nova é adicionada (a classe de bug do id reciclado que herda estado)."""
+        esc = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        with self._lock, self._conn:
+            self._conn.execute(
+                "DELETE FROM ui_state WHERE k LIKE ? ESCAPE '\\'", (esc + "%",)
+            )

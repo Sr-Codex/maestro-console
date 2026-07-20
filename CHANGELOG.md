@@ -3,6 +3,43 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.68.0] — 2026-07-20 — fix(canvas): ciclo de vida do nó — 3 bugs do review de produção (C2/C3/C7)
+Corrige três bugs de ciclo de vida do nó achados no review de prontidão-pra-produção (`docs/33`),
+todos da classe "invariante aplicado numa entrada, esquecido na irmã". C2 e C3 provados em
+runtime (canvas real sob Xvfb).
+
+**C2 — fechar nó vazava estado por id reciclado.** `_close_node` limpava só `session`/`unloaded`/
+`orphan`, deixando `account`, `autoapprove`, `maestro`, `role`, `command`, `cwd`, `env`,
+`birth_group`, nome e tamanho **órfãos** no `ui_state`. Como `_unique_nid` **recicla** o id, um nó
+novo herdava a **conta/credencial** e o **bypass de permissão** do anterior (vazamento de conta +
+escalada, em uso normal — sem Maestro mode). Fix: `Store.delete_ui_prefix` (apaga por PREFIXO,
+escape de metacaractere LIKE) + `CanvasModel.purge_node_state(nid)` (limpa `nodecfg_{nid}_*` +
+nome + tamanho); `_close_node` chama purge. Por prefixo fecha a classe (chave nova entra coberta).
+**Endurecido pós-revisão adversarial (Fable):** a v1 fechava só o trilho `ui_state`/`nodecfg`; a
+CLASSE seguia aberta em 3 estados por-nid — a **sessão da tabela `sessions` da engine** (o id
+reciclado RETOMARIA a conversa do nó morto via `--resume`; agora `_close_node` chama
+`Store.delete_session`), `usage_{nid}` (o $ do HUD herdaria) e `budget_last_{nid}` (baseline stale
+subcontaria a frota — ADR-22). `purge_node_state` passou a limpar os dois últimos.
+
+**C3 — kill-switch derrotável por race.** `_kill_all_agents` dava SIGKILL sem zerar o respawn em
+voo (`_respawn_state`/`_respawn_pending`/`_respawn_force_src`), então um respawn "killing" fazia o
+`_on_child_exited` **ressuscitar** o nó logo após o kill-switch — a mesma race que o `_unload_node`
+já fechava (ADR-23). Fix: guard extraído p/ `_disarm_respawn(term)`, agora chamado nos DOIS
+caminhos de kill (unload + kill-switch) — um 3º caminho futuro não repete o bug.
+
+**C7 — detecção de órfão lia o config-dir errado.** `_acct_cfg_dir` (boot) chamava
+`accounts.resolve(st, nid)` **sem o `base`** do agente, divergindo dos outros 4 pontos de
+resolução. Com contas homônimas em agentes diferentes (ou associação órfã), o config-dir saía
+errado/None → o transcript do crash no dir da conta não era achado → o nó de crash **não virava
+órfão** (perda de recuperação). Fix: passa o base derivado do roster (`_base_of`) — com fallback
+`or nid` (paridade com os outros pontos: spec de agente sem `base` resolve com `agent=nid`, não
+`None`, senão pularia a síntese da conta órfã e cairia no dir default — o próprio C7 num sub-caso).
+
+Testes: `tests/test_close_node_purge.py` (C2, gi-free — 4 casos incl. não-varrer irmãos e escape
+do LIKE), `test_kill_all_desarma_respawn_em_voo` (C3, gi), `test_c7_base_desambigua_homonimos_
+config_dir` (C7, gi-free). Suíte: 604 venv + 69 gi de ciclo de vida verdes; harness de runtime do
+review confirma C2 e C3 corrigidos.
+
 ## [0.67.0] — feat(canvas): paste/drag de imagem e arquivo pro nó (`docs/32`)
 Fecha a dor "mostrar uma imagem/arquivo pro agente sem digitar caminho" (5+ concorrentes
 sofrem; no Linux, paste de imagem direto no CLI é não-confiável por design — caminho de

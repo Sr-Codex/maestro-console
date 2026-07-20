@@ -84,6 +84,10 @@ def test_close_node_limpa_sessao_persistida(tmp_path, monkeypatch):
     _write_session(tmp_path, ws, "sid-doomed", mtime=2000)
     w._capture_node_session(nid)
     assert w._node_session(nid) == "sid-doomed"
+    # C2 (revisão): a sessão da tabela `sessions` da ENGINE também tem de sumir, senão o id
+    # reciclado RETOMA a conversa do nó morto via --resume.
+    store.set_session(nid, "engine-sid-doomed")
+    assert store.get_session(nid) == "engine-sid-doomed"
 
     # setup mínimo p/ _close_node rodar a limpeza e retornar cedo (nó sem frame):
     w._set_node_monitor = lambda *_a, **_k: None
@@ -97,5 +101,6 @@ def test_close_node_limpa_sessao_persistida(tmp_path, monkeypatch):
     w.frames = {}  # sem frame → retorna após a limpeza
 
     w._close_node(nid)
-    assert w._node_session(nid) == ""  # sessão apagada
+    assert w._node_session(nid) == ""  # sessão VTE (nodecfg) apagada
+    assert store.get_session(nid) is None  # C2: sessão da engine apagada (não retoma)
     store.close()

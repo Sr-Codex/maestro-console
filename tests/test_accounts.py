@@ -119,6 +119,23 @@ def test_resolve_associacao_orfa_nunca_cai_pro_default(store, tmp_path):
     assert acc.resolve(store, "claude-2", None, root=tmp_path / "accounts") is None
 
 
+def test_c7_base_desambigua_homonimos_config_dir(store, tmp_path):
+    """C7 (review docs/33): contas HOMÔNIMAS em agentes diferentes têm config_dir DISTINTO
+    — resolver depende do `agent` base. O `_acct_cfg_dir` da detecção de órfão TEM de passar
+    o base (como os outros 4 pontos): sem ele, o transcript no dir da conta certa não é achado
+    e o nó de crash não é marcado órfão (perda de recuperação)."""
+    root = tmp_path / "accounts"
+    acc.add_account(store, "trabalho", "claude", root=root)
+    acc.add_account(store, "trabalho", "codex", root=root)  # mesmo nome, outro agente
+    store.set_ui("nodecfg_claude-2_account", "trabalho")
+    a_claude = acc.resolve(store, "claude-2", "claude", root=root)
+    a_codex = acc.resolve(store, "claude-2", "codex", root=root)
+    assert a_claude is not None and a_claude.agent == "claude"
+    assert a_codex is not None and a_codex.agent == "codex"
+    # o base MUDA o dir → um caller que o omite (o bug C7) não tem como acertar
+    assert a_claude.config_dir() != a_codex.config_dir()
+
+
 # --- sandbox: máscara tmpfs (E5) + substituição (E1) -------------------------
 
 

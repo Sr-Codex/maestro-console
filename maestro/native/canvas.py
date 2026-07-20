@@ -2636,9 +2636,14 @@ class CanvasWindow:
             self._sock_server.remove_node(nid)
         self._agent_nids.discard(nid)  # sai do fleet
         self._recruited_by.pop(nid, None)  # sai da linhagem
-        self.model.clear_node_cfg(nid, "session")  # unload A′: id órfão não herda sessão morta
-        self.model.clear_node_cfg(nid, "unloaded")  # unload B: nem a flag de descarregado
-        self.model.clear_node_cfg(nid, "orphan")  # reattach R2: id reciclado não nasce órfão
+        # C2 (review docs/33): apaga TODO o estado por-nó — não só session/unloaded/orphan.
+        # Sem isto, account/autoapprove/maestro/role/... ficavam órfãos e o id reciclado por
+        # _unique_nid herdava a conta/credencial + o bypass de permissão do nó fechado.
+        self.model.purge_node_state(nid)  # ui_state: cfg + nome/tamanho + usage + budget_last
+        # A sessão da engine (tabela `sessions`) NÃO é ui_state → apaga à parte, senão o id
+        # reciclado RETOMA a conversa do nó morto via --resume (C2 no trilho engine).
+        if self._store is not None:
+            self._store.delete_session(nid)
         self._ram_alerted.discard(nid)  # unload D: id reciclado não herda alerta de RAM
         base = self._agent_base(nid)  # desregistra a INSTÂNCIA do controller (libera o id)
         if self.controller is not None and base is not None and nid != base:
@@ -3403,6 +3408,21 @@ class CanvasWindow:
                 return False
         return False
 
+    @staticmethod
+    def _disarm_respawn(term) -> None:
+        """Desarma um respawn em voo ANTES de matar o processo (anti-race do ADR-23).
+
+        Sem isto, um `_respawn_state=="killing"`/`_respawn_pending` faz o `_on_child_exited`
+        RESSUSCITAR o nó logo após o SIGKILL. Vale para TODO caminho que mata um agente —
+        `_unload_node` E o kill-switch `_kill_all_agents` (C3 do review docs/33: o guard
+        existia só no unload; a mesma race derrotava o kill-switch)."""
+        term._respawn_state = "idle"
+        term._respawn_pending = False
+        src = getattr(term, "_respawn_force_src", None)
+        if src:
+            GLib.source_remove(src)
+            term._respawn_force_src = None
+
     def _on_child_exited(self, term, _status, nid) -> None:
         """Handler PERSISTENTE de child-exited (1x por terminal). Invalida o PID (já reapeado →
         reciclável) e, se havia um restart pendente, respawna DEFERIDO (fora do stack do sinal)."""
@@ -3900,14 +3920,7 @@ class CanvasWindow:
         self._capture_node_session(nid)  # A′: persiste a sessão viva ANTES de matar
         self._set_node_monitor(nid, False)  # senão a morte vira falso "é sua vez"
         self._mon_alerted.discard(nid)
-        # anti-race (revisão Fable): um respawn em voo ("killing"/pending) faria o
-        # _on_child_exited RESSUSCITAR o nó logo após o unload — zera antes do kill.
-        term._respawn_state = "idle"
-        term._respawn_pending = False
-        src = getattr(term, "_respawn_force_src", None)
-        if src:
-            GLib.source_remove(src)
-            term._respawn_force_src = None
+        self._disarm_respawn(term)  # anti-race ADR-23: respawn em voo ressuscitaria pós-kill
         killed = self._signal_child(term, signal.SIGKILL)  # bwrap colapsa a árvore
         term.feed(f"\r\n  {UNLOADED_HINT}\r\n".encode())  # ensina como retomar (Bloco C)
         self.model.set_node_cfg(nid, "unloaded", "1")  # persiste: "abre igual fechou"
@@ -4895,7 +4908,10 @@ class CanvasWindow:
         killed = 0
         for nid in nids:
             term = getattr(self.frames.get(nid), "_term", None)
-            if term is not None and self._signal_child(term, signal.SIGKILL):
+            if term is None:
+                continue
+            self._disarm_respawn(term)  # C3: senão um respawn em voo ressuscita pós-kill-switch
+            if self._signal_child(term, signal.SIGKILL):
                 killed += 1
         for nid in list(self.frames):  # desarma TODOS os managers (re-armar é manual)
             if self.model.node_cfg(nid, "maestro"):
@@ -8235,8 +8251,16 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         # Reattach (docs/25 §4-R2): se o run anterior crashou, marca nós-agente com transcript
         # no disco como órfãos (unloaded + flag `orphan`) ANTES de montar os cards → nascem sem
         # processo (RAM zero); o usuário escolhe Reanexar/Novo/Arquivar (R3).
+        _base_of = {s.get("nid"): s.get("base") for s in roster}
+
         def _acct_cfg_dir(nid: str) -> str | None:  # docs/31 E3: transcript no dir da conta
-            a = accounts.resolve(st, nid)
+            # C7 (review docs/33): passa o `base` do agente (como os outros 4 pontos de
+            # resolução, ex. _acct_cfg em 3324) — sem ele, contas HOMÔNIMAS em agentes
+            # diferentes resolvem pro config_dir errado e o nó de crash não é marcado órfão.
+            # `or nid` = a MESMA paridade do _agent_base (3330) e da montagem de cards: um spec
+            # de agente sem `base` resolve com agent=nid (sintetiza órfã), não com None (que
+            # pularia a síntese → config_dir None → cairia no dir default — o próprio C7).
+            a = accounts.resolve(st, nid, _base_of.get(nid) or nid)
             return str(a.config_dir()) if a is not None else None
 
         detect_orphans(model, roster, state.get("crashed", False), f"{base}/workspaces",
