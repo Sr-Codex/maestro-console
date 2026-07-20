@@ -199,5 +199,42 @@ caçar a lacuna de cobertura que deixou o S1 passar.
 cobertura opt-in não exercitada neste review; o `sandbox_live` (o mais relevant p/ segurança)
 foi rodado e passou.
 ## Fase 5 — Runtime no device (prova real) — ⏳ pendente
-## Fase 6 — UX por estado — ⏳ pendente
+## Fase 6 — UX por estado — ✅ CONCLUÍDA 2026-07-20
+
+**Método:** workflow multi-agente (16 agentes, ~17 min) — 5 auditores Opus por família de
+controle (ciclo de vida, Maestro/budget/HUD, ícones de estado, persistência, diálogos/cápsulas)
+contra as 2 regras do projeto: **(A) honestidade por estado** (rótulo/tooltip diz a verdade em
+CADA estado — a lição do ⏏ órfão) e **(B) persistência "abre igual fechou"**. Cada achado
+refutado pelo Fable. 11 brutos → **8 confirmados, 3 refutados.**
+
+### Veredito da fase
+
+A regra da honestidade por estado foi **bem aprendida no geral** — os tooltips de ciclo de vida,
+o HUD de budget ("pausado por budget" nunca vira "falhou"), os ícones de estado e a maioria das
+persistências passaram (refutados com prova). Mas sobrou um **cluster de ações destrutivas sem
+confirmação** (4 controles) e **2 defeitos de honestidade em estados específicos** — sendo 1 que
+toca segurança (o checkbox de permissão que mente com Maestro mode ligado).
+
+### Achados (U1..U8)
+
+| # | Sev | Onde | O que |
+|---|-----|------|-------|
+| U1 | 🔴 alta | `canvas.py:2296` | **No nó órfão, o 🗑 diz "Arquivar — o trabalho no disco fica"** mas roda o MESMO caminho do ✕: descarta a sessão retomável do crash. O menu contrasta ✧ ("descarta a sessão") com 🗑 ("arquiva") como se 🗑 preservasse — os dois apagam igual. O diálogo de confirmação até avisa a verdade, mas o tooltip/hint que leva até ele (e o `ORPHAN_HINT`, que aparece sem diálogo) mentem. É a **reincidência exata da lição do ⏏ órfão**, noutro botão. |
+| U2 | 🟡 média | `canvas.py:1874` | **Checkbox "Permissão total" mostra DESMARCADO enquanto o nó com Maestro mode ligado JÁ roda sem prompts** — `_node_auto_approve` faz `OR(maestro, autoapprove)`, então o toggle diz "off / pede permissão" enquanto o efetivo é "sem prompts". Toca segurança: o usuário acha que está pedindo confirmação e não está. Precisa de acoplamento ou nota. |
+| U3 | 🟡 média | `canvas.py:2419` | **Clicar no corpo do terminal do órfão retoma a sessão silenciosamente** (limpa a flag `orphan`, some o âmbar, respawna com `--resume`) — mas o `ORPHAN_HINT` nunca avisa isso, ao contrário do hint do descarregado. O usuário não consegue clicar pra ler/decidir sem já pré-decidir a recuperação. |
+| U4 | 🟡 média | `canvas.py:7564` | **"Excluir" template de equipe apaga na hora, SEM confirmação** — diverge de excluir conta / apagar grupo / fechar nó (que confirmam). |
+| U5 | 🟡 média | `canvas.py:6017` | **"Remover" floor destrói o worktree/branch isolado na hora, sem confirmação** — perda de trabalho potencial. |
+| U6 | 🟡 média | `canvas.py:8022` | **"Remover" rotina/automação agendada apaga na hora, sem confirmação.** |
+| U7 | 🟡 média | `canvas.py:1133` | **"Apagar nota" (🗑 da pílula) apaga conteúdo do usuário permanentemente, sem confirmação.** |
+| U8 | 🟢 baixa | `canvas.py:618` | **Pan da câmera é só-em-memória** — `_cam` nunca vai pro `ui_state`; ao reabrir, `_fit_view` recentra no conteúdo. O zoom persiste (cuidado explícito), o pan não. Viola a regra (B) para "posição da vista". Atenuante: recenter é deliberado ("mostra tudo ao abrir") e a Web UI persiste viewport — divergência consciente, por isso baixa. |
+
+**Padrão dominante (U4-U7):** quatro ações destrutivas sem o diálogo de confirmação que o resto
+do app aplica — mesma classe "invariante aplicado numas entradas, esquecido noutras". Fix é
+uniforme: passar as 4 pelo `_confirm_dialog` já existente.
+
+**Refutados (corretos, registro):** dot de estado após processo sair sem envelope (o crash-flag/
+órfão já cobre no próximo boot; não é mentira persistente); "⚠ N" contar `blocked` (blocked pode
+sim precisar de você — decisão de design registrada); o próprio U1 numa 2ª instância que citou o
+diálogo honesto (o Fable manteve a 1ª formulação, que aponta o tooltip/hint enganoso ANTES do
+diálogo — a mais forte).
 ## Fase 7 — Veredito adversarial (Fable) — ⏳ pendente
