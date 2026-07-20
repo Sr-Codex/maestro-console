@@ -70,15 +70,19 @@ class CanvasModel:
         self._store.delete_ui(f"nodecfg_{node_id}_{key}")
 
     def purge_node_state(self, node_id: str) -> None:
-        """Apaga TODO o estado persistido por-nó ao FECHAR o nó (✕ = remoção permanente):
-        toda a config (`nodecfg_{nid}_*`, incl. account/autoapprove/maestro/role/...) + o
-        nome + o tamanho. Como `_unique_nid` RECICLA o id, sem isto um nó novo herdaria a
-        conta/credencial e o bypass de permissão do nó fechado (bug C2 do review docs/33).
-        Limpar por PREFIXO (não chave-a-chave) é o que fecha a classe: chave nova entra
-        coberta de graça."""
+        """Apaga TODO o estado persistido por-nó no `ui_state` ao FECHAR o nó (✕ = remoção
+        permanente): a config (`nodecfg_{nid}_*`, incl. account/autoapprove/maestro/role/...),
+        o nome, o tamanho, o **custo acumulado** (`usage_{nid}`) e o **baseline de budget**
+        (`budget_last_{nid}`). Como `_unique_nid` RECICLA o id, sem isto um nó novo herdaria a
+        conta/credencial + bypass (C2 do review docs/33), o $ do HUD e um baseline stale que
+        subcontaria o gasto da frota. Limpar por PREFIXO (não chave-a-chave) fecha a classe:
+        chave `nodecfg` nova entra coberta de graça. (A sessão da tabela `sessions` da engine
+        não é `ui_state` — quem fecha o nó chama `Store.delete_session` à parte.)"""
         self._store.delete_ui_prefix(f"nodecfg_{node_id}_")
         self._store.delete_ui(f"nodename_{node_id}")
         self._store.delete_ui(f"nodesize_{node_id}")
+        self._store.delete_ui(f"usage_{node_id}")  # HUD $ não herda do nó morto
+        self._store.delete_ui(f"budget_last_{node_id}")  # baseline stale subcontaria a frota
 
     def node_roster(self) -> list[dict]:
         """Lista persistida dos terminais do canvas: [{nid, kind: agent|shell, base}].

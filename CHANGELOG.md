@@ -15,6 +15,11 @@ novo herdava a **conta/credencial** e o **bypass de permissão** do anterior (va
 escalada, em uso normal — sem Maestro mode). Fix: `Store.delete_ui_prefix` (apaga por PREFIXO,
 escape de metacaractere LIKE) + `CanvasModel.purge_node_state(nid)` (limpa `nodecfg_{nid}_*` +
 nome + tamanho); `_close_node` chama purge. Por prefixo fecha a classe (chave nova entra coberta).
+**Endurecido pós-revisão adversarial (Fable):** a v1 fechava só o trilho `ui_state`/`nodecfg`; a
+CLASSE seguia aberta em 3 estados por-nid — a **sessão da tabela `sessions` da engine** (o id
+reciclado RETOMARIA a conversa do nó morto via `--resume`; agora `_close_node` chama
+`Store.delete_session`), `usage_{nid}` (o $ do HUD herdaria) e `budget_last_{nid}` (baseline stale
+subcontaria a frota — ADR-22). `purge_node_state` passou a limpar os dois últimos.
 
 **C3 — kill-switch derrotável por race.** `_kill_all_agents` dava SIGKILL sem zerar o respawn em
 voo (`_respawn_state`/`_respawn_pending`/`_respawn_force_src`), então um respawn "killing" fazia o
@@ -26,7 +31,9 @@ caminhos de kill (unload + kill-switch) — um 3º caminho futuro não repete o 
 `accounts.resolve(st, nid)` **sem o `base`** do agente, divergindo dos outros 4 pontos de
 resolução. Com contas homônimas em agentes diferentes (ou associação órfã), o config-dir saía
 errado/None → o transcript do crash no dir da conta não era achado → o nó de crash **não virava
-órfão** (perda de recuperação). Fix: passa o base derivado do roster (`_base_of`).
+órfão** (perda de recuperação). Fix: passa o base derivado do roster (`_base_of`) — com fallback
+`or nid` (paridade com os outros pontos: spec de agente sem `base` resolve com `agent=nid`, não
+`None`, senão pularia a síntese da conta órfã e cairia no dir default — o próprio C7 num sub-caso).
 
 Testes: `tests/test_close_node_purge.py` (C2, gi-free — 4 casos incl. não-varrer irmãos e escape
 do LIKE), `test_kill_all_desarma_respawn_em_voo` (C3, gi), `test_c7_base_desambigua_homonimos_

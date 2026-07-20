@@ -19,6 +19,8 @@ def _seed(m, nid):
         m.set_node_cfg(nid, k, f"{nid}-{k}")
     m.set_node_name(nid, f"nome-{nid}")
     m.set_node_size(nid, 800, 600)
+    m._store.set_ui(f"usage_{nid}", "1.23")           # custo acumulado (HUD)
+    m._store.set_ui(f"budget_last_{nid}", "9.99")     # baseline do budget (ADR-22)
 
 
 def test_purge_apaga_toda_a_config_do_no(tmp_path):
@@ -26,11 +28,13 @@ def test_purge_apaga_toda_a_config_do_no(tmp_path):
         m = CanvasModel(store)
         _seed(m, "claude-2")
         m.purge_node_state("claude-2")
-        # nada sobra: nem uma chave de config, nem nome, nem tamanho
+        # nada sobra: nem config, nem nome, nem tamanho, nem custo, nem baseline de budget
         leftover = {k: m.node_cfg("claude-2", k) for k in _CFG if m.node_cfg("claude-2", k)}
         assert not leftover, f"config órfã sobreviveu ao purge: {leftover}"
         assert m.node_name("claude-2", default="") == ""
         assert m.node_size("claude-2", None) is None
+        assert store.get_ui("usage_claude-2") is None          # C2: HUD $ não herda
+        assert store.get_ui("budget_last_claude-2") is None    # C2: baseline não subconta
 
 
 def test_purge_nao_toca_outros_nos(tmp_path):

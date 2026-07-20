@@ -2639,7 +2639,11 @@ class CanvasWindow:
         # C2 (review docs/33): apaga TODO o estado por-nó — não só session/unloaded/orphan.
         # Sem isto, account/autoapprove/maestro/role/... ficavam órfãos e o id reciclado por
         # _unique_nid herdava a conta/credencial + o bypass de permissão do nó fechado.
-        self.model.purge_node_state(nid)
+        self.model.purge_node_state(nid)  # ui_state: cfg + nome/tamanho + usage + budget_last
+        # A sessão da engine (tabela `sessions`) NÃO é ui_state → apaga à parte, senão o id
+        # reciclado RETOMA a conversa do nó morto via --resume (C2 no trilho engine).
+        if self._store is not None:
+            self._store.delete_session(nid)
         self._ram_alerted.discard(nid)  # unload D: id reciclado não herda alerta de RAM
         base = self._agent_base(nid)  # desregistra a INSTÂNCIA do controller (libera o id)
         if self.controller is not None and base is not None and nid != base:
@@ -8253,7 +8257,10 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
             # C7 (review docs/33): passa o `base` do agente (como os outros 4 pontos de
             # resolução, ex. _acct_cfg em 3324) — sem ele, contas HOMÔNIMAS em agentes
             # diferentes resolvem pro config_dir errado e o nó de crash não é marcado órfão.
-            a = accounts.resolve(st, nid, _base_of.get(nid))
+            # `or nid` = a MESMA paridade do _agent_base (3330) e da montagem de cards: um spec
+            # de agente sem `base` resolve com agent=nid (sintetiza órfã), não com None (que
+            # pularia a síntese → config_dir None → cairia no dir default — o próprio C7).
+            a = accounts.resolve(st, nid, _base_of.get(nid) or nid)
             return str(a.config_dir()) if a is not None else None
 
         detect_orphans(model, roster, state.get("crashed", False), f"{base}/workspaces",
