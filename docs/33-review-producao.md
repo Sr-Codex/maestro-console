@@ -261,4 +261,10 @@ uniforme: passar as 4 pelo `_confirm_dialog` já existente.
 sim precisar de você — decisão de design registrada); o próprio U1 numa 2ª instância que citou o
 diálogo honesto (o Fable manteve a 1ª formulação, que aponta o tooltip/hint enganoso ANTES do
 diálogo — a mais forte).
-## Fase 7 — Veredito adversarial (Fable) — ⏳ pendente
+## Fase 7 — Veredito adversarial (Fable) — 🔄 EM CURSO 2026-07-20
+
+Delegado a um agente **Fable 5** (`model: fable`) como advogado do diabo independente, com
+mandato de **validar a CONDUTA do review** (não só reconferir achados): auditar a metodologia,
+TENTAR DERRUBAR o crítico S1 lendo o código real, checar se o harness de runtime (`fase5_repro.py`)
+não é over-mocking que fabrica C2/C3, e apontar super/subestimação ou vetores não cobertos.
+Veredito consolidado será registrado aqui ao retornar.
