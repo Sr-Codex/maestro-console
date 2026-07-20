@@ -79,7 +79,7 @@ def install_brief_block(target_dir: str | Path, goal: str, brief: str, edited: s
         p = d / fname
         # S2 (review docs/33): o workspace é RW pro agente; um CLAUDE.md trocado por symlink
         # faria o host escrever fora do sandbox. safe_* recusa seguir symlink e exige contenção.
-        existing = safe_read_text(p)
+        existing = safe_read_text(p, within=d)
         safe_write_text(p, _replace_block(existing, block), within=d)
 
 
@@ -88,7 +88,7 @@ def remove_brief_block(target_dir: str | Path) -> None:
     d = Path(target_dir)
     for fname in ("CLAUDE.md", "AGENTS.md"):
         p = d / fname
-        existing = safe_read_text(p)  # symlink → "" (não segue)
+        existing = safe_read_text(p, within=d)  # symlink → "" (não segue)
         if not existing:
             continue
         if BRIEF_BLOCK_BEGIN in existing and BRIEF_BLOCK_END in existing:

@@ -20,6 +20,8 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from .safe_fs import safe_read_text, safe_write_text
+
 ASK_MAX_PROMPT_BYTES = 8192  # teto do prompt cruzado (entrada não-confiável)
 _SAFE_ID = re.compile(r"^[0-9a-f]{8,}$")  # uuid4().hex
 
@@ -127,9 +129,12 @@ def install_maestro_skill(workspace: str | Path, node: str) -> None:
     """(Re)escreve o bloco do Maestro mode no CLAUDE.md/AGENTS.md do workspace (marcado)."""
     begin, end = MAESTRO_SKILL_BEGIN, MAESTRO_SKILL_END
     block = maestro_skill_text(node)
+    ws = Path(workspace)
     for fname in ("CLAUDE.md", "AGENTS.md"):
-        p = Path(workspace) / fname
-        existing = p.read_text(encoding="utf-8") if p.exists() else ""
+        p = ws / fname
+        # S2 (review docs/33): ws é RW pro agente — safe_* não segue symlink (arquivo OU pai),
+        # senão o host escreveria fora do sandbox.
+        existing = safe_read_text(p, within=ws)
         if begin in existing and end in existing:
             pre = existing.split(begin, 1)[0].rstrip("\n")
             post = existing.split(end, 1)[1].lstrip("\n")
@@ -137,8 +142,7 @@ def install_maestro_skill(workspace: str | Path, node: str) -> None:
         else:
             sep = "" if not existing or existing.endswith("\n") else "\n"
             new = f"{existing}{sep}\n{block}\n"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(new, encoding="utf-8")
+        safe_write_text(p, new, within=ws)
 
 
 ASK_SKILL_MARKER = "<!-- maestro-ask -->"
@@ -162,14 +166,15 @@ def ask_skill_text(node: str) -> str:
 def install_ask_skill(workspace: str | Path, node: str) -> None:
     """Acrescenta (idempotente) a instrução do maestro-ask ao CLAUDE.md/AGENTS.md do ws."""
     text = ask_skill_text(node)
+    ws = Path(workspace)
     for fname in ("CLAUDE.md", "AGENTS.md"):
-        p = Path(workspace) / fname
-        existing = p.read_text(encoding="utf-8") if p.exists() else ""
+        p = ws / fname
+        # S2: append via read+write seguro (o open("a") cru seguiria symlink → escrita no host)
+        existing = safe_read_text(p, within=ws)
         if ASK_SKILL_MARKER in existing:
             continue  # já instalado
         sep = "" if not existing or existing.endswith("\n") else "\n"
-        with p.open("a", encoding="utf-8") as f:
-            f.write(f"{sep}\n{text}\n")
+        safe_write_text(p, f"{existing}{sep}\n{text}\n", within=ws)
 
 
 NOTES_SKILL_BEGIN = "<!-- maestro-notes:begin -->"
@@ -198,9 +203,10 @@ def install_connected_notes_skill(
     """Escreve/SUBSTITUI o bloco de notas conectadas no CLAUDE.md/AGENTS.md do workspace.
     Diferente do maestro-ask (append-once): conexões mudam, então o bloco é regravado."""
     text = connected_notes_skill_text(node, notes)
+    ws = Path(workspace)
     for fname in ("CLAUDE.md", "AGENTS.md"):
-        p = Path(workspace) / fname
-        existing = p.read_text(encoding="utf-8") if p.exists() else ""
+        p = ws / fname
+        existing = safe_read_text(p, within=ws)  # S2: não segue symlink (arquivo/pai)
         if NOTES_SKILL_BEGIN in existing and NOTES_SKILL_END in existing:
             pre = existing[: existing.index(NOTES_SKILL_BEGIN)]
             post = existing[existing.index(NOTES_SKILL_END) + len(NOTES_SKILL_END):]
@@ -209,7 +215,7 @@ def install_connected_notes_skill(
             sep = "" if not existing or existing.endswith("\n") else "\n"
             new = existing + f"{sep}\n{text}\n"
         if new != existing:  # guard: evita churn de mtime quando nada mudou
-            p.write_text(new, encoding="utf-8")
+            safe_write_text(p, new, within=ws)
 
 
 def _check_id(rid: object) -> str:

@@ -11,13 +11,20 @@ agente é RW pro próprio agente; o host (que NÃO roda em sandbox) carimba brie
 arquivo (ou um pai como `.maestri`) por um **symlink** pra um alvo no host (`~/.bashrc`,
 `~/.ssh/authorized_keys`) e o write do host o **seguia** → escrita arbitrária no host
 (reintroduz a escrita-arb que o ADR-17 eliminou ao trocar mailbox-de-arquivo por socket).
-**Fix:** novo `engine/safe_fs.py` (`safe_write_text`/`safe_read_text`) com DUAS defesas —
-`O_NOFOLLOW` no componente final (recusa o arquivo-symlink; remove o LINK e recria regular) +
-checagem de **contenção** (o realpath do pai tem de ficar dentro do workspace, fecha o pai
-symlinkado). Aplicado em TODAS as entradas de stamp (invariante em todas as entradas): `briefs.py`
-(install/remove) e `roles.py` (`write_role_files`/`write_role_sidecar`/`install_role_block`).
-Testes: `tests/test_safe_fs.py` (gi-free, roda no CI — 7 casos: symlink de arquivo, pai
-symlinkado, read de symlink, as 2 entradas reais e caminho normal).
+**Fix:** novo `engine/safe_fs.py` (`safe_write_text`/`safe_read_text`) **TOCTOU-safe** — desce de
+`within` (root host-controlado) componente a componente com `O_NOFOLLOW` via `dir_fd`; um pai
+symlinkado é recusado NO open (não numa checagem prévia de `realpath` que uma race furaria), e o
+arquivo final abre com `O_NOFOLLOW` (se já é symlink, remove o LINK e recria regular). Aplicado em
+**TODAS** as entradas que o host carimba no workspace do agente — `briefs.py` (install/remove),
+`roles.py` (`write_role_files`/`write_role_sidecar`/`install_role_block`/`remove_role_block`) e
+`ask_bus.py` (`install_maestro_skill`/`install_ask_skill`/`install_connected_notes_skill`).
+**Correções pós-revisão adversarial (Fable) do próprio PR:** a v1 (a) deixou 4 stampers de fora
+(`ask_bus` + `remove_role_block`) — ainda escreviam no host via symlink, PoC-provado; e (b) usava
+`realpath` check-then-open, vulnerável a **race no pai** (swap concorrente de `.maestri`→symlink na
+janela) — PoC venceu na 2ª iteração. Ambos fechados aqui. Testes: `tests/test_safe_fs.py` (gi-free,
+CI — 14 casos: symlink de arquivo/pai/intermediário, `..`, **race concorrente do pai** provada
+não-vácua, e as 6 entradas reais).
+
 ## [0.68.0] — 2026-07-20 — fix(canvas): ciclo de vida do nó — 3 bugs do review de produção (C2/C3/C7)
 Corrige três bugs de ciclo de vida do nó achados no review de prontidão-pra-produção (`docs/33`),
 todos da classe "invariante aplicado numa entrada, esquecido na irmã". C2 e C3 provados em

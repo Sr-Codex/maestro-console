@@ -1,64 +1,110 @@
 """Escrita segura contra symlink em diretórios GRAVÁVEIS por agente (S2 do review docs/33).
 
 O workspace de cada agente é RW pro próprio agente. O host (que NÃO roda em sandbox) carimba
-brief/role em `CLAUDE.md`/`AGENTS.md`/`role.json` nesse workspace a cada start. Sem cuidado, um
-agente hostil troca o arquivo (ou um diretório-pai como `.maestri`) por um SYMLINK apontando pra
-um alvo no host (`~/.bashrc`, `~/.ssh/authorized_keys`) e o write do host o SEGUE → escrita
-arbitrária no host. Isso reintroduz a escrita-arbitrária que o ADR-17 eliminou ao trocar o
-mailbox-de-arquivo por socket. gi-free.
+brief/role/skill em `CLAUDE.md`/`AGENTS.md`/`role.json` nesse workspace a cada start. Sem cuidado,
+um agente hostil troca o arquivo (ou um diretório-pai como `.maestri`) por um SYMLINK apontando
+pra um alvo no host (`~/.bashrc`, `~/.ssh/authorized_keys`) e o write do host o SEGUE → escrita
+arbitrária no host. Reintroduz a escrita-arbitrária que o ADR-17 eliminou. gi-free.
 
-Duas defesas combinadas:
-- **`O_NOFOLLOW`** no componente FINAL: recusa abrir se o próprio arquivo virou symlink.
-- **Contenção no `within`**: o realpath do diretório-pai tem de ficar DENTRO do workspace —
-  fecha o caso do diretório-pai symlinkado (que o `O_NOFOLLOW` do arquivo não pega).
+Defesa TOCTOU-safe (NÃO check-then-use): descemos de `within` (root host-controlado) componente a
+componente com `O_NOFOLLOW` via `dir_fd` — um pai symlinkado é recusado NO open, não numa checagem
+prévia de `realpath` que uma race poderia furar (revisão adversarial Fable: o `realpath` do pai era
+vulnerável a swap concorrente entre a checagem e o open). O componente FINAL abre com `O_NOFOLLOW`;
+se já for symlink, remove o LINK (relativo ao `dir_fd`, não segue o alvo) e recria regular.
 """
 
 from __future__ import annotations
 
 import errno
 import os
-from pathlib import Path
 
 
 class UnsafeStampPath(Exception):
     """O alvo do stamp escaparia do workspace (symlink de agente hostil) — recusado."""
 
 
-def _assert_within(target: str, within: str | os.PathLike[str]) -> None:
-    root = os.path.realpath(within)
-    parent = os.path.realpath(os.path.dirname(target))  # pai (o arquivo pode não existir)
-    if parent != root and not parent.startswith(root + os.sep):
-        raise UnsafeStampPath(f"stamp fora do workspace (symlink?): {parent} ⊄ {root}")
+def _rel_parts(path, within) -> tuple[list[str], str]:
+    """Componentes relativos de `path` a partir de `within`: (dirs intermediários, nome).
+    Recusa se o caminho escapa do `within` (`..`/absoluto)."""
+    rel = os.path.relpath(os.fspath(path), os.fspath(within))
+    if os.path.isabs(rel):
+        raise UnsafeStampPath(f"stamp com caminho absoluto: {path}")
+    parts = [p for p in rel.split(os.sep) if p not in ("", os.curdir)]
+    if not parts or os.pardir in parts:
+        raise UnsafeStampPath(f"stamp fora do workspace: {path}")
+    return parts[:-1], parts[-1]
 
 
-def safe_write_text(path: str | os.PathLike[str], content: str,
-                    *, within: str | os.PathLike[str], encoding: str = "utf-8") -> None:
-    """Escreve `content` em `path` sem seguir symlink no componente final (`O_NOFOLLOW`) e
-    exigindo que o pai realpath fique dentro de `within` (workspace). Se o alvo já for um
-    symlink, remove o LINK (não o alvo) e recria como arquivo regular — neutraliza o ataque
-    e mantém o stamp funcionando. `within` é o root host-controlado; nunca omita."""
-    p = os.fspath(path)
-    _assert_within(p, within)
+def _parent_fd(within, dirs: list[str], *, create: bool) -> int:
+    """fd do diretório-pai, descendo de `within` com `O_NOFOLLOW` por componente (fecha o
+    TOCTOU de pai). `create=True` cria dirs intermediários faltantes (0700). O chamador FECHA."""
+    dflags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    dir_fd = os.open(os.fspath(within), dflags)  # within é host-controlado (confiável)
+    try:
+        for d in dirs:
+            try:
+                nxt = os.open(d, dflags, dir_fd=dir_fd)
+            except OSError as e:
+                if e.errno == errno.ENOENT and create:
+                    os.mkdir(d, 0o700, dir_fd=dir_fd)
+                    nxt = os.open(d, dflags, dir_fd=dir_fd)
+                elif e.errno in (errno.ELOOP, errno.ENOTDIR):
+                    raise UnsafeStampPath(f"componente-pai é symlink/não-dir: {d}") from e
+                else:
+                    raise
+            os.close(dir_fd)
+            dir_fd = nxt
+        return dir_fd
+    except BaseException:
+        os.close(dir_fd)
+        raise
+
+
+def safe_write_text(path, content: str, *, within, encoding: str = "utf-8") -> None:
+    """Escreve `content` em `path` sem seguir symlink em NENHUM componente sob `within`
+    (o root host-controlado). Cria dirs intermediários com segurança. Se o alvo já é symlink,
+    remove o LINK e recria regular (relativo ao dir_fd → não segue o alvo)."""
+    dirs, name = _rel_parts(path, within)
+    if name == os.pardir:
+        raise UnsafeStampPath(f"nome de arquivo inválido: {path}")
     data = content.encode(encoding)
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+    dir_fd = _parent_fd(within, dirs, create=True)
     try:
-        fd = os.open(p, flags, 0o644)
-    except OSError as e:
-        if e.errno != errno.ELOOP:
-            raise
-        os.unlink(p)  # remove o SYMLINK (não o alvo); recria regular. O_NOFOLLOW no retry
-        fd = os.open(p, flags, 0o644)  # pega re-plant em TOCTOU (ELOOP → propaga, sem escrever)
-    try:
-        os.write(fd, data)
+        try:
+            fd = os.open(name, flags, 0o644, dir_fd=dir_fd)
+        except OSError as e:
+            if e.errno != errno.ELOOP:
+                raise
+            # remove o SYMLINK (não o alvo); recria regular. Re-plant em TOCTOU → ELOOP no
+            # retry, propaga sem escrever no host.
+            os.unlink(name, dir_fd=dir_fd)
+            fd = os.open(name, flags, 0o644, dir_fd=dir_fd)
+        try:
+            os.write(fd, data)
+        finally:
+            os.close(fd)
     finally:
-        os.close(fd)
+        os.close(dir_fd)
 
 
-def safe_read_text(path: str | os.PathLike[str], *, encoding: str = "utf-8") -> str:
-    """Lê `path`, mas trata um SYMLINK (ou ausência) como "" — p/ não puxar conteúdo do host
-    pra dentro do arquivo re-carimbado (o read seguiria o link). O write é o que escapa, mas
-    ignorar o read do symlink evita vazar conteúdo do host pro workspace."""
-    p = Path(path)
-    if p.is_symlink() or not p.exists():
+def safe_read_text(path, *, within, encoding: str = "utf-8") -> str:
+    """Lê `path` sem seguir symlink em nenhum componente sob `within`. Symlink/ausência → "".
+    Evita puxar conteúdo do host pra dentro do arquivo re-carimbado."""
+    try:
+        dirs, name = _rel_parts(path, within)
+    except UnsafeStampPath:
         return ""
-    return p.read_text(encoding=encoding)
+    try:
+        dir_fd = _parent_fd(within, dirs, create=False)
+    except (OSError, UnsafeStampPath):
+        return ""
+    try:
+        try:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+        except OSError:
+            return ""  # symlink (ELOOP), ausente (ENOENT), etc. → vazio
+        with os.fdopen(fd, "r", encoding=encoding) as f:
+            return f.read()
+    finally:
+        os.close(dir_fd)

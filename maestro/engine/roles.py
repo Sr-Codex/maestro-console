@@ -167,21 +167,22 @@ def install_role_block(target_dir: str | Path, role: Role) -> None:
     block = role_block_text(role)
     for fname in ("CLAUDE.md", "AGENTS.md"):
         p = d / fname
-        existing = safe_read_text(p)  # S2: symlink → "" (não segue); write não escapa do ws
+        existing = safe_read_text(p, within=d)  # S2: symlink → "" (não segue)
         safe_write_text(p, _replace_block(existing, block), within=d)
 
 
 def remove_role_block(target_dir: str | Path) -> None:
     """Remove o bloco de role marcado (desatribuir) — preserva o resto do arquivo."""
+    d = Path(target_dir)
     for fname in ("CLAUDE.md", "AGENTS.md"):
-        p = Path(target_dir) / fname
-        if not p.exists():
+        p = d / fname
+        existing = safe_read_text(p, within=d)  # S2: symlink → "" (não segue; o irmão faltava)
+        if not existing:
             continue
-        existing = p.read_text(encoding="utf-8")
         if ROLE_BLOCK_BEGIN in existing and ROLE_BLOCK_END in existing:
             pre = existing.split(ROLE_BLOCK_BEGIN, 1)[0].rstrip("\n")
             post = existing.split(ROLE_BLOCK_END, 1)[1].lstrip("\n")
-            p.write_text(f"{pre}\n{post}" if post else f"{pre}\n", encoding="utf-8")
+            safe_write_text(p, f"{pre}\n{post}" if post else f"{pre}\n", within=d)
 
 
 def discover_roles(cwd: str | Path) -> list[Role]:
