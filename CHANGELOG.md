@@ -3,6 +3,28 @@
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
 versionamento incremental. Datas em 2026.
 
+## [0.69.0] — 2026-07-20 — fix(seg): stamp de brief/role não segue symlink → escrita no host (S2 do review)
+Corrige o bug **S2** do review de prontidão-pra-produção (`docs/33`) — co-manchete com o S1 por
+ser explorável **sem opt-in nenhum** (brief/role de equipe é uso normal). O workspace de cada
+agente é RW pro próprio agente; o host (que NÃO roda em sandbox) carimba brief/role em
+`CLAUDE.md`/`AGENTS.md`/`role.json` nesse workspace a cada start. Um agente hostil trocava o
+arquivo (ou um pai como `.maestri`) por um **symlink** pra um alvo no host (`~/.bashrc`,
+`~/.ssh/authorized_keys`) e o write do host o **seguia** → escrita arbitrária no host
+(reintroduz a escrita-arb que o ADR-17 eliminou ao trocar mailbox-de-arquivo por socket).
+**Fix:** novo `engine/safe_fs.py` (`safe_write_text`/`safe_read_text`) **TOCTOU-safe** — desce de
+`within` (root host-controlado) componente a componente com `O_NOFOLLOW` via `dir_fd`; um pai
+symlinkado é recusado NO open (não numa checagem prévia de `realpath` que uma race furaria), e o
+arquivo final abre com `O_NOFOLLOW` (se já é symlink, remove o LINK e recria regular). Aplicado em
+**TODAS** as entradas que o host carimba no workspace do agente — `briefs.py` (install/remove),
+`roles.py` (`write_role_files`/`write_role_sidecar`/`install_role_block`/`remove_role_block`) e
+`ask_bus.py` (`install_maestro_skill`/`install_ask_skill`/`install_connected_notes_skill`).
+**Correções pós-revisão adversarial (Fable) do próprio PR:** a v1 (a) deixou 4 stampers de fora
+(`ask_bus` + `remove_role_block`) — ainda escreviam no host via symlink, PoC-provado; e (b) usava
+`realpath` check-then-open, vulnerável a **race no pai** (swap concorrente de `.maestri`→symlink na
+janela) — PoC venceu na 2ª iteração. Ambos fechados aqui. Testes: `tests/test_safe_fs.py` (gi-free,
+CI — 14 casos: symlink de arquivo/pai/intermediário, `..`, **race concorrente do pai** provada
+não-vácua, e as 6 entradas reais).
+
 ## [0.68.0] — 2026-07-20 — fix(canvas): ciclo de vida do nó — 3 bugs do review de produção (C2/C3/C7)
 Corrige três bugs de ciclo de vida do nó achados no review de prontidão-pra-produção (`docs/33`),
 todos da classe "invariante aplicado numa entrada, esquecido na irmã". C2 e C3 provados em
