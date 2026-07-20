@@ -198,7 +198,31 @@ caçar a lacuna de cobertura que deixou o S1 passar.
 `realtask_live`) NÃO foram rodados (precisam de CLI de agente logado + rede) — ficam como
 cobertura opt-in não exercitada neste review; o `sandbox_live` (o mais relevant p/ segurança)
 foi rodado e passou.
-## Fase 5 — Runtime no device (prova real) — ⏳ pendente
+## Fase 5 — Runtime no device — ✅ PARCIAL (subconjunto headless rodado por mim) 2026-07-20
+
+**Método:** em vez de empurrar o roteiro inteiro pro usuário (lição "testar eu mesmo em runtime
+antes de declarar pronto"), dirigi o **canvas GTK real sob Xvfb** (`canvas_harness` + `CanvasWindow`
+real, python do sistema) para o subconjunto que é state-machine/persistência — em especial os
+cenários que **reproduzem os bugs**. Cada teste asserta o comportamento CORRETO → falha = bug
+reproduzido no runtime, não só na leitura. Harness em `scratchpad/fase5_repro.py`.
+
+### 🔴 Os 2 P0 estão agora PROVADOS EM RUNTIME (não mais só code-review)
+
+| Cenário | Método REAL rodado | Resultado |
+|---|---|---|
+| **B3 → C2** | `_close_node("claude-2")` com `account=cliente-secreta`, `autoapprove=1`, `role=hacker` | 🔴 **REPRODUZIDO:** `_unique_nid("claude")` devolve `claude-2` (id reciclado) E a config órfã **permanece no store** → nó novo herdaria a conta cliente + o bypass de permissão. |
+| **B4 → C3** | `_kill_all_agents()` com nó em respawn (`_respawn_state="killing"`) | 🔴 **REPRODUZIDO:** pós-kill-switch o estado segue `killing`/`pending=True` → `_on_child_exited` ressuscitaria o nó. O guard do ADR-23 que o `_unload_node` tem, o kill-switch NÃO tem. |
+| **Bloco A** (persistência) | node_cfg (theme/font/account/autoapprove/shortcut) + zoom via Store, reaberto num Store novo | ✅ **Tudo volta igual** — "abre igual fechou" confirmado na amostra. |
+| **U8** (pan) | `get_ui("cam"/"camera")` após set | ✅ Confirmado vazio → **pan não persiste** (achado da Fase 6). |
+
+C11 (E3) **não** foi provado por este harness — meu check só confirmou que o dado `unloaded`
+existe, não a falha do callback async de paste; fica pro teste do fix ou pra Fase 5-device.
+
+### ⏳ Pendente com o usuário (genuinamente sensorial / precisa de agente logado)
+O roteiro `docs/34` cobre; NÃO dá pra rodar headless: B1/B2/B5 (unload/reattach de agente VIVO —
+spawn real), C1/C2/C3 do bloco (tooltips/ícones — confirmação VISUAL), D1-D4 (orquestração +
+custo — gasta tokens de conta logada), E1/E2 (paste visual). **Esses seguem no seu roteiro.** O
+que dava pra provar sem device/dinheiro, provei — e reproduziu os 2 P0.
 ## Fase 6 — UX por estado — ✅ CONCLUÍDA 2026-07-20
 
 **Método:** workflow multi-agente (16 agentes, ~17 min) — 5 auditores Opus por família de

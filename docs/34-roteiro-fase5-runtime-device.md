@@ -6,6 +6,13 @@
 > marcados 🔗 dobram como verificação de um achado das Fases 2/3 — a coluna "liga com" diz qual.
 > Companion do `docs/33-review-producao.md` (Fase 5). Baseline: v0.67.0.
 
+## ⚡ Atualização 2026-07-20 — parte já rodada headless (não precisa refazer)
+O subconjunto de state-machine/persistência foi dirigido sob Xvfb (ver `docs/33` Fase 5):
+- **B3 (C2)** e **B4 (C3)** → 🔴 **bugs reproduzidos em runtime** (não precisa reproduzir na mão).
+- **Bloco A** (persistência) e **U8** (pan) → ✅ verificados headless (amostra).
+- **Ainda precisam de VOCÊ** (sensorial / agente logado): B1, B2, B5, C1-C3, D1-D4, E1, E2, E3.
+Foque nesses. Os demais já têm resultado.
+
 ## Como marcar
 - ✅ = funcionou exatamente como descrito.
 - ⚠ = funcionou mas com ressalva (anotar).
