@@ -13,14 +13,23 @@ então só exigir token seria teatro. **Fix (decisão do usuário: B + X):**
 - **B — mutadores exigem token SEMPRE** (inclusive localhost): o middleware passa a exigir token
   em todo método não-GET de `/api/` (execute/cancel/resume, teams POST/DELETE, positions/viewport
   POST). Leitura (GET) mantém a isenção de localhost (só disclosure, sem atrito p/ ver a UI).
-- **X — esconder o token do sandbox** via nova lista GENÉRICA `secret_files` no `sandbox.wrap`
-  (`--ro-bind /dev/null` no arquivo → o agente lê inacessível, nunca o segredo). `agent_argv`
-  popula com o `web_token`; a lista já fica pronta pro `audit.jsonl` etc. entrarem depois.
-- `serve()` imprime o token SEMPRE (o humano cola no campo da UI — persiste no localStorage, 1×);
-  frontend relabelado ("token do terminal — necessário p/ ações").
+- **X — esconder o token do sandbox**: o PRÓPRIO `sandbox.wrap()` overlaya `<home>/web_token`
+  com `--ro-bind /dev/null` (o agente lê inacessível, nunca o segredo) — na CAMADA de sandbox,
+  cobre interativo E headless/floor. Path via `security.web_token_path(base)` (fonte ÚNICA,
+  usada por serve/boot/sandbox — não divergem).
+- `serve()` imprime o token SEMPRE; frontend relabelado ("token do terminal — necessário p/ ações").
+- **Boot do canvas cria o token EAGER** (`ensure_token` no start) — o bwrap só monta o overlay se
+  o arquivo já existe no spawn; sem isto, lançar agentes antes de `maestro web` rodar a 1ª vez
+  deixaria o token legível.
+
+**Correções pós-revisão adversarial (Fable) do próprio PR:** (1) o overlay era condicional à
+existência do token no spawn — se o canvas lançasse agentes antes da web rodar, o token vazava
+(fechado pelo `ensure_token` eager no boot); (2) o `secret_files` era populado só no `agent_argv`
+(interativo) — o `run_agent` (headless/floor) NÃO escondia o token; movido pra dentro do `wrap()`,
+cobre todo caminho; (3) path do token duplicado em 2 sítios → `web_token_path` único.
 Testes: `tests/test_s4_control_plane.py` (gi-free, CI — mutador sem token=401, leitura aberta,
-token escondido no argv); prova sob bwrap REAL de que o agente lê o token vazio/inacessível.
-Testes web existentes atualizados (mutação agora manda o token).
+token escondido no wrap p/ interativo E headless; prova de mutação); prova sob bwrap REAL de que
+o agente (headless) lê o token vazio/inacessível. Testes web existentes mandam o token na mutação.
 
 ## [0.70.0] — 2026-07-20 — fix(seg): isola as boxes de socket entre agentes (S1 CRÍTICO do review)
 Corrige o bug **S1 (CRÍTICO)** do review de prontidão-pra-produção (`docs/33`) — spoof total de

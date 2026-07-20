@@ -53,29 +53,34 @@ def test_token_errado_no_mutador_401():
 # --- sandbox: o token do web é escondido do agente (secret_files) -------------
 
 
-def test_agent_argv_esconde_o_web_token(tmp_path, monkeypatch):
-    """O `{base}/web_token` (irmão do ask-bus) vira `--ro-bind /dev/null` → o agente lê
-    inacessível, nunca o segredo. Sem isto o `--ro-bind / /` o exporia e o require-token
-    do control-plane seria contornável (o agente lê o token e o apresenta)."""
-    monkeypatch.setattr(sandbox, "bwrap_available", lambda: True)
-    base = tmp_path
-    (base / "web_token").write_text("SEGREDO")  # precisa existir p/ o wrap montar
-    bus = base / "ask-bus"
-    bus.mkdir()
-    prof = load_profiles()["claude"]
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    args = agent_argv(prof, str(ws), node="claude-2", ask_bus_dir=str(bus))
-    tok = str(base / "web_token")
-    # existe o par --ro-bind /dev/null <token>?
-    hit = any(args[i] == "--ro-bind" and args[i + 1] == "/dev/null" and args[i + 2] == tok
+def _hides_token(args, tok):
+    return any(args[i] == "--ro-bind" and args[i + 1] == "/dev/null" and args[i + 2] == tok
               for i in range(len(args) - 2))
-    assert hit, "web_token NÃO escondido do sandbox (secret_files ausente)"
 
 
-def test_wrap_secret_files_pula_inexistente(tmp_path, monkeypatch):
+def test_wrap_esconde_o_web_token_todo_spawn(tmp_path, monkeypatch):
+    """O `<home>/web_token` vira `--ro-bind /dev/null` no PRÓPRIO wrap() → cobre interativo E
+    headless/floor (o agente lê inacessível, nunca o segredo). Sem isto o `--ro-bind / /` o
+    exporia e o require-token do control-plane seria contornável (o agente lê e apresenta)."""
     monkeypatch.setattr(sandbox, "bwrap_available", lambda: True)
+    monkeypatch.setenv("MAESTRO_HOME", str(tmp_path))  # default_home() → tmp_path
+    tok = str(tmp_path / "web_token")
+    (tmp_path / "web_token").write_text("SEGREDO")  # precisa existir p/ o overlay montar
     ws = tmp_path / "ws"
     ws.mkdir()
-    args = sandbox.wrap(["cli"], workspace=ws, secret_files=[str(tmp_path / "nao-existe")])
+    # interativo (agent_argv → wrap)
+    prof = load_profiles()["claude"]
+    args_i = agent_argv(prof, str(ws), node="claude-2", ask_bus_dir=str(tmp_path / "ask-bus"))
+    assert _hides_token(args_i, tok), "interativo NÃO esconde o web_token"
+    # headless/floor (wrap direto, como run_agent)
+    args_h = sandbox.wrap(["cli"], workspace=ws, shared_paths=[str(ws)])
+    assert _hides_token(args_h, tok), "headless/floor NÃO esconde o web_token (furo do run_agent)"
+
+
+def test_wrap_web_token_inexistente_nao_monta(tmp_path, monkeypatch):
+    monkeypatch.setattr(sandbox, "bwrap_available", lambda: True)
+    monkeypatch.setenv("MAESTRO_HOME", str(tmp_path))  # sem web_token criado
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    args = sandbox.wrap(["cli"], workspace=ws)
     assert "/dev/null" not in args  # arquivo ausente → não monta (idempotente)

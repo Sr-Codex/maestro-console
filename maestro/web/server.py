@@ -225,11 +225,11 @@ def make_app(controller, *, host: str, port: int, token: str) -> web.Application
 def serve(*, host: str = "127.0.0.1", port: int = 8765, home=None) -> None:  # pragma: no cover
     """Sobe o servidor reusando a engine (bootstrap). Bind padrão localhost."""
     from ..bootstrap import build_controller, default_home
-    from .security import ensure_token, is_local
+    from .security import ensure_token, is_local, web_token_path
 
     base = default_home() if home is None else home
     controller, store = build_controller(home=base)
-    token = ensure_token(f"{base}/web_token")
+    token = ensure_token(web_token_path(base))
     app = make_app(controller, host=host, port=port, token=token)
     # S4: ações de controle exigem token MESMO em localhost — imprime sempre p/ o humano
     # colar no campo "token" da UI (persiste no localStorage; cola 1x).

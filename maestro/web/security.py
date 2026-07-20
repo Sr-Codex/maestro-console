@@ -19,6 +19,13 @@ def is_local(host: str) -> bool:
     return host in LOCAL_HOSTS
 
 
+def web_token_path(base: str | Path) -> Path:
+    """Caminho ÚNICO do token do web sob a home (`<base>/web_token`) — fonte compartilhada por
+    `serve()` (cria/lê), o boot do canvas (cria eager) e o sandbox (esconde do agente). Ter um
+    só ponto evita o path divergir entre o que o web cria e o que o sandbox esconde (S4/X)."""
+    return Path(base) / "web_token"
+
+
 def ensure_token(path: str | Path) -> str:
     """Lê o token (0600) ou gera um aleatório e persiste com 0600."""
     p = Path(path)
