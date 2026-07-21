@@ -45,7 +45,7 @@
 > ✕ fechar-nó com confirmação, FAB com separadores + kill no fim, paleta com ícone, "enquadrar
 > tudo" (⛶ + Ctrl+Shift+F). **v0.58.0** — UX dos diálogos Nível 1 (`docs/26`).
 > **Fontes de verdade canônicas:** [`CHANGELOG.md`](../CHANGELOG.md) (histórico completo
-> v0.1.0→v0.55.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..22). Este arquivo resume o
+> v0.1.0→v0.67.0) e [`docs/ADR.md`](ADR.md) (decisões, ADR-1..29). Este arquivo resume o
 > estado; em caso de divergência, o CHANGELOG/ADR mandam. Os artefatos em `_bmad-output/`
 > são o **planejamento do MVP** (histórico, congelado) — ver [`docs/index.md`](index.md).
 
@@ -182,7 +182,7 @@
 ## Stack / device
 - **Linux aarch64** (Kali) no **ClockworkPi uConsole / CM4**; **Python ≥3.11**.
 - Canvas: **GTK4 + VTE-gtk4** (PyGObject), python do sistema. Engine: venv.
-- **554 testes** (pytest, +19 skip; os gi rodam no python do sistema) + live opt-in (bwrap:
+- **~818 testes** (625 no venv incl. 26 skip + 193 gi de canvas no python do sistema; medido 2026-07-18) + live opt-in (bwrap:
   socket-em-sandbox, drill do kill-switch); lint **ruff**.
 
 ## Como navegar a documentação

@@ -1,7 +1,10 @@
 # Changelog
 
 Todas as versões do **maestro console**. Formato inspirado em *Keep a Changelog*;
-versionamento incremental. Datas em 2026.
+versionamento incremental. Datas em 2026. **Convenção a partir da v0.68.0** (decisão do
+usuário no review de produção, `docs/33` A8, 2026-07-18): toda entrada nova carrega a
+data no título — `## [X.Y.Z] — AAAA-MM-DD — resumo`; entradas ≤0.67.0 ficam sem data
+(histórico, não retroagir).
 
 ## [0.71.0] — 2026-07-20 — fix(seg): control-plane web exige token + esconde o token do agente (S4 do review)
 Corrige o bug **S4** do review de prontidão-pra-produção (`docs/33`) — "P0-quando-Web-UI-ligada".
