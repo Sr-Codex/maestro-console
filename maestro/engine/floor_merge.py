@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .floors import Floor, FloorError, _git, check_project
+from .floors import Floor, FloorError, _git, check_project, check_ref
 from .safe_git import run_git
 
 
@@ -39,7 +39,7 @@ def _base_ref(repo: Path, floor: Floor) -> str:
     """Branch base do floor; resolve 'HEAD' p/ a branch atual do worktree principal."""
     b = floor.base_branch
     if b and b != "HEAD":
-        return b
+        return check_ref(b)
     out = run_git(repo, "symbolic-ref", "--short", "HEAD")
     return out.stdout.strip() or "HEAD"
 

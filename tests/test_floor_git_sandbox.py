@@ -29,7 +29,7 @@ from maestro.engine.floor_run import (
     nested_repos,
     run_floor_turn,
 )
-from maestro.engine.floors import FloorError, Floors, floor_git
+from maestro.engine.floors import Floor, FloorError, Floors, floor_git
 from maestro.engine.runner import RunResult, RunStatus
 from maestro.engine.safe_git import run_git
 from maestro.engine.session import SessionManager
@@ -477,6 +477,19 @@ def test_git_dir_do_ambiente_nao_desvia_o_host(mk, monkeypatch):
     monkeypatch.setenv("GIT_DIR", str(e.root / "outro"))
     monkeypatch.setenv("GIT_INDEX_FILE", str(e.root / "idx"))
     assert e.snap().committed
+
+
+@pytest.mark.parametrize("base", ["-f", "--lock", "--output=/tmp/x", ""])
+def test_base_que_parece_opcao_e_recusada(mk, base):
+    """`--from -f` virava OPÇÃO do `git worktree add`; num registro/backup, do diff/merge."""
+    e = mk()
+    with pytest.raises(FloorError, match="base inválida"):
+        e.floors.create("novo", base)
+    if base:  # vazio = branch atual (registro legado)
+        ruim = Floor("t", e.floor.branch, e.floor.path, base)
+        for op in (merge_preview, merge_floor):
+            with pytest.raises(FloorError, match="base inválida"):
+                op(e.repo, ruim)
 
 
 def test_floor_de_outro_repo_e_recusado(mk):

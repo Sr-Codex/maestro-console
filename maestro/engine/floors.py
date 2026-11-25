@@ -42,6 +42,13 @@ def _check_name(name: str) -> str:
     return name
 
 
+def check_ref(ref: str) -> str:
+    """Ref vinda de fora (CLI, registro, backup) não pode ser lida pelo git como OPÇÃO."""
+    if not ref or ref.startswith("-"):
+        raise FloorError(f"base inválida: {ref!r}")
+    return ref
+
+
 def _git(repo: Path, *args: str) -> str:
     """Roda git no repo; levanta FloorError com stderr em caso de falha."""
     res = run_git(repo, *args)
@@ -142,6 +149,7 @@ class Floors:
 
     def create(self, name: str, base_branch: str = "HEAD") -> Floor:
         _check_name(name)
+        check_ref(base_branch)
         if self._store.get_floor(name) is not None:
             raise FloorError(f"floor {name!r} já existe")
         check_project(self.repo)

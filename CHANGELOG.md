@@ -23,6 +23,7 @@ o `git status` do próprio usuário). **Fix (nível "médio", escolhido pelo usu
   varredura da árvore.
 - **Projeto em área gravável por agente** (`~/.claude`, `~/.codex`, estado do app, contas) é
   recusado em TODA operação de floor.
+- **Base do floor** que começa com `-` (`--from -f`) é recusada: virava opção do git.
 - **Budget:** `maestro floor run` ignorava o hard cap (só o canvas passava o `store`). Agora o
   `store` é obrigatório e CLI/canvas usam a mesma entrada (`run_floor_turn`).
 
