@@ -118,7 +118,7 @@ def _do_run(repo, store, floor, agent_id: str, prompt_words: list[str]) -> int:
     import shutil
 
     from .engine.adapters.base import load_profiles
-    from .engine.floor_run import commit_floor, run_agent_in_floor
+    from .engine.floor_run import run_floor_turn
     from .engine.session import SessionManager
 
     profiles = {n: p for n, p in load_profiles().items() if shutil.which(p.cmd[0])}
@@ -127,9 +127,10 @@ def _do_run(repo, store, floor, agent_id: str, prompt_words: list[str]) -> int:
         return 1
     sm = SessionManager(store)
     prompt = " ".join(prompt_words)
-    res = asyncio.run(
-        run_agent_in_floor(sm, profiles[agent_id], agent_id, prompt, floor, repo, timeout=180)
+    turn = asyncio.run(
+        run_floor_turn(
+            sm, profiles[agent_id], agent_id, prompt, floor, repo, timeout=180, store=store
+        )
     )
-    committed = commit_floor(floor, f"floor {floor.name}: {prompt[:50]}")
-    print(f"agente {agent_id}: {res.status}; commit={'sim' if committed else '(nada a commitar)'}")
-    return 0 if str(res.status) == "OK" else 1
+    print(f"agente {agent_id}: {turn.summary()}")
+    return 0 if turn.ok else 1

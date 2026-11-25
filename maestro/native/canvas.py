@@ -69,6 +69,7 @@ from ..engine.briefs import (  # noqa: E402
 )
 from ..engine.envelope import EnvelopeState  # noqa: E402
 from ..engine.floor_merge import merge_floor, merge_preview  # noqa: E402
+from ..engine.floors import FloorError  # noqa: E402
 from ..engine.maestro_audit import append_event, read_events  # noqa: E402
 from ..engine.maestro_guard import has_cycle, spawn_anomaly  # noqa: E402
 from ..engine.notes import (  # noqa: E402
@@ -6022,18 +6023,28 @@ class CanvasWindow:
         def do_preview(_b):
             f = selected()
             if f is not None:
-                out.set_text(preview_text(merge_preview(self.repo, f)))
+                try:
+                    out.set_text(preview_text(merge_preview(self.repo, f)))
+                except FloorError as e:
+                    out.set_text(f"erro: {e}")
 
         def do_merge(_b):
             f = selected()
             if f is not None:
-                out.set_text(merge_text(merge_floor(self.repo, f)))
+                try:
+                    out.set_text(merge_text(merge_floor(self.repo, f)))
+                except FloorError as e:
+                    out.set_text(f"erro: {e}")
                 refresh()
 
         def do_rm(_b):
             f = selected()
             if f is not None:
-                self.floors.remove(f.name)
+                try:
+                    self.floors.remove(f.name)
+                except FloorError as e:
+                    out.set_text(f"erro: {e}")
+                    return
                 refresh()
                 out.set_text(f"floor {f.name!r} removido")
 
@@ -6065,15 +6076,10 @@ class CanvasWindow:
                 prompt = pentry.get_text().strip() or "Responda apenas OK."
                 out.set_text(f"rodando {agent} no floor {f.name}…")
 
-                def done(res, committed):
-                    if "pausado por budget" in (res.stderr or ""):  # gate docs/29 §5.2
-                        GLib.idle_add(out.set_text, res.stderr)
+                def done(turn):
+                    GLib.idle_add(out.set_text, f"{agent}: {turn.summary()}")
+                    if turn.paused:  # gate docs/29 §5.2
                         GLib.idle_add(self._budget_hard_notify)
-                        return
-                    GLib.idle_add(
-                        out.set_text,
-                        f"{agent}: {res.status}; commit={'sim' if committed else '(nada)'}",
-                    )
 
                 run_floor_agent_in_thread(
                     self.session_manager, agents[agent], agent, prompt, f, self.repo, done,

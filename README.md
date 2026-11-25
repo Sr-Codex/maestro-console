@@ -114,6 +114,10 @@ maestro floor merge exp             # integra na base se não houver conflito
 maestro floor rm exp                # remove worktree + branch
 ```
 
+> O agente **edita**; quem **commita** é o console (o `.git` fica somente-leitura para o agente).
+> Hooks do projeto não rodam nesses commits/merges, e projetos em pastas graváveis por agentes
+> (ex.: `~/.claude`) são recusados. Detalhes: ADR-30.
+
 ### Routines (prompts agendados)
 
 ```bash

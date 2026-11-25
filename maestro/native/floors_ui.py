@@ -9,17 +9,20 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..engine.floor_merge import MergePreview, MergeResult
-from ..engine.floors import Floors
+from ..engine.floors import FloorError, Floors
 from ..engine.project import ProjectError, resolve_project
 
 
 def resolve_floors(store, base_dir: str | Path, project_override=None) -> Floors | None:
-    """Constrói Floors p/ o repo do cwd (ou override); None se não houver repo git."""
+    """Constrói Floors p/ o repo do cwd (ou override); None se não houver repo git ou se o
+    projeto for recusado (área gravável por agente) — o canvas abre, só sem floors."""
     try:
-        repo = resolve_project(override=project_override)
+        return Floors(resolve_project(override=project_override), base_dir, store)
     except ProjectError:
         return None
-    return Floors(repo, base_dir, store)
+    except FloorError as e:
+        print(f"[maestro] floors indisponíveis: {e}")
+        return None
 
 
 def floor_rows(floors: Floors) -> list[dict[str, str]]:

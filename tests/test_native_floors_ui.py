@@ -102,12 +102,14 @@ def test_run_floor_agent_in_thread(tmp_path):
     done = threading.Event()
     box = {}
 
-    def on_done(res, committed):
-        box["res"], box["committed"] = res, committed
+    def on_done(turn):
+        box["turn"] = turn
         done.set()
 
-    run_floor_agent_in_thread(sm, _Prof(), "run1", "faça", f, repo, on_done, run_fn=fake_run_fn)
+    run_floor_agent_in_thread(
+        sm, _Prof(), "run1", "faça", f, repo, on_done, store=store, run_fn=fake_run_fn
+    )
     assert done.wait(timeout=10.0)
-    assert box["res"].status is RunStatus.OK
-    assert box["committed"] is True  # houve mudança -> snapshot commitado
+    assert box["turn"].res.status is RunStatus.OK
+    assert box["turn"].committed is True  # houve mudança -> snapshot commitado
     store.close()

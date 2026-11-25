@@ -8,11 +8,11 @@ floor na base, recusando se houver conflito.
 
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .floors import Floor, FloorError, _git
+from .floors import Floor, FloorError, _git, check_project
+from .safe_git import run_git
 
 
 @dataclass
@@ -40,30 +40,18 @@ def _base_ref(repo: Path, floor: Floor) -> str:
     b = floor.base_branch
     if b and b != "HEAD":
         return b
-    out = subprocess.run(
-        ["git", "-C", str(repo), "symbolic-ref", "--short", "HEAD"],
-        capture_output=True,
-        text=True,
-    )
+    out = run_git(repo, "symbolic-ref", "--short", "HEAD")
     return out.stdout.strip() or "HEAD"
 
 
 def _current_branch(repo: Path) -> str:
-    out = subprocess.run(
-        ["git", "-C", str(repo), "symbolic-ref", "--short", "HEAD"],
-        capture_output=True,
-        text=True,
-    )
+    out = run_git(repo, "symbolic-ref", "--short", "HEAD")
     return out.stdout.strip()
 
 
 def _conflicts(repo: Path, base: str, branch: str) -> list[str]:
     """Arquivos que conflitariam num merge — via merge-tree, sem escrever no worktree."""
-    r = subprocess.run(
-        ["git", "-C", str(repo), "merge-tree", "--write-tree", "--name-only", base, branch],
-        capture_output=True,
-        text=True,
-    )
+    r = run_git(repo, "merge-tree", "--write-tree", "--name-only", base, branch)
     if r.returncode == 0:
         return []  # sem conflito
     # saída: linha1 = OID da árvore; depois nomes em conflito até uma linha em branco
@@ -78,9 +66,12 @@ def _conflicts(repo: Path, base: str, branch: str) -> list[str]:
 
 def merge_preview(repo: str | Path, floor: Floor) -> MergePreview:
     repo = Path(repo)
+    check_project(repo)
     base = _base_ref(repo, floor)
     pv = MergePreview(base=base)
-    numstat = _git(repo, "diff", "--numstat", f"{base}...{floor.branch}")
+    numstat = _git(
+        repo, "diff", "--no-ext-diff", "--no-textconv", "--numstat", f"{base}...{floor.branch}"
+    )
     for line in numstat.splitlines():
         parts = line.split("\t")
         if len(parts) != 3:

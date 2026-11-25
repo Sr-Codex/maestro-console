@@ -47,6 +47,7 @@ async def run_agent(
     shared_paths: Sequence[str] = (),
     on_output=None,
     account: Account | None = None,
+    ro_paths: Sequence[str] = (),
 ) -> RunResult:
     plan = plan_run(profile, prompt, workspace=workspace, session_id=session_id, resume=resume)
     # Confinamento estrito de SO (ADR-6): workspace rw, /tmp privado, resto ro.
@@ -63,5 +64,6 @@ async def run_agent(
         plan.argv, workspace=plan.cwd, rw_paths=rw, shared_paths=shared_paths,
         setenv=setenv,
         mask_paths=mask_paths(account.root if account is not None else None),
+        ro_paths=ro_paths,
     )
     return await run_headless(sandboxed, timeout=timeout, on_output=on_output)

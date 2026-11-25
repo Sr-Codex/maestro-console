@@ -48,12 +48,13 @@ async def _run(fl, repo, store, name, calls):
     f = fl.create(name)
     sm = SessionManager(store)
     res = await run_agent_in_floor(
-        sm, _FakeProfile(), name, "faça X", f, repo, timeout=5, run_fn=_fake_run_fn(calls)
+        sm, _FakeProfile(), name, "faça X", f, repo, timeout=5, store=store,
+        run_fn=_fake_run_fn(calls),
     )
     return f, res
 
 
-def test_roda_com_cwd_no_floor_e_git_liberado(tmp_path):
+def test_roda_com_cwd_no_floor_e_git_travado(tmp_path):
     import asyncio
 
     repo = _make_repo(tmp_path / "proj")
@@ -64,8 +65,9 @@ def test_roda_com_cwd_no_floor_e_git_liberado(tmp_path):
     assert res.status is RunStatus.OK
     kw = calls[0]
     assert kw["workspace"] == f.path  # cwd = worktree do floor
-    # .git do repo liberado rw p/ git funcionar no worktree
-    assert any(str(repo) in p and p.endswith(".git") for p in kw["shared_paths"])
+    # ADR-30: o .git do repo e o ponteiro do floor são SÓ-LEITURA pro agente
+    assert "shared_paths" not in kw
+    assert set(kw["ro_paths"]) == {str(repo / ".git"), f"{f.path}/.git"}
     store.close()
 
 
@@ -89,10 +91,10 @@ def test_commit_floor_snapshot(tmp_path):
     fl = Floors(repo, tmp_path / "floors", store)
     f = fl.create("snap")
     # sem mudanças -> não commita
-    assert commit_floor(f, "vazio") is False
+    assert commit_floor(f, "vazio", repo).committed is False
     # com mudança -> commita na branch do floor
     (tmp_path / "floors" / "snap" / "novo.txt").write_text("conteudo\n")
-    assert commit_floor(f, "add novo") is True
+    assert commit_floor(f, "add novo", repo).committed is True
     # a branch do floor tem o commit novo; a base não
     log = subprocess.run(
         ["git", "-C", str(repo), "log", "--oneline", f.branch],
