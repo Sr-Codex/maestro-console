@@ -26,6 +26,11 @@ Fora esses pontos, a fila fica parada — não interromper uma tarefa em andamen
 
 ## Fila
 
+### 2026-11-25 — Gasto do `floor run` não entra no contador do budget
+Achado do Fable na revisão do `fix/floors` (v0.72.0): o gate do hard cap vale na CLI e no canvas,
+mas o turno do floor não registra uso (`record_spend`), então só barra quando OUTRO gasto já
+estourou o teto. Irmão da lacuna do modo LIVE (ADR-26). 🧊
+
 ### 2026-07-09 — Cor própria do `blocked` (Fase B, PR 2) — separar do âmbar do `waiting`
 Fatiado da Fase B do header (`docs/27`, v0.60.0 fez só o LAYOUT). Hoje `waiting` e `blocked` são a
 MESMA cor âmbar `#f59e0b` (`agents.py` STATE_COLORS) — só a forma do ícone difere. Proposta do

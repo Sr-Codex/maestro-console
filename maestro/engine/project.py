@@ -8,8 +8,9 @@ Sem repo git resolvido → erro claro (ProjectError), nunca um caminho inválido
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
+
+from .safe_git import run_git
 
 
 class ProjectError(RuntimeError):
@@ -19,15 +20,10 @@ class ProjectError(RuntimeError):
 def _toplevel(path: Path) -> Path | None:
     """Toplevel do repo git que contém `path`, ou None se não for um repo."""
     try:
-        out = subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError):
+        out = run_git(path, "rev-parse", "--show-toplevel")
+    except FileNotFoundError:
         return None
-    top = out.stdout.strip()
+    top = out.stdout.strip() if out.returncode == 0 else ""
     return Path(top) if top else None
 
 

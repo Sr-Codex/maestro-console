@@ -19,7 +19,7 @@ import uuid
 from dataclasses import dataclass
 
 from ..engine.envelope import Envelope, EnvelopeState
-from ..engine.floor_run import commit_floor, run_agent_in_floor
+from ..engine.floor_run import failed_turn, run_floor_turn
 from ..engine.orchestrator import StepProgress
 from ..engine.scheduler import tick_once
 
@@ -202,33 +202,28 @@ def run_floor_agent_in_thread(
     repo,
     on_done,
     *,
+    store,
     run_fn=None,
-    store=None,
 ) -> threading.Thread:
     """Roda um agente NUM floor (V8-S5) em thread; snapshot do trabalho na branch.
 
-    on_done(res, committed): res = RunResult do agente; committed = bool (houve
-    commit na branch do floor). `run_fn` injetável (testes). `store` liga o gate
-    de budget do floor (docs/29 §5.2 — fail-fast no hard, sem snapshot).
+    on_done(turn): FloorTurn (resultado, commit, recusas). `run_fn` injetável (testes).
+    `store` é obrigatório: gate de budget (docs/29 §5.2 — fail-fast no hard, sem snapshot).
     """
 
     def worker():
         try:
             kw = {"run_fn": run_fn} if run_fn is not None else {}
-            res = _run_sync(
-                run_agent_in_floor(
+            turn = _run_sync(
+                run_floor_turn(
                     session_manager, profile, agent_id, prompt, floor, repo,
                     timeout=180, store=store, **kw
                 )
             )
-            # barrado pelo gate (nada rodou) → não faz snapshot/commit de nada
-            if not res.ok and "pausado por budget" in (res.stderr or ""):
-                on_done(res, False)
-                return
-            committed = commit_floor(floor, f"floor {floor.name}: {prompt[:50]}")
-            on_done(res, committed)
-        except Exception as exc:
+        except Exception as exc:  # sem on_done o diálogo ficaria preso em "rodando…"
             _report_thread_error("floor_agent", exc)
+            turn = failed_turn(str(exc))
+        on_done(turn)
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()

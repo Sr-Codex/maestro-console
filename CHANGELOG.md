@@ -6,6 +6,39 @@ usuário no review de produção, `docs/33` A8, 2026-07-18): toda entrada nova c
 data no título — `## [X.Y.Z] — AAAA-MM-DD — resumo`; entradas ≤0.67.0 ficam sem data
 (histórico, não retroagir).
 
+## [0.72.0] — 2026-11-25 — fix(seg): agente num floor executava código FORA do sandbox via git + budget do `floor run`
+Achado ao validar a segunda opinião do Codex sobre a documentação; **não constava no `docs/33`**.
+O agente de um floor tinha o `.git` do projeto em leitura/escrita, e o host roda
+`git add/status/commit/merge` FORA do sandbox sobre essa árvore. Git executa programas a partir de
+metadados: um hook, `core.fsmonitor`, filtro, `commondir`, o ponteiro `<floor>/.git` ou um repo
+aninhado plantado pelo agente virava **execução no host** (reproduzido na v0.71.0; persistia para
+o `git status` do próprio usuário). **Fix (nível "médio", escolhido pelo usuário; ADR-30):**
+- **Sandbox:** `wrap(ro_paths=…)` trava por cima de todo bind rw o git-dir comum e o ponteiro do
+  floor; ausente ou symlink = recusa. O agente lê o git (status/diff/log) mas **não commita**: quem
+  versiona é o console.
+- **Git do host num ponto único** (`engine/safe_git.py`): hooks, fsmonitor e submódulos desligados,
+  sem `GIT_DIR` herdado, com timeout; o snapshot usa o `--git-dir` que o HOST conhece, nunca o que a
+  árvore aponta. Um teste barra `["git", …]` cru fora desse módulo.
+- **Repo aninhado** fica fora do commit, com aviso. Quem decide é o índice (do host), não a
+  varredura da árvore.
+- **Projeto em área gravável por agente** (`~/.claude`, `~/.codex`, estado do app, contas) é
+  recusado em TODA operação de floor.
+- **Base do floor** que começa com `-` (`--from -f`) é recusada: virava opção do git.
+- **Budget:** `maestro floor run` ignorava o hard cap (só o canvas passava o `store`). Agora o
+  `store` é obrigatório e CLI/canvas usam a mesma entrada (`run_floor_turn`).
+
+**Muda para o usuário:** hooks do projeto (husky, pre-commit, LFS post-checkout) não rodam nos
+git do console (commit, merge e criação de floor); o agente não faz `git commit` no floor.
+**Revisão adversarial (Fable) do próprio fix, 2 rodadas:** a v1 foi REPROVADA (3 fugas provadas:
+submódulo escondido por `chmod 111`, corrida entre dois agentes no floor, nó interativo com o
+projeto em pasta rw; + canvas preso em "rodando…" com nome não-UTF8). Na v2 nenhuma fuga; os dois
+defeitos que ela introduziu (git no event loop compartilhado; `index.lock` órfão no timeout)
+também foram corrigidos. **Testes:** `tests/test_floor_git_sandbox.py` (ataques sob bwrap REAL +
+defesas do host sem bwrap), com prova de mutação.
+**Limites conhecidos:** filtro já configurado pelo usuário apontando para script DENTRO do projeto
+executa a versão editada pelo agente; o gasto do `floor run` ainda não soma no contador do budget;
+os hooks Setup/Run/Teardown do floor seguem fora do sandbox por desenho.
+
 ## [0.71.0] — 2026-07-20 — fix(seg): control-plane web exige token + esconde o token do agente (S4 do review)
 Corrige o bug **S4** do review de prontidão-pra-produção (`docs/33`) — "P0-quando-Web-UI-ligada".
 O `require_token = not is_local(host)` isentava o localhost de token em TODO `/api/`; um agente

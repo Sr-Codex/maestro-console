@@ -20,7 +20,7 @@ from pathlib import Path
 
 
 class SandboxUnavailable(RuntimeError):
-    """bwrap ausente — recusamos executar sem sandbox (fail-safe)."""
+    """Sandbox não pode ser montado por inteiro — recusamos executar (fail-safe)."""
 
 
 def bwrap_available() -> bool:
@@ -64,12 +64,16 @@ def wrap(
     setenv: Mapping[str, str] | None = None,
     allow_network: bool = True,
     mask_paths: Sequence[str] = (),
+    ro_paths: Sequence[str] = (),
 ) -> list[str]:
     """Retorna o argv do agente envelopado em bwrap. Levanta se bwrap ausente.
 
     rw_paths: config/sessão do agente (ex.: ~/.claude).
     shared_paths: diretórios de artefatos compartilhados entre agentes (rw).
     setenv: variáveis de ambiente a injetar no sandbox (ex.: MAESTRO_NODE).
+    ro_paths: travados em somente-leitura POR CIMA de todo bind rw (ADR-30, ex.: `.git` do
+        floor) — proteção positiva, não por ausência de bind (a lição do S1). Ausente = FALHA:
+        seguir sem a trava rodaria o agente desprotegido.
     mask_paths: diretórios ESCONDIDOS do agente via tmpfs (docs/31 §5.3: a raiz das
     contas — credencial de outra conta some da vista). A ORDEM importa (bwrap monta
     em sequência): o tmpfs entra ANTES dos binds de rw_paths/shared_paths, pra um
@@ -134,6 +138,12 @@ def wrap(
         sp = str(Path(p).resolve())
         if Path(sp).exists():
             args += ["--bind", sp, sp]  # artefatos compartilhados: rw
+    for p in ro_paths:  # por ÚLTIMO entre os mounts: vence workspace/rw/shared
+        lp = str(Path(p))
+        # bwrap segue symlink no DESTINO: a trava cairia noutro arquivo
+        if Path(lp).is_symlink() or not Path(lp).exists():
+            raise SandboxUnavailable(f"caminho a proteger ausente ou symlink: {lp}")
+        args += ["--ro-bind", lp, lp]
     for k, v in (setenv or {}).items():
         args += ["--setenv", str(k), str(v)]  # ex.: MAESTRO_NODE / MAESTRO_ASK_BUS
     args.append("--")
