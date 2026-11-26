@@ -17,7 +17,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
-from . import budget
+from . import agent_home, budget
 from .accounts import resolve as accounts_resolve
 from .envelope import Envelope, EnvelopeState
 from .session import SessionManager
@@ -337,6 +337,8 @@ def make_agent_ask(
             try:
                 sid = session_manager.session_id(agent_id)
                 cfg = str(acct.config_dir()) if acct is not None else None
+                if cfg is None and "codex" in getattr(profile, "name", agent_id):
+                    cfg = str(agent_home.codex_home(agent_id))  # ADR-31: sessões por nó
                 u = usage_from_session(getattr(profile, "name", agent_id), sid, config_dir=cfg)
                 if u is not None:
                     on_usage(agent_id, u)  # TOTAL acumulado da sessão (não delta)

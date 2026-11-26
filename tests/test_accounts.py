@@ -160,7 +160,7 @@ def test_wrap_mask_inexistente_e_pulada(tmp_path, monkeypatch):
     ws = tmp_path / "ws"
     ws.mkdir()
     args = sandbox.wrap(["cli"], workspace=ws, mask_paths=[str(tmp_path / "nao-existe")])
-    assert "--tmpfs" not in args[args.index("/tmp") + 1:]  # só o /tmp base
+    assert str(tmp_path / "nao-existe") not in args  # path ausente não vira tmpfs
 
 
 def test_agent_argv_conta_substitui_rw_e_seta_var(tmp_path, monkeypatch):

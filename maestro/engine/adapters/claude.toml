@@ -7,8 +7,9 @@ stdin = "devnull"
 prompt_position = "after_cmd"
 # Saída: E3-S1 troca para JSON estrito (FR15). Por ora, texto.
 output_args = []
-# Config/sessão/auth do claude (liberados rw no sandbox para auth e --resume).
-rw_paths = ["~/.claude", "~/.claude.json", "~/.config/claude"]
+# Config/sessão/auth do claude: NÃO são rw — o sandbox monta uma fotocópia descartável
+# + a credencial sem refresh token + o dir de sessão do nó (ADR-31, engine/agent_home.py).
+rw_paths = []
 
 [headless.session]
 mode = "flag"

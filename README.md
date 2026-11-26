@@ -38,14 +38,17 @@ passam trabalho entre si — com **isolamento de segurança** por padrão.
 - **Mensagens** via **envelope JSON estrito** (schema; `DONE / BLOCKED / FAILED /
   NEEDS_INPUT`); artefatos grandes por caminho.
 - **Segurança**: cada agente roda em **sandbox bwrap** — workspace rw, `/tmp`
-  privado, resto read-only, rede mantida. **Sem bypass de permissões.**
+  privado, resto read-only, rede mantida. **Sem bypass de permissões.** A config do
+  Claude/Codex chega ao agente como **cópia descartável** (o que ele muda some ao sair) e
+  com uma credencial que não renova o login; os sockets da sessão (D-Bus, ssh-agent)
+  ficam fora de alcance. Detalhes: ADR-31.
 - **Sessões** persistentes (`--session-id`/`--resume`) com **mutex por sessão**.
   Estado em **SQLite (WAL)**.
 
 ## Requisitos
 
 - **Linux aarch64** (testado em Kali no uConsole/CM4), **Python 3.11+**
-- **Requisito:** `tmux`, `bwrap` (bubblewrap), `git`
+- **Requisito:** `tmux`, `bwrap` (bubblewrap **≥ 0.11**, não-setuid, pela camada descartável), `git`
 - **Agentes:** `claude` e/ou `codex` instalados e autenticados (usam **API/rede** —
   o produto **não** é totalmente offline)
 - **Canvas nativo (opcional):** PyGObject + GTK 4 + VTE-gtk4 (zoom real do plano
@@ -117,6 +120,9 @@ maestro floor rm exp                # remove worktree + branch
 > O agente **edita**; quem **commita** é o console (o `.git` fica somente-leitura para o agente).
 > Hooks do projeto não rodam nesses commits/merges, e projetos em pastas graváveis por agentes
 > (ex.: `~/.claude`) são recusados. Detalhes: ADR-30.
+> **Não rode o `claude`/`codex` do host dentro de um floor ou workspace de agente sem revisar:**
+> o `CLAUDE.md`, o `.claude/settings.json` e a memória do projeto ali foram escritos pelo agente
+> (ADR-31).
 
 ### Routines (prompts agendados)
 

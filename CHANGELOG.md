@@ -6,6 +6,50 @@ usuário no review de produção, `docs/33` A8, 2026-07-18): toda entrada nova c
 data no título — `## [X.Y.Z] — AAAA-MM-DD — resumo`; entradas ≤0.67.0 ficam sem data
 (histórico, não retroagir).
 
+## [0.73.0] — 2026-11-25 — fix(seg): agente executava código FORA do sandbox pela config do Claude/Codex e pelo D-Bus da sessão
+Achado ao revisar o fix da v0.72.0; **não constava no `docs/33`**. Duas portas, reproduzidas no
+device com HOME falsa e comando inofensivo:
+- **Config do CLI em rw:** o perfil montava `~/.claude`, `~/.claude.json` e `~/.codex` em
+  leitura/escrita. O agente gravava hooks/`apiKeyHelper` (`settings.json`), `mcpServers`
+  (`~/.claude.json`) ou `mcp_servers` (`config.toml`) e o `claude`/`codex` do **dono** os executava
+  depois, fora do sandbox. Também podia trocar o binário do Codex (`~/.codex/packages`), o
+  `CLAUDE.md` global e os hooks do git em `~/.claude`.
+- **D-Bus da sessão:** `/run/user/<uid>/bus` era alcançável; `systemd-run --user` de dentro do
+  sandbox rodava o comando **no host**. Nó com conta ou sem "Permissão total" também era afetado.
+
+**Fix (nível "médio", escolhido pelo usuário; ADR-31), tudo dentro do `sandbox.wrap()`** (cobre
+canvas, headless e floors):
+- **Fotocópia descartável:** `~/.claude`, `~/.codex` e `~/.config/{claude,codex}` viram overlay
+  (`--overlay-src`/`--tmp-overlay`): o agente lê a config real e o que escreve some ao sair.
+- **Credencial sem renovação:** cada nó recebe uma cópia somente-leitura **sem refresh token**
+  (de uso único: gastá-lo derrubaria o login do dono). Quando o CLI do dono renova o login, o app
+  espelha o token novo nos nós abertos (no spawn e a cada 60 s). Nó de conta não recebe a do dono.
+- **Por nó:** `~/.claude.json` (cópia regravada a cada spawn), sessões e `config.toml` do Codex (a
+  cópia já confia no workspace do nó, que não pergunta mais). O transcript do Claude continua em
+  `~/.claude/projects/<slug do nó>`, então retomada, custo e recuperação pós-crash não mudam.
+  Fechar o nó (✕) apaga o estado dele.
+- **Sockets escondidos:** `/run/user/<uid>` (D-Bus, ssh-agent, gpg, chaveiro), `/run/dbus`,
+  `~/.ssh/agent` e `~/.claude/daemon`.
+- `rw_paths` que caia na config protegida é ignorado; bubblewrap < 0.11 (sem overlay) = recusa.
+
+**Muda para o usuário:** ajustes feitos DENTRO de um nó (`/model`, plugin instalado, MCP
+adicionado) valem só para ele e somem ao fechar. Conversas antigas do Codex não aparecem no
+"retomar" dos nós. Se ninguém usar o Claude fora do app por ~8 h, o token vence e os nós pedem
+login até o CLI do dono renovar. Dentro dos nós não há ssh-agent, gpg, chaveiro nem D-Bus.
+**Provas:** `tests/test_agent_home_sandbox.py` (ataques sob bwrap REAL, HOME falsa) e
+`tests/test_agent_home_wiring.py` (todas as entradas); mutação: as 26 defesas derrubadas uma a uma
+fazem algum teste falhar. Claude e Codex reais, headless e interativo: 2 turnos com retomada,
+sem pedido de login nem de confiança, credencial e config reais intactas; nó vivo com token
+inválido → 401 → espelho → volta a responder sem reiniciar.
+**Limites conhecidos:** nós com comando personalizado seguem sem sandbox (por desenho); dois nós
+na mesma conta dividem o config-dir. **Não rode o `claude`/`codex` do host DENTRO do workspace
+ou floor de um agente sem revisar:** ali o `CLAUDE.md`, o `.claude/settings.json` e a memória do
+projeto (`~/.claude/projects/<slug>/memory/`) foram escritos pelo agente (achado da revisão Fable;
+mesma classe de antes, não fechada por este fix).
+**Revisão adversarial (Fable):** nenhuma fuga pelas portas fechadas (hooks, MCP, binário,
+credencial, D-Bus, symlink e hardlink pelo slug, `umount` em userns aninhado, `rw_path` sobreposto);
+o achado acima virou limite documentado.
+
 ## [0.72.0] — 2026-11-25 — fix(seg): agente num floor executava código FORA do sandbox via git + budget do `floor run`
 Achado ao validar a segunda opinião do Codex sobre a documentação; **não constava no `docs/33`**.
 O agente de um floor tinha o `.git` do projeto em leitura/escrita, e o host roda

@@ -86,6 +86,8 @@ class SessionManager:
             extra["account"] = account
         if ro_paths:
             extra["ro_paths"] = tuple(ro_paths)
+        if run_fn is run_agent:  # ADR-31: o estado do CLI é por nó (fakes de teste não pedem)
+            extra["node"] = agent_id
         async with self.session_lock(agent_id):
             assign = getattr(profile, "session_assign", "caller")
             if assign == "captured":

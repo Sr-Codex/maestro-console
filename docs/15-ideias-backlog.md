@@ -270,3 +270,14 @@ Team Templates/líder, Maestro mode, bwrap):
   indicador de "lendo histórico enquanto o agente produz"; **diff desde o último feedback**. 🧊
 - **Já ENTREGUE (não confundir com pendência):** paleta de comandos (Ctrl-P), worktree por agente
   (Floors), grupos, minimapa, monitorar atividade — a pesquisa pediu, o projeto já tem.
+
+### 2026-11-25 — achados ao provar a v0.73.0 (bugs pré-existentes, não da v0.73.0)
+- **Medidor de custo cego no Codex atual:** `parse_codex_cumulative` devolve `None` para os
+  rollouts do codex 0.172.0 — inclusive sessões do próprio host em `~/.codex/sessions`. O budget cap
+  não conta o gasto do Codex. Medir o formato novo do rollout e ajustar o parser. 🧊
+- **Preço do `claude-opus-5-5` ausente:** `cost_from_tokens(..., "claude-opus-5-5")` = `None` →
+  custo $0 no HUD e no budget para o modelo padrão atual. Atualizar a tabela (fonte oficial + data)
+  e decidir o fallback para modelo desconhecido (hoje: $0 silencioso). 🧊
+- **Renovação opcional por `claude setup-token` (opção B do ADR-31):** token de 1 ano só para
+  inferência, para quem passa > 8 h sem usar o Claude fora do app. Opt-in; só se o espelho (A)
+  incomodar na prática. 🧊
