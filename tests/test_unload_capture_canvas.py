@@ -100,7 +100,12 @@ def test_close_node_limpa_sessao_persistida(tmp_path, monkeypatch):
     w.controller = None
     w.frames = {}  # sem frame → retorna após a limpeza
 
+    from maestro.engine import agent_home  # ADR-31: cópias/sessões do Codex do nó somem
+    agent_home.prepare(nid, ws)
+    assert agent_home.node_dir(nid).is_dir()
+
     w._close_node(nid)
+    assert not agent_home.node_dir(nid).exists()  # id reciclado não herda o estado do CLI
     assert w._node_session(nid) == ""  # sessão VTE (nodecfg) apagada
     assert store.get_session(nid) is None  # C2: sessão da engine apagada (não retoma)
     store.close()

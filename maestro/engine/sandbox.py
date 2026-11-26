@@ -5,7 +5,8 @@ Envelopa o comando do agente para garantir, no nível do SO:
 - **/tmp**: privado por execução (tmpfs), NÃO o /tmp compartilhado do host;
 - **resto do sistema**: somente leitura;
 - **rede**: mantida (agentes dependem de API);
-- diretórios de config/sessão do agente (rw_paths): leitura/escrita (auth/resume);
+- config do CLI (~/.claude, ~/.codex): FOTOCÓPIA descartável + credencial sem token de
+  renovação (ADR-31, `agent_home`); sockets da sessão do usuário (D-Bus, ssh-agent) escondidos;
 - **sem flags de bypass**.
 
 Se o bwrap não existir, **falha de forma segura** (não roda sem sandbox).
@@ -13,8 +14,9 @@ Se o bwrap não existir, **falha de forma segura** (não roda sem sandbox).
 
 from __future__ import annotations
 
-import os
+import re
 import shutil
+import subprocess
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -25,6 +27,24 @@ class SandboxUnavailable(RuntimeError):
 
 def bwrap_available() -> bool:
     return shutil.which("bwrap") is not None
+
+
+_OVERLAY_MIN = (0, 11)  # `--overlay-src`/`--tmp-overlay` entraram no bubblewrap 0.11.0 (NEWS)
+_bwrap_version_cache: tuple[int, ...] | None = None
+
+
+def bwrap_version() -> tuple[int, ...]:
+    """Versão do bwrap instalado (cache). () = não deu pra ler."""
+    global _bwrap_version_cache
+    if _bwrap_version_cache is None:
+        try:
+            out = subprocess.run(["bwrap", "--version"], capture_output=True, text=True,
+                                 timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            out = ""
+        m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", out)
+        _bwrap_version_cache = tuple(int(g) for g in m.groups() if g) if m else ()
+    return _bwrap_version_cache
 
 
 def _ask_bus_box_dir() -> str | None:
@@ -51,8 +71,10 @@ def invisible_prefixes() -> list[str]:
     a máscara tmpfs da raiz das contas (ADR-28), `/dev`/`/proc` remontados e o
     runtime-dir do usuário (sockets/portais FUSE, acesso frágil no userns). Mudou um
     mount do `wrap()`? Atualize AQUI junto."""
-    from .accounts import accounts_root  # import local: evita ciclo em import-time
-    return ["/tmp", str(accounts_root()), "/dev", "/proc", f"/run/user/{os.getuid()}"]
+    from . import agent_home  # import local: evita ciclo em import-time
+    from .accounts import accounts_root
+    return ["/tmp", str(accounts_root()), "/dev", "/proc", *agent_home.hidden_system_dirs(),
+            str(agent_home.state_root())]
 
 
 def wrap(
@@ -65,10 +87,15 @@ def wrap(
     allow_network: bool = True,
     mask_paths: Sequence[str] = (),
     ro_paths: Sequence[str] = (),
+    node: str | None = None,
 ) -> list[str]:
     """Retorna o argv do agente envelopado em bwrap. Levanta se bwrap ausente.
 
-    rw_paths: config/sessão do agente (ex.: ~/.claude).
+    rw_paths: dirs extras rw. Um que seja (ou caia dentro de) config de CLI protegida
+        (`agent_home.is_protected`, ex.: ~/.claude) é IGNORADO — vira a camada descartável.
+    node: id do nó dono do spawn (ADR-31) — dá a ele a credencial sem refresh token, o
+        `~/.claude.json` e as sessões do Codex DELE. None (ex.: nó de conta, que usa o
+        config-dir da conta) = camada descartável sem credencial do dono.
     shared_paths: diretórios de artefatos compartilhados entre agentes (rw).
     setenv: variáveis de ambiente a injetar no sandbox (ex.: MAESTRO_NODE).
     ro_paths: travados em somente-leitura POR CIMA de todo bind rw (ADR-30, ex.: `.git` do
@@ -87,7 +114,14 @@ def wrap(
     """
     if not bwrap_available():
         raise SandboxUnavailable("bwrap não encontrado; recusando rodar sem sandbox")
+    if bwrap_version() < _OVERLAY_MIN:  # sem overlay a config do dono ficaria exposta
+        raise SandboxUnavailable("bubblewrap >= 0.11 necessário (camada descartável da config)")
+    from . import agent_home  # import local: evita ciclo em import-time
     ws = str(Path(workspace).resolve())
+    try:
+        state = agent_home.prepare(node, ws) if node else None
+    except (agent_home.AgentHomeError, OSError) as exc:
+        raise SandboxUnavailable(f"estado do agente indisponível: {exc}") from exc
     args: list[str] = [
         "bwrap",
         "--ro-bind",
@@ -123,6 +157,9 @@ def wrap(
     # spoof continua pelo caminho que não replicar a máscara.
     bus_box = _ask_bus_box_dir()
     mask_all = [*mask_paths, bus_box] if bus_box else list(mask_paths)
+    # ADR-31: sockets da sessão do usuário (D-Bus → `systemd-run --user` roda NO HOST;
+    # ssh-agent, gpg, chaveiro) e o estado por nó das cópias de config (um nó não lê o de outro)
+    mask_all += [*agent_home.hidden_system_dirs(), str(agent_home.state_root())]
     for p in mask_all:  # ANTES dos binds rw/shared (ordem de mount — ver docstring)
         mp = str(Path(p).expanduser())
         if Path(mp).exists():
@@ -132,12 +169,15 @@ def wrap(
             args += ["--ro-bind", "/dev/null", sf]
     for p in rw_paths:
         rp = str(Path(p).expanduser())
-        if Path(rp).exists():
-            args += ["--bind", rp, rp]  # config/sessão do agente: rw
+        if Path(rp).exists() and not agent_home.is_protected(rp):
+            args += ["--bind", rp, rp]  # extra rw; config de CLI protegida NUNCA (ADR-31)
     for p in shared_paths:
         sp = str(Path(p).resolve())
         if Path(sp).exists():
             args += ["--bind", sp, sp]  # artefatos compartilhados: rw
+    # ADR-31: config dos CLIs = fotocópia descartável. DEPOIS dos binds rw/shared/workspace —
+    # vence qualquer um que a cubra (ex.: um rw_path = $HOME) — e ANTES das travas ro.
+    args += agent_home.mounts(state)
     for p in ro_paths:  # por ÚLTIMO entre os mounts: vence workspace/rw/shared
         lp = str(Path(p))
         # bwrap segue symlink no DESTINO: a trava cairia noutro arquivo

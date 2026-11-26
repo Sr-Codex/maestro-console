@@ -16,6 +16,7 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import agent_home
 from .accounts import accounts_root
 from .adapters.base import load_profiles
 from .safe_git import run_git
@@ -58,7 +59,10 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _profile_rw_roots() -> list[Path]:
-    return [Path(p).expanduser().resolve() for pr in load_profiles().values() for p in pr.rw_paths]
+    # ADR-31: a config dos CLIs não é mais rw (fotocópia), mas o slug do nó em
+    # ~/.claude/projects é — projeto lá dentro continua recusado.
+    extra = [Path(p).expanduser().resolve() for pr in load_profiles().values() for p in pr.rw_paths]
+    return [*agent_home.protected_roots(), *extra]
 
 
 def _refuse_under(path: Path, roots) -> None:

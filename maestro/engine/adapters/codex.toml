@@ -4,8 +4,9 @@ name = "codex"
 cmd = ["codex", "exec", "--skip-git-repo-check"]
 stdin = "devnull"
 output_args = []
-# Config/sessão/auth do codex (liberados rw no sandbox).
-rw_paths = ["~/.codex", "~/.config/codex"]
+# Config/sessão/auth do codex: fotocópia descartável + credencial sem refresh token +
+# sessões e config.toml POR NÓ (ADR-31, engine/agent_home.py). Nada do ~/.codex real é rw.
+rw_paths = []
 
 # Codex retoma sessão por subcomando (estruturalmente diferente do claude).
 [headless.session]

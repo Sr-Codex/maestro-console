@@ -37,6 +37,7 @@ from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk, Pango, Vte  # noqa
 
 from ..engine import (  # noqa: E402
     accounts,  # noqa: E402  — contas por nó (docs/31/ADR-28)
+    agent_home,  # noqa: E402  — config do CLI descartável (ADR-31)
     budget,
     crash_flag,
 )
@@ -2645,6 +2646,8 @@ class CanvasWindow:
         # reciclado RETOMA a conversa do nó morto via --resume (C2 no trilho engine).
         if self._store is not None:
             self._store.delete_session(nid)
+        # ADR-31: cópias de config/credencial e sessões do Codex do nó — id reciclado não herda
+        agent_home.remove(nid)
         self._ram_alerted.discard(nid)  # unload D: id reciclado não herda alerta de RAM
         base = self._agent_base(nid)  # desregistra a INSTÂNCIA do controller (libera o id)
         if self.controller is not None and base is not None and nid != base:
@@ -8337,6 +8340,16 @@ def run(store: Store | None = None) -> None:  # pragma: no cover - loop GTK
         # attention: realça/notifica o que precisa de você (V11-S1)
         GLib.timeout_add_seconds(10, win._refresh_attention)
         win._refresh_attention()
+        # ADR-31 (opção A): o CLI do dono renova a credencial real; espelha o access token novo
+        # nas cópias dos nós (mesmo inode → o nó vivo vê). Barato: 2 arquivos pequenos.
+        GLib.timeout_add_seconds(60, _sync_agent_credentials)
+
+    def _sync_agent_credentials() -> bool:
+        try:
+            agent_home.sync_credentials()
+        except Exception as exc:  # noqa: BLE001 — timer nunca pode morrer
+            _log.error("sync_credentials: %s", exc)
+        return True  # mantém o timer
 
     def on_shutdown(_a):
         win = state.get("win")  # F7: encerra o servidor de socket (fecha listeners, unlink)

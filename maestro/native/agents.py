@@ -103,6 +103,9 @@ def agent_argv(
     return sandbox_wrap(
         inner,
         workspace=workspace,
+        # ADR-31: o nó recebe a fotocópia da config + credencial sem refresh token. Nó de
+        # CONTA não (None): usa o config-dir da conta e não deve ver a credencial do dono.
+        node=node if account is None else None,
         rw_paths=rw,
         shared_paths=shared,
         setenv=setenv,
